@@ -1,0 +1,63 @@
+name: archivereader
+description: "A reader for archive.org"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.4.0
+  xml: ^6.3.0
+  cached_network_image: ^3.3.1
+  flutter_pdfview: ^1.3.1
+  path_provider: ^2.1.2
+  path: ^1.8.3
+  google_mlkit_language_id: ^0.3.0
+  url_launcher: ^6.1.14
+  epub_view: ^3.1.0
+  uuid: ^4.5.1
+  pdfx: ^2.9.2
+  image: ^3.3.0
+  shared_preferences: ^2.2.2
+  rar: ^0.1.0
+  logger: ^2.0.2
+  reorderables: ^0.6.0
+  chewie: ^1.12.1
+  video_player: ^2.10.0
+  bonsoir: ^5.1.11
+  flutter_chrome_cast: ^1.2.2
+  cupertino_icons: ^1.0.8
+  open_filex: ^4.3.5
+  android_intent_plus: ^5.0.2
+  dartssh2: ^2.7.0
+  flutter_secure_storage: ^9.2.2
+  archive: any
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  # Use a version compatible with image ^3.x
+  flutter_launcher_icons: ^0.11.0
+  hive_generator: ^2.0.1
+  build_runner: ^2.4.7
+
+flutter:
+  uses-material-design: true
+
+# Single, root-level config for launcher icons (do NOT nest under `flutter:`)
+flutter_launcher_icons:
+  android: true
+  ios: true
+  # You can start with a single source image; add adaptive layers later if you want.
+  image_path: assets/icon/icon.png
+  # If you already have these files and want adaptive icons, uncomment the next two lines:
+  # adaptive_icon_background: "#FFFFFF"
+  # adaptive_icon_foreground: assets/icon/fg.png
+  min_sdk_android: 21

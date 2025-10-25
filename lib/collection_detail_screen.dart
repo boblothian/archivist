@@ -14,7 +14,6 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'archive_item_screen.dart';
-import 'favourites_screen.dart';
 import 'net.dart';
 
 const Map<String, String> _HEADERS = Net.headers;
@@ -992,11 +991,11 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       ).showSnackBar(SnackBar(content: Text('Added to "$folder"')));
 
       // Auto-open the folder
-      Navigator.of(context).push(
+      /*Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => FavoritesScreen(initialFolder: folder),
         ),
-      );
+      );*/
     }
   }
 

@@ -1,6 +1,4 @@
 // lib/services/favourites_service.dart
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -59,59 +57,162 @@ class FavoritesService {
   void _notify() => version.value++;
 
   static const _boxName = 'favorites_v2';
-  late Box<Map<String, List<FavoriteItem>>> _box;
+
+  // Option A: untyped box so we can migrate legacy shapes safely.
+  late Box _box;
 
   Future<void> init() async {
     await Hive.initFlutter();
-    Hive.registerAdapter(FavoriteItemAdapter());
-
-    _box = await Hive.openBox<Map<String, List<FavoriteItem>>>(_boxName);
-
-    if (_box.isEmpty) {
-      await _box.put('folders', {'Favourites': <FavoriteItem>[]});
+    if (!Hive.isAdapterRegistered(0)) {
+      Hive.registerAdapter(FavoriteItemAdapter());
     }
 
+    _box = await Hive.openBox(_boxName);
+
+    // One-time migration + ensure a default folder exists.
+    await _migrateIfNeeded();
+
     _notify();
   }
 
+  /// Normalized read of the folders map from Hive.
+  /// Always returns a Map<String, List<FavoriteItem>> in canonical shape.
   Map<String, List<FavoriteItem>> get _data {
-    return _box.get('folders', defaultValue: <String, List<FavoriteItem>>{})!;
+    // Prefer 'folders'; fall back to legacy key 'data' if present.
+    final dynamic raw = _box.get('folders') ?? _box.get('data');
+
+    // Nothing saved yet.
+    if (raw == null) {
+      return <String, List<FavoriteItem>>{};
+    }
+
+    // Already the correct typed structure.
+    if (raw is Map<String, List<FavoriteItem>>) {
+      return raw;
+    }
+
+    // Legacy / loosely typed map -> normalize it.
+    if (raw is Map) {
+      final result = <String, List<FavoriteItem>>{};
+
+      raw.forEach((key, value) {
+        final folder = key?.toString() ?? 'Favourites';
+        final list = <FavoriteItem>[];
+
+        if (value is List) {
+          for (final e in value) {
+            if (e is FavoriteItem) {
+              list.add(e);
+            } else if (e is Map) {
+              try {
+                list.add(
+                  FavoriteItem.fromJson(Map<String, dynamic>.from(e as Map)),
+                );
+              } catch (_) {
+                // Last-resort manual mapping
+                list.add(
+                  FavoriteItem(
+                    id: (e['id'] ?? e['identifier'] ?? '').toString(),
+                    title: (e['title'] ?? '').toString(),
+                    url: (e['url'] as String?) ?? '',
+                    thumb:
+                        (e['thumb'] as String?) ??
+                        (e['thumbnail'] as String?) ??
+                        '',
+                    author: (e['author'] as String?),
+                  ),
+                );
+              }
+            } else {
+              // Unknown element type -> ignore
+            }
+          }
+        }
+
+        result[folder] = list;
+      });
+
+      // Persist back in canonical format under the correct key.
+      _box.put('folders', result);
+      // Remove legacy key if it exists.
+      if (_box.containsKey('data')) {
+        _box.delete('data');
+      }
+      return result;
+    }
+
+    // Fallback empty.
+    return <String, List<FavoriteItem>>{};
   }
 
-  Future<void> _persist() async {
-    await _box.put('folders', _data);
+  /// Persist a full folders map back to Hive and notify listeners.
+  Future<void> _save(Map<String, List<FavoriteItem>> data) async {
+    await _box.put('folders', data);
     _notify();
   }
 
-  // Folders
+  /// Ensure we have a normalized structure and at least one default folder.
+  Future<void> _migrateIfNeeded() async {
+    final hasFolders = _box.containsKey('folders');
+    final hasLegacy = _box.containsKey('data');
+
+    if (!hasFolders && !hasLegacy) {
+      await _box.put('folders', {'Favourites': <FavoriteItem>[]});
+      return;
+    }
+
+    // Reading via _data will normalize and write back if needed.
+    final normalized = _data;
+
+    if (normalized.isEmpty) {
+      // Guarantee at least the default folder exists.
+      await _box.put('folders', {'Favourites': <FavoriteItem>[]});
+    }
+  }
+
+  // -----------------------
+  // Folder operations
+  // -----------------------
+
   List<String> folders() {
-    final list = _data.keys.toList();
-    list.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return list;
+    final names = _data.keys.toList();
+    names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return names;
   }
 
   bool folderExists(String name) => _data.containsKey(name);
 
   Future<void> createFolder(String name) async {
     final n = name.trim();
-    if (n.isEmpty || _data.containsKey(n)) return;
-    _data[n] = [];
-    await _persist();
+    if (n.isEmpty) return;
+
+    final data = Map<String, List<FavoriteItem>>.from(_data);
+    data.putIfAbsent(n, () => <FavoriteItem>[]);
+    await _save(data);
   }
 
   Future<void> renameFolder(String oldName, String newName) async {
-    if (!_data.containsKey(oldName)) return;
     final n = newName.trim();
-    if (n.isEmpty || n == oldName || _data.containsKey(n)) return;
-    _data[n] = _data.remove(oldName)!;
-    await _persist();
+    if (n.isEmpty || n == oldName) return;
+
+    final data = Map<String, List<FavoriteItem>>.from(_data);
+    if (!data.containsKey(oldName) || data.containsKey(n)) return;
+
+    data[n] = data.remove(oldName)!;
+    await _save(data);
   }
 
   Future<void> deleteFolder(String name) async {
-    if (_data.remove(name) != null) await _persist();
+    final data = Map<String, List<FavoriteItem>>.from(_data);
+    if (data.remove(name) != null) {
+      await _save(data);
+    }
   }
 
-  // Items
+  // -----------------------
+  // Item operations
+  // -----------------------
+
   List<FavoriteItem> itemsIn(String folder) =>
       List.unmodifiable(_data[folder] ?? const []);
 
@@ -128,19 +229,31 @@ class FavoritesService {
   }
 
   Future<void> addToFolder(String folder, FavoriteItem item) async {
-    final list = _data.putIfAbsent(folder, () => []);
+    final data = Map<String, List<FavoriteItem>>.from(_data);
+    final list = List<FavoriteItem>.from(
+      data.putIfAbsent(folder, () => <FavoriteItem>[]),
+    );
+
     if (!list.any((e) => e.id == item.id)) {
       list.add(item);
-      await _persist();
+      data[folder] = list;
+      await _save(data);
     }
   }
 
   Future<void> removeFromFolder(String folder, String id) async {
-    final list = _data[folder];
-    if (list == null) return;
+    final data = Map<String, List<FavoriteItem>>.from(_data);
+    final list = List<FavoriteItem>.from(
+      data[folder] ?? const <FavoriteItem>[],
+    );
+
     list.removeWhere((e) => e.id == id);
-    if (list.isEmpty && folder != 'Favourites') _data.remove(folder);
-    await _persist();
+    if (list.isEmpty && folder != 'Favourites') {
+      data.remove(folder);
+    } else {
+      data[folder] = list;
+    }
+    await _save(data);
   }
 
   Future<bool> toggleInFolder(String folder, FavoriteItem item) async {
@@ -152,7 +265,10 @@ class FavoritesService {
     return true;
   }
 
+  // -----------------------
   // Public helpers
+  // -----------------------
+
   List<FavoriteItem> get allItems {
     final seen = <String, FavoriteItem>{};
     for (final items in _data.values) {
@@ -167,12 +283,26 @@ class FavoritesService {
       _data.values.any((list) => list.any((e) => e.id == id));
 
   Future<void> removeFromAllFolders(String id) async {
+    final data = Map<String, List<FavoriteItem>>.from(_data);
     bool removed = false;
-    _data.forEach((folder, list) {
-      final before = list.length;
-      list.removeWhere((e) => e.id == id);
-      if (list.length < before) removed = true;
+
+    data.forEach((folder, list) {
+      final newList = List<FavoriteItem>.from(list);
+      final before = newList.length;
+      newList.removeWhere((e) => e.id == id);
+      if (newList.length < before) {
+        removed = true;
+        if (newList.isEmpty && folder != 'Favourites') {
+          // delete empty non-default folder
+          data.remove(folder);
+        } else {
+          data[folder] = newList;
+        }
+      }
     });
-    if (removed) await _persist();
+
+    if (removed) {
+      await _save(data);
+    }
   }
 }

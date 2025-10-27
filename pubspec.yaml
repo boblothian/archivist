@@ -57,13 +57,13 @@ flutter:
     - assets/images/archivist_banner_logo.png
 
 flutter_native_splash:
-  color: "#FFFFFF"
-  image: assets/images/rana_logo.png              # pre-Android 12 & iOS
+  color: "#000000"
+  image: assets/images/mdlogo.png              # pre-Android 12 & iOS
   android_gravity: center                    # Android <12 positioning
   ios_content_mode: scaleAspectFill          # iOS can appear larger
   android_12:
-    image: assets/images/rana_logo.png       # Android 12 icon (size fixed by OS)
-    color: "#FFFFFF"
+    image: assets/images/mdlogo.png       # Android 12 icon (size fixed by OS)
+    color: "#000000"
 
 # Single, root-level config for launcher icons (do NOT nest under `flutter:`)
 flutter_launcher_icons:

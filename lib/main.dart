@@ -11,18 +11,33 @@ import 'home_page_screen.dart';
 import 'reading_lists_screen.dart';
 import 'services/favourites_service.dart';
 
+// ---------- Backgrounds: tweak these ----------
+const _seed = Color(0xFF6D1B1B); // sleek indigo accent
+const kLightBg = Color(0xFFFFFFFF);
+const kDarkBg = Color(0xFF0E0E12);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await FavoritesService.instance.init();
   await RecentProgressService.instance.init();
+
+  // Immersive mode; overlay icon brightness handled per-screen below
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
   runApp(const ArchivistApp());
 }
 
-const _seed = Color(0xFF4F46E5); // sleek indigo accent
-
 ThemeData _buildTheme(Brightness brightness) {
-  final scheme = ColorScheme.fromSeed(seedColor: _seed, brightness: brightness);
+  final isDark = brightness == Brightness.dark;
+
+  // Seeded scheme, but force our backgrounds
+  final scheme = ColorScheme.fromSeed(
+    seedColor: _seed,
+    brightness: brightness,
+  ).copyWith(
+    background: isDark ? kDarkBg : kLightBg,
+    surface: isDark ? const Color(0xFF121217) : Colors.white,
+  );
 
   return ThemeData(
     useMaterial3: true,
@@ -60,6 +75,13 @@ ThemeData _buildTheme(Brightness brightness) {
       centerTitle: true,
       elevation: 0,
       scrolledUnderElevation: 0,
+      systemOverlayStyle: SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: Colors.transparent,
+        statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+        systemNavigationBarIconBrightness:
+            isDark ? Brightness.light : Brightness.dark,
+      ),
     ),
 
     // 🎴 Cards
@@ -129,11 +151,12 @@ class ArchivistApp extends StatelessWidget {
       darkTheme: _buildTheme(Brightness.dark),
       themeMode: ThemeMode.system,
       home: AnimatedSplashScreen(
+        // Use theme-aware background for a seamless handoff
+        backgroundColor: kLightBg,
         splash: 'assets/images/logo.png',
-        splashIconSize: 300, // ↑ was 180
+        splashIconSize: 300,
         duration: 2500,
         splashTransition: SplashTransition.fadeTransition,
-        backgroundColor: Colors.white,
         nextScreen: const RootShell(),
       ),
     );
@@ -182,64 +205,78 @@ class _RootShellState extends State<RootShell> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: !(_keys[_current].currentState?.canPop() ?? false),
-      onPopInvoked: (didPop) {
-        if (didPop) return;
-        final nav = _keys[_current].currentState;
-        if (nav?.canPop() ?? false) {
-          nav!.pop();
-        }
-      },
-      child: Scaffold(
-        appBar: const ArchivistAppBar(), // ← global logo app bar
-        body: IndexedStack(
-          index: _current,
-          children: <Widget>[
-            _TabNav(
-              navigatorKey: _keys[0],
-              builder: (_) => const HomePageScreen(),
-            ),
-            _TabNav(
-              navigatorKey: _keys[1],
-              builder: (_) => const CollectionSearchScreen(),
-            ),
-            _TabNav(
-              navigatorKey: _keys[2],
-              builder: (_) => const FavoritesScreen(),
-            ),
-            _TabNav(
-              navigatorKey: _keys[3],
-              builder: (_) => const ReadingListsScreen(),
-            ),
-            _TabNav(
-              navigatorKey: _keys[4],
-              builder: (_) => const Placeholder(), // future Collections hub
-            ),
-          ],
-        ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: _current,
-          onDestinationSelected: _select,
-          destinations: const <NavigationDestination>[
-            NavigationDestination(
-              icon: Icon(Icons.home_outlined),
-              label: 'Home',
-            ),
-            NavigationDestination(icon: Icon(Icons.search), label: 'Search'),
-            NavigationDestination(
-              icon: Icon(Icons.favorite_outline),
-              label: 'Favourites',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.list_alt_outlined),
-              label: 'Reading',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.collections_bookmark_outlined),
-              label: 'Collections',
-            ),
-          ],
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // Keep system icons legible against our themed backgrounds
+    final overlay = SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      systemNavigationBarColor: Colors.transparent,
+      statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+      systemNavigationBarIconBrightness:
+          isDark ? Brightness.light : Brightness.dark,
+    );
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: overlay,
+      child: PopScope(
+        canPop: !(_keys[_current].currentState?.canPop() ?? false),
+        onPopInvoked: (didPop) {
+          if (didPop) return;
+          final nav = _keys[_current].currentState;
+          if (nav?.canPop() ?? false) {
+            nav!.pop();
+          }
+        },
+        child: Scaffold(
+          appBar: const ArchivistAppBar(),
+          body: IndexedStack(
+            index: _current,
+            children: <Widget>[
+              _TabNav(
+                navigatorKey: _keys[0],
+                builder: (_) => const HomePageScreen(),
+              ),
+              _TabNav(
+                navigatorKey: _keys[1],
+                builder: (_) => const CollectionSearchScreen(),
+              ),
+              _TabNav(
+                navigatorKey: _keys[2],
+                builder: (_) => const FavoritesScreen(),
+              ),
+              _TabNav(
+                navigatorKey: _keys[3],
+                builder: (_) => const ReadingListsScreen(),
+              ),
+              _TabNav(
+                navigatorKey: _keys[4],
+                builder: (_) => const Placeholder(),
+              ), // future Collections hub
+            ],
+          ),
+          bottomNavigationBar: NavigationBar(
+            selectedIndex: _current,
+            onDestinationSelected: _select,
+            destinations: const <NavigationDestination>[
+              NavigationDestination(
+                icon: Icon(Icons.home_outlined),
+                label: 'Home',
+              ),
+              NavigationDestination(icon: Icon(Icons.search), label: 'Search'),
+              NavigationDestination(
+                icon: Icon(Icons.favorite_outline),
+                label: 'Favourites',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.list_alt_outlined),
+                label: 'Reading',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.collections_bookmark_outlined),
+                label: 'Collections',
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -188,11 +188,7 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
         elevation: 0.0,
         titleSpacing: 16.0,
         title: Row(
-          children: const <Widget>[
-            _BrandMark(),
-            SizedBox(width: 8.0),
-            _BrandWordmark(),
-          ],
+          children: const <Widget>[SizedBox(width: 8.0), _BrandWordmark()],
         ),
       ),
       body: ListView(
@@ -401,13 +397,6 @@ class SectionHeader extends StatelessWidget {
       ],
     );
   }
-}
-
-class _BrandMark extends StatelessWidget {
-  const _BrandMark();
-  @override
-  Widget build(BuildContext context) =>
-      const Icon(Icons.home_outlined, size: 32);
 }
 
 class _BrandWordmark extends StatelessWidget {

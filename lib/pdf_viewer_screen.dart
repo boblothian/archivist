@@ -1,10 +1,13 @@
 import 'dart:io';
 
+import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'net.dart';
 import 'utils.dart';
 
 class PdfViewerScreen extends StatefulWidget {
@@ -29,6 +32,12 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
   String get _resumeKey =>
       'pdf_resume_${_localFile?.path.hashCode ?? widget.url.hashCode}';
+
+  String get _progressId =>
+      widget.filenameHint ??
+      widget.url ??
+      _localFile?.path ??
+      'pdf-${_localFile.hashCode}';
 
   @override
   void initState() {
@@ -77,6 +86,50 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   void dispose() {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
+  }
+
+  Future<bool> _downloadToFile(
+    String url,
+    File dst,
+    void Function(double progress)? onProgress,
+  ) async {
+    final client = http.Client();
+    try {
+      final req = http.Request('GET', Uri.parse(url));
+      req.headers.addAll(Net.headers); // ← IMPORTANT
+      final resp = await client.send(req);
+
+      if (resp.statusCode != 200) return false;
+
+      final total = resp.contentLength ?? 0;
+      int received = 0;
+      final sink = dst.openWrite();
+
+      await resp.stream
+          .listen(
+            (chunk) {
+              sink.add(chunk);
+              received += chunk.length;
+              if (total > 0 && onProgress != null) {
+                onProgress(received / total);
+              }
+            },
+            onError: (_) async {
+              await sink.close();
+            },
+            onDone: () async {
+              await sink.close();
+            },
+            cancelOnError: true,
+          )
+          .asFuture(); // await completion
+
+      // basic integrity check
+      final len = await dst.length();
+      return len > 0;
+    } finally {
+      client.close();
+    }
   }
 
   @override
@@ -138,8 +191,19 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
             swipeHorizontal: false,
             autoSpacing: true,
             pageFling: true,
-            onRender: (pages) => setState(() => _totalPages = pages ?? 0),
-            onViewCreated: (_) {},
+            onRender: (pages) {
+              setState(() => _totalPages = pages ?? 0);
+
+              // tell the recent service we opened this PDF
+              RecentProgressService.instance.updatePdf(
+                id: _progressId,
+                title: widget.filenameHint ?? 'PDF',
+                thumb: null, // pass a thumb if you have one
+                page: _currentPage + 1, // 1-based
+                total: _totalPages,
+              );
+            },
+
             onPageChanged: (page, total) {
               if (page != null && total != null) {
                 setState(() {
@@ -147,6 +211,15 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                   _totalPages = total;
                 });
                 _saveResume(page);
+
+                // also update global recent/progress
+                RecentProgressService.instance.updatePdf(
+                  id: _progressId,
+                  title: widget.filenameHint ?? 'PDF',
+                  thumb: null,
+                  page: page + 1, // 1-based
+                  total: total,
+                );
               }
             },
             onError: (e) => setState(() => _error = e.toString()),

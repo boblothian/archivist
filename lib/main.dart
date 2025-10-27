@@ -1,6 +1,9 @@
 // lib/main.dart
+import 'package:animated_splash_screen/animated_splash_screen.dart';
+import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import 'collection_search_screen.dart';
 import 'favourites_screen.dart';
@@ -11,8 +14,107 @@ import 'services/favourites_service.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await FavoritesService.instance.init();
+  await RecentProgressService.instance.init();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   runApp(const ArchivistApp());
+}
+
+const _seed = Color(0xFF4F46E5); // sleek indigo accent
+
+ThemeData _buildTheme(Brightness brightness) {
+  final scheme = ColorScheme.fromSeed(seedColor: _seed, brightness: brightness);
+
+  return ThemeData(
+    useMaterial3: true,
+    colorScheme: scheme,
+    scaffoldBackgroundColor: scheme.background,
+
+    // 📖 Typography — Merriweather for headings, Inter for body
+    textTheme: TextTheme(
+      displayLarge: GoogleFonts.merriweather(
+        fontWeight: FontWeight.w700,
+        letterSpacing: -0.5,
+      ),
+      headlineMedium: GoogleFonts.merriweather(fontWeight: FontWeight.w600),
+      titleLarge: GoogleFonts.inter(
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.1,
+      ),
+      bodyLarge: GoogleFonts.inter(height: 1.5, fontSize: 16),
+      bodyMedium: GoogleFonts.inter(height: 1.5, fontSize: 14),
+      labelLarge: GoogleFonts.inter(
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.2,
+      ),
+    ),
+
+    // 🧭 AppBar styling
+    appBarTheme: AppBarTheme(
+      backgroundColor: scheme.surface,
+      foregroundColor: scheme.onSurface,
+      titleTextStyle: GoogleFonts.merriweather(
+        fontWeight: FontWeight.w700,
+        fontSize: 22,
+        color: scheme.onSurface,
+      ),
+      centerTitle: true,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+    ),
+
+    // 🎴 Cards
+    cardTheme: CardThemeData(
+      elevation: 1,
+      margin: const EdgeInsets.all(8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
+      color: scheme.surface,
+    ),
+
+    // 🔘 Buttons
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        textStyle: GoogleFonts.inter(
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.1,
+        ),
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        textStyle: GoogleFonts.inter(fontWeight: FontWeight.w600),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    ),
+
+    // ✏️ Input Fields
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: scheme.surface,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: scheme.outlineVariant),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: scheme.primary, width: 2),
+      ),
+      labelStyle: GoogleFonts.inter(color: scheme.onSurfaceVariant),
+    ),
+
+    // 📚 Navigation Bar
+    navigationBarTheme: NavigationBarThemeData(
+      backgroundColor: scheme.surface,
+      indicatorColor: scheme.primaryContainer,
+      elevation: 0,
+      labelTextStyle: WidgetStateProperty.all(
+        GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 12),
+      ),
+    ),
+  );
 }
 
 class ArchivistApp extends StatelessWidget {
@@ -23,18 +125,40 @@ class ArchivistApp extends StatelessWidget {
     return MaterialApp(
       title: 'Archivist',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.black,
-        brightness: Brightness.light,
-        textTheme: const TextTheme(
-          headlineSmall: TextStyle(fontWeight: FontWeight.w700),
-          titleLarge: TextStyle(fontWeight: FontWeight.w700),
-        ),
+      theme: _buildTheme(Brightness.light),
+      darkTheme: _buildTheme(Brightness.dark),
+      themeMode: ThemeMode.system,
+      home: AnimatedSplashScreen(
+        splash: 'assets/images/logo.png',
+        splashIconSize: 300, // ↑ was 180
+        duration: 2500,
+        splashTransition: SplashTransition.fadeTransition,
+        backgroundColor: Colors.white,
+        nextScreen: const RootShell(),
       ),
-      home: const RootShell(),
     );
   }
+}
+
+/// Simple reusable AppBar that shows your banner logo everywhere.
+class ArchivistAppBar extends StatelessWidget implements PreferredSizeWidget {
+  const ArchivistAppBar({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return AppBar(
+      title: SizedBox(
+        height: 75,
+        child: Image.asset(
+          'assets/images/archivist_banner_logo.png',
+          fit: BoxFit.contain,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
 }
 
 /// Bottom-nav shell with independent navigation stacks per tab.
@@ -50,37 +174,31 @@ class _RootShellState extends State<RootShell> {
 
   void _select(int i) {
     if (_current == i) {
-      // Pop to root of the current tab.
       _keys[i].currentState?.popUntil((r) => r.isFirst);
     } else {
       setState(() => _current = i);
     }
   }
 
-  Future<bool> _onWillPop() async {
-    final canPop = _keys[_current].currentState?.canPop() ?? false;
-    if (canPop) {
-      _keys[_current].currentState?.pop();
-      return false;
-    }
-    return true;
-  }
-
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: _onWillPop,
+    return PopScope(
+      canPop: !(_keys[_current].currentState?.canPop() ?? false),
+      onPopInvoked: (didPop) {
+        if (didPop) return;
+        final nav = _keys[_current].currentState;
+        if (nav?.canPop() ?? false) {
+          nav!.pop();
+        }
+      },
       child: Scaffold(
+        appBar: const ArchivistAppBar(), // ← global logo app bar
         body: IndexedStack(
           index: _current,
           children: <Widget>[
             _TabNav(
               navigatorKey: _keys[0],
-              builder:
-                  (_) => const HomePageScreen(
-                    // Optionally provide your real shelf widget:
-                    // favoritesShelf: YourFavoritesShelf(),
-                  ),
+              builder: (_) => const HomePageScreen(),
             ),
             _TabNav(
               navigatorKey: _keys[1],
@@ -94,10 +212,9 @@ class _RootShellState extends State<RootShell> {
               navigatorKey: _keys[3],
               builder: (_) => const ReadingListsScreen(),
             ),
-            // A spare tab (Collections hub) if you add one later.
             _TabNav(
               navigatorKey: _keys[4],
-              builder: (_) => const Placeholder(), // TODO: Collections hub
+              builder: (_) => const Placeholder(), // future Collections hub
             ),
           ],
         ),

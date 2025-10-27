@@ -3,19 +3,32 @@
 
 import 'package:archivereader/services/favourites_service.dart';
 
-/// Minimal view model used by the shelf.
 class FavouriteVm {
   final String identifier;
   final String title;
   final String? thumbnailUrl;
-  final int downloads;
+  final int? downloads;
 
   const FavouriteVm({
     required this.identifier,
     required this.title,
-    required this.thumbnailUrl,
-    required this.downloads,
+    this.thumbnailUrl,
+    this.downloads,
   });
+}
+
+String _thumbForId(String id) => 'https://archive.org/services/img/$id';
+String _fallbackThumbForId(String id) =>
+    'https://archive.org/download/$id/$id.jpg';
+
+FavouriteVm? toFavouriteVm(FavoriteItem it) {
+  final thumb = it.thumb ?? it.url ?? _thumbForId(it.id);
+  return FavouriteVm(
+    identifier: it.id,
+    title: it.title,
+    thumbnailUrl: thumb,
+    downloads: null,
+  );
 }
 
 extension FavoritesServiceCompat on FavoritesService {
@@ -88,16 +101,4 @@ int favDownloads(dynamic o) {
     if (v is String) return int.tryParse(v) ?? 0;
   } catch (_) {}
   return 0;
-}
-
-/// Map any service item to the shelf view model; empty id = skip.
-FavouriteVm? toFavouriteVm(dynamic raw) {
-  final id = favId(raw);
-  if (id.isEmpty) return null;
-  return FavouriteVm(
-    identifier: id,
-    title: favTitle(raw).isNotEmpty ? favTitle(raw) : id,
-    thumbnailUrl: favThumb(raw),
-    downloads: favDownloads(raw),
-  );
 }

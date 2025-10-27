@@ -1,11 +1,14 @@
 // collection_detail_screen.dart
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:io';
 
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:android_intent_plus/flag.dart';
 import 'package:archivereader/services/favourites_service.dart';
-import 'package:archivereader/services/jellyfin_service.dart';
+import 'package:archivereader/services/recent_progress_service.dart';
+import 'package:archivereader/ui/capsule_theme.dart';
+import 'package:archivereader/widgets/capsule_thumb_card.dart';
 import 'package:archivereader/widgets/favourite_add_dialogue.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -26,6 +29,15 @@ enum SortMode {
   oldest,
   alphaAZ,
   alphaZA,
+}
+
+String _kindFor(dynamic item) {
+  final mt = (item.mediaType ?? item.format ?? '').toString().toLowerCase();
+  if (mt.contains('pdf')) return 'pdf';
+  if (mt.contains('epub')) return 'epub';
+  if (mt.contains('video')) return 'video';
+  if (mt.contains('audio')) return 'audio';
+  return 'collection';
 }
 
 enum SearchScope { metadata, title }
@@ -175,48 +187,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     return u == 0
         ? '$b ${units[u]}'
         : '${size.toStringAsFixed(size < 10 ? 1 : 0)} ${units[u]}';
-  }
-
-  Future<void> _saveToJellyfin(String fileUrl, String title) async {
-    final svc = JellyfinService.instance;
-    final cfg = await svc.loadConfig() ?? await svc.showConfigDialog(context);
-    if (cfg == null) return;
-
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Uploading to Jellyfin…')));
-
-    try {
-      await svc.addMovieFromUrl(
-        url: Uri.parse(fileUrl),
-        title: title,
-        httpHeaders: Net.headers,
-        onProgress: (sent, total) {
-          if (!mounted) return;
-          if (total != null && total > 0) {
-            final pct = ((sent / total) * 100).floor();
-            ScaffoldMessenger.of(context).hideCurrentSnackBar();
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('Uploading… $pct%')));
-          }
-        },
-      );
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Added to Jellyfin! Library refresh triggered.'),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
-    }
   }
 
   String _buildQuery(String searchQuery) {
@@ -532,6 +502,51 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     );
   }
 
+  Future<void> openExternallyWithChooser({
+    required String url,
+    required String mimeType, // e.g. 'video/*', 'audio/*', 'application/pdf'
+    String chooserTitle = 'Open with',
+  }) async {
+    if (!Platform.isAndroid) {
+      // fallback to url_launcher on iOS/desktop
+      if (!Platform.isAndroid) {
+        // fallback to url_launcher on iOS/desktop
+        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+        return;
+      }
+    }
+
+    // Base VIEW intent
+    final viewIntent = AndroidIntent(
+      action: 'android.intent.action.VIEW',
+      data: url, // http(s)://, content://, file://
+      type: mimeType, // <-- IMPORTANT for resolver to show correct apps
+      flags: <int>[
+        Flag.FLAG_ACTIVITY_NEW_TASK,
+        // Grant read permission if you're passing a content:// URI
+        Flag.FLAG_GRANT_READ_URI_PERMISSION,
+      ],
+    );
+
+    // Most versions of android_intent_plus support this convenience:
+    try {
+      await viewIntent.launchChooser(chooserTitle);
+      return;
+    } catch (_) {
+      // If your plugin version lacks launchChooser, build ACTION_CHOOSER manually:
+      final chooserIntent = AndroidIntent(
+        action: 'android.intent.action.CHOOSER',
+        // EXTRA_INTENT expects a parcelable intent; plugin accepts map via extras
+        arguments: <String, dynamic>{
+          'android.intent.extra.INTENT': viewIntent,
+          'android.intent.extra.TITLE': chooserTitle,
+        },
+        flags: <int>[Flag.FLAG_ACTIVITY_NEW_TASK],
+      );
+      await chooserIntent.launch();
+    }
+  }
+
   Future<List<Map<String, String>>> _fetchCollectionChildren(
     String collectionId,
   ) async {
@@ -679,18 +694,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                               ? ViewMode.list
                               : ViewMode.grid,
                 ),
-          ),
-          IconButton(
-            tooltip: 'Jellyfin Settings',
-            icon: const Icon(Icons.settings),
-            onPressed: () async {
-              await JellyfinService.instance.showConfigDialog(context);
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Jellyfin settings saved.')),
-                );
-              }
-            },
           ),
         ],
         bottom: PreferredSize(
@@ -1064,6 +1067,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                                 op['fmt']!.contains('h.264')
                             ? Icons.movie
                             : Icons.video_file;
+
                     return ListTile(
                       leading: Icon(icon),
                       title: Text(
@@ -1092,6 +1096,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                           );
                         }
 
+                        // Ask how to open
                         final choice = await showDialog<String>(
                           context: context,
                           builder:
@@ -1106,11 +1111,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                                         () => Navigator.pop(dCtx, 'browser'),
                                     child: const Text('Browser'),
                                   ),
-                                  TextButton(
-                                    onPressed:
-                                        () => Navigator.pop(dCtx, 'jellyfin'),
-                                    child: const Text('Save to Jellyfin'),
-                                  ),
                                   ElevatedButton(
                                     onPressed: () => Navigator.pop(dCtx, 'app'),
                                     child: const Text('Installed app'),
@@ -1118,34 +1118,53 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                                 ],
                               ),
                         );
-
                         if (choice == null) return;
 
-                        try {
-                          if (choice == 'jellyfin') {
-                            await _saveToJellyfin(op['url']!, title);
-                          } else if (choice == 'app') {
-                            final ok = await _openWithInstalledApp(uri);
-                            if (!ok) {
-                              await launchUrl(
-                                uri,
-                                mode: LaunchMode.externalApplication,
-                              );
-                            }
-                          } else {
-                            await launchUrl(
-                              uri,
-                              mode: LaunchMode.externalApplication,
-                            );
-                          }
-                        } catch (e) {
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Could not open video: $e')),
-                          );
+                        // Close the sheet before launching
+                        if (mounted) Navigator.pop(context);
+
+                        // Best-effort MIME from format/extension
+                        String mime = 'video/*';
+                        final fmt = (op['fmt'] ?? '').toString().toLowerCase();
+                        final nameLower =
+                            (op['name'] ?? '').toString().toLowerCase();
+                        if (fmt.contains('webm') ||
+                            nameLower.endsWith('.webm')) {
+                          mime = 'video/webm';
+                        } else if (fmt.contains('mp4') ||
+                            fmt.contains('h.264') ||
+                            nameLower.endsWith('.mp4') ||
+                            nameLower.endsWith('.m4v')) {
+                          mime = 'video/mp4';
+                        } else if (fmt.contains('matroska') ||
+                            nameLower.endsWith('.mkv')) {
+                          mime = 'video/x-matroska';
+                        } else if (nameLower.endsWith('.m3u8')) {
+                          mime = 'application/vnd.apple.mpegurl';
                         }
 
-                        if (mounted) Navigator.pop(context);
+                        // Log as “viewed / watched”
+                        await RecentProgressService.instance.touch(
+                          id: identifier,
+                          title: title,
+                          thumb: _thumbForId(identifier),
+                          kind: 'video',
+                        );
+
+                        if (choice == 'browser') {
+                          // Open in default external handler (likely browser)
+                          await launchUrl(
+                            uri,
+                            mode: LaunchMode.externalApplication,
+                          );
+                        } else {
+                          // Force Android chooser so the popup appears
+                          await openExternallyWithChooser(
+                            url: uri.toString(),
+                            mimeType: mime,
+                            chooserTitle: 'Open with',
+                          );
+                        }
                       },
                     );
                   },
@@ -1293,68 +1312,37 @@ class _GridCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
 
     return Material(
-      color: highlight ? cs.surfaceVariant : cs.surface,
-      borderRadius: BorderRadius.circular(12),
-      clipBehavior: Clip.antiAlias,
+      // ensures InkWell ripple without layout impact
+      type: MaterialType.transparency,
       child: InkWell(
         onTap: onTap,
         onLongPress: onLongPress,
+        borderRadius: BorderRadius.circular(kCapsuleRadius),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: Hero(
-                tag: 'thumb:$id',
-                child: CachedNetworkImage(
-                  httpHeaders: Net.headers,
-                  imageUrl: thumb,
-                  fit: BoxFit.cover,
-                  placeholder:
-                      (context, url) =>
-                          const Center(child: CircularProgressIndicator()),
-                  errorWidget:
-                      (context, url, error) => Image.network(
-                        _fallbackThumbForId(id),
-                        headers: Net.headers,
-                        fit: BoxFit.cover,
-                      ),
-                ),
+              // WHY: allow the image to flex so Column never overflows
+              child: CapsuleThumbCard(
+                heroTag: 'thumb:$id',
+                imageUrl: thumb,
+                fit: BoxFit.contain,
+                fillParent: true, // NEW: react to available height
+                topRightOverlay:
+                    mediatype.isNotEmpty
+                        ? mediaTypePill(context, mediatype)
+                        : null,
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 6),
-                  Align(
-                    alignment: Alignment.center,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        mediatype.toUpperCase(),
-                        style: Theme.of(context).textTheme.labelSmall,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+            const SizedBox(height: 8),
+            Text(
+              title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.titleSmall,
             ),
           ],
         ),
@@ -1384,52 +1372,56 @@ class _ListTileCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      child: ListTile(
-        onTap: onTap,
-        onLongPress: onLongPress,
-        leading: Hero(
-          tag: 'thumb:$id',
-          child: AspectRatio(
-            aspectRatio: 3 / 4,
-            child: CachedNetworkImage(
-              httpHeaders: Net.headers,
+    final textTheme = Theme.of(context).textTheme;
+
+    return InkWell(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      borderRadius: BorderRadius.circular(kCapsuleRadius),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 96,
+            child: CapsuleThumbCard(
+              heroTag: 'thumb:$id',
               imageUrl: thumb,
-              fit: BoxFit.cover,
-              placeholder:
-                  (context, url) => const Center(
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-              errorWidget:
-                  (context, url, error) => Image.network(
-                    _fallbackThumbForId(id),
-                    headers: Net.headers,
-                    fit: BoxFit.cover,
-                    errorBuilder:
-                        (_, __, ___) => const Icon(Icons.broken_image),
-                  ),
+              aspectRatio: 3 / 4,
+              fit: BoxFit.contain,
+              topRightOverlay:
+                  mediatype.isNotEmpty
+                      ? mediaTypePill(context, mediatype)
+                      : null,
             ),
           ),
-        ),
-        title: Text(title, maxLines: 2, overflow: TextOverflow.ellipsis),
-        subtitle: Text(
-          subtitle.isEmpty ? mediatype.toUpperCase() : subtitle,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: cs.primaryContainer,
-            borderRadius: BorderRadius.circular(999),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  if (subtitle.isNotEmpty)
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.bodySmall!.copyWith(
+                        color: textTheme.bodySmall?.color?.withOpacity(0.75),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
-          child: Text(
-            mediatype.toUpperCase(),
-            style: Theme.of(context).textTheme.labelSmall,
-          ),
-        ),
+        ],
       ),
     );
   }
@@ -1539,7 +1531,38 @@ class _CollectionQuickPick extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    onTap: () => Navigator.of(context).pop(it),
+                    onTap: () async {
+                      final id = it['identifier'] as String;
+                      final title =
+                          (it['title'] as String?)?.trim().isNotEmpty == true
+                              ? it['title'] as String
+                              : id;
+                      final mt =
+                          (it['mediatype'] as String? ?? '').toLowerCase();
+                      final kind =
+                          mt.contains('pdf')
+                              ? 'pdf'
+                              : mt.contains('epub')
+                              ? 'epub'
+                              : mt.contains('video')
+                              ? 'video'
+                              : mt.contains('audio')
+                              ? 'audio'
+                              : 'collection';
+                      final thumb =
+                          (it['thumb'] as String?)?.trim().isNotEmpty == true
+                              ? it['thumb'] as String
+                              : _fallbackThumbForId(id);
+
+                      await RecentProgressService.instance.touch(
+                        id: id,
+                        title: title,
+                        thumb: thumb,
+                        kind: kind,
+                      );
+
+                      Navigator.of(context).pop(it);
+                    },
                   );
                 },
               ),

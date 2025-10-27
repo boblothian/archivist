@@ -1,94 +1,65 @@
-// lib/collection_store.dart
-import 'package:flutter/cupertino.dart';
+// ===================================================================
+// File: lib/collection_store.dart
+// Shared store for “Pinned Collections”
+// ===================================================================
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-/// In-memory store for Home "Recommended collections".
-/// Uses **real Internet Archive slugs** so taps hit the live API.
+const String kPinnedCollectionsKey = 'pinned_collections';
+
 class CollectionsHomeState extends ChangeNotifier {
-  final List<CollectionMeta> _pinned = <CollectionMeta>[];
+  List<String> _pins = const [];
 
-  // If the user hasn’t pinned anything yet, show these valid defaults.
-  List<CollectionMeta> get pinned =>
-      _pinned.isEmpty ? _seed.take(3).toList() : List.unmodifiable(_pinned);
+  List<String> get pins => _pins;
 
-  bool isPinned(String categoryName) =>
-      _pinned.any((c) => c.categoryName == categoryName);
-
-  void pin(CollectionMeta c) {
-    if (isPinned(c.categoryName)) return;
-    _pinned.add(c);
+  Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    _pins = List.of(prefs.getStringList(kPinnedCollectionsKey) ?? const []);
     notifyListeners();
   }
 
-  void unpin(String categoryName) {
-    _pinned.removeWhere((c) => c.categoryName == categoryName);
-    notifyListeners();
+  bool isPinned(String id) => _pins.contains(id);
+
+  Future<void> pin(String id) async {
+    final trimmed = id.trim();
+    if (trimmed.isEmpty || _pins.contains(trimmed)) return;
+    _pins = List.of(_pins)..add(trimmed);
+    await _persist();
   }
 
-  List<CollectionMeta> search(String query) {
-    final q = query.trim().toLowerCase();
-    if (q.isEmpty) return _seed;
-    return _seed
-        .where(
-          (c) =>
-              c.title.toLowerCase().contains(q) ||
-              c.categoryName.toLowerCase().contains(q) ||
-              c.tags.any((t) => t.toLowerCase().contains(q)),
-        )
-        .toList();
+  Future<void> unpin(String id) async {
+    if (!_pins.contains(id)) return;
+    _pins = List.of(_pins)..remove(id);
+    await _persist();
+  }
+
+  Future<void> reorder(int oldIndex, int newIndex) async {
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (oldIndex == newIndex || oldIndex < 0 || newIndex < 0) return;
+    final list = List.of(_pins);
+    final item = list.removeAt(oldIndex);
+    list.insert(newIndex, item);
+    _pins = list;
+    await _persist();
+  }
+
+  Future<void> _persist() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(kPinnedCollectionsKey, _pins);
+    notifyListeners();
   }
 }
 
 class CollectionsHomeScope extends InheritedNotifier<CollectionsHomeState> {
-  CollectionsHomeScope({required Widget child, Key? key})
-    : super(notifier: CollectionsHomeState(), child: child, key: key);
+  const CollectionsHomeScope({
+    super.key,
+    required CollectionsHomeState notifier,
+    required Widget child,
+  }) : super(notifier: notifier, child: child);
 
-  static CollectionsHomeState of(context) =>
+  static CollectionsHomeState? maybeOf(BuildContext context) =>
       context
-          .dependOnInheritedWidgetOfExactType<CollectionsHomeScope>()!
-          .notifier!;
+          .dependOnInheritedWidgetOfExactType<CollectionsHomeScope>()
+          ?.notifier;
+  static CollectionsHomeState of(BuildContext context) => maybeOf(context)!;
 }
-
-class CollectionMeta {
-  final String categoryName; // slug expected by your CollectionDetailScreen
-  final String title; // display title
-  final List<String> tags;
-  const CollectionMeta({
-    required this.categoryName,
-    required this.title,
-    required this.tags,
-  });
-}
-
-/// Real Internet Archive collection slugs (expand as needed).
-const List<CollectionMeta> _seed = <CollectionMeta>[
-  CollectionMeta(
-    categoryName: 'classic_tv',
-    title: 'Classic TV',
-    tags: ['television', 'video', 'retro'],
-  ),
-  CollectionMeta(
-    categoryName: 'prelinger',
-    title: 'Prelinger Archives',
-    tags: ['ephemera', 'industrial', 'video', 'history'],
-  ),
-  CollectionMeta(
-    categoryName: 'animationandcartoons',
-    title: 'Animation & Cartoons',
-    tags: ['video', 'cartoons', 'animation'],
-  ),
-  CollectionMeta(
-    categoryName: 'etree',
-    title: 'Live Music Archive',
-    tags: ['music', 'lossless', 'audio'],
-  ),
-  CollectionMeta(
-    categoryName: 'opensource',
-    title: 'Open Source Software',
-    tags: ['software', 'isos', 'linux', 'bsd'],
-  ),
-  CollectionMeta(
-    categoryName: 'americana', // American Libraries
-    title: 'American Libraries',
-    tags: ['books', 'library', 'texts', 'us'],
-  ),
-];

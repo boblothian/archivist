@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:archivereader/services/favourites_service.dart'; // British spelling in file path
 import 'package:archivereader/services/favourites_service_compat.dart';
 import 'package:archivereader/services/filters.dart';
+import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -56,93 +57,45 @@ class CollectionCapsuleCard extends StatelessWidget {
   final String identifier;
   final String title;
   final String? thumbnailUrl;
-  final int downloads;
-  final VoidCallback onTap;
-  final bool showPin;
-  final VoidCallback? onPinToggle;
+  final int? downloads;
+  final VoidCallback? onTap;
 
   const CollectionCapsuleCard({
     super.key,
     required this.identifier,
     required this.title,
     this.thumbnailUrl,
-    required this.downloads,
-    required this.onTap,
-    this.showPin = false,
-    this.onPinToggle,
+    this.downloads,
+    this.onTap,
   });
+
+  String _thumbForId(String id) => 'https://archive.org/services/img/$id';
 
   @override
   Widget build(BuildContext context) {
+    final imgUrl = thumbnailUrl ?? _thumbForId(identifier); // ← fallback
     return Card(
       shape: const StadiumBorder(),
       child: InkWell(
-        borderRadius: BorderRadius.circular(999),
         onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Row(
             children: [
-              ClipOval(
-                child: SizedBox(
+              ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: CachedNetworkImage(
+                  imageUrl: imgUrl, // ← always non-null now
                   width: 48,
                   height: 48,
-                  child:
-                      thumbnailUrl != null
-                          ? CachedNetworkImage(
-                            imageUrl: thumbnailUrl!,
-                            fit: BoxFit.cover,
-                            placeholder:
-                                (_, __) => const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                ),
-                            errorWidget:
-                                (_, __, ___) => Container(
-                                  color: Colors.grey[300],
-                                  child: const Icon(
-                                    Icons.collections,
-                                    size: 24,
-                                  ),
-                                ),
-                          )
-                          : Container(
-                            color: Colors.grey[300],
-                            child: const Icon(Icons.collections, size: 24),
-                          ),
+                  fit: BoxFit.cover,
+                  errorWidget:
+                      (_, __, ___) => const Icon(Icons.image_not_supported),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      title.isEmpty ? identifier : title,
-                      style: Theme.of(context).textTheme.titleSmall,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      '$downloads downloads',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
-                    ),
-                  ],
-                ),
-              ),
-              if (showPin && onPinToggle != null)
-                IconButton(
-                  icon: const Icon(Icons.push_pin_outlined, size: 20),
-                  onPressed: onPinToggle,
-                )
-              else
-                const Icon(Icons.chevron_right, color: Colors.grey),
+              const SizedBox(width: 10),
+              Text(title, overflow: TextOverflow.ellipsis),
             ],
           ),
         ),
@@ -241,66 +194,17 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
             _BrandWordmark(),
           ],
         ),
-        actions: <Widget>[
-          TextButton(onPressed: () {}, child: const Text('ARTBOARD')),
-        ],
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 24.0),
         children: <Widget>[
-          const SectionHeader(title: 'Continue watching'),
-          const SizedBox(height: 8.0),
-          const HList(
-            children: <Widget>[
-              ResumePlaceholderCard(),
-              PosterCard.large(
-                title: 'Night of the\nLiving Dead',
-                subtitle: 'Play',
-              ),
-              PosterCard.large(title: 'Nosferatu', subtitle: 'Play'),
-              PosterCard.large(
-                title: 'CAPTAIN\nAMERICA',
-                captionTopRight: '15 mi',
-                chip: 'KSV',
-              ),
-            ],
-          ),
-          const SizedBox(height: 16.0),
           const SectionHeader(title: 'Continue reading'),
           const SizedBox(height: 8.0),
-          const HList(
-            children: <Widget>[
-              BookCard(
-                title: 'LITTLE\nDORRIT',
-                author: 'Charles Dick.',
-                progressLabel: 'in progress',
-              ),
-              BookCard(
-                title: 'THE COUNT OF\nMONTE CRISTO',
-                author: 'Alexandra Dumas',
-                progressLabel: 'in progress',
-              ),
-              BookCard(
-                title: "BLACKWOOD'S\nEDINBURGH MAGAZINE",
-                author: '',
-                progressLabel: 'in progress',
-              ),
-            ],
-          ),
-          const SizedBox(height: 16.0),
+          _BuildContinueReading(),
 
-          // Recommended (Pinned)
-          SectionHeader(
-            title: 'Recommended collections',
-            actionLabel: 'Manage',
-            onAction: () => _openManagePins(context),
-          ),
+          const SectionHeader(title: 'Continue watching'),
           const SizedBox(height: 8.0),
-          _CollectionsGrid(
-            data: _pinned,
-            onTap: (c) => _openCollectionById(context, c.categoryName),
-            onReorder: _onReorderPins,
-          ),
+          _BuildContinueWatching(),
 
           const SizedBox(height: 16.0),
 
@@ -342,15 +246,6 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
           const ReadingListCarousel(),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed:
-            () => showSearch(
-              context: context,
-              delegate: _SimpleSearchDelegate(_filters),
-            ),
-        child: const Icon(Icons.search),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 
@@ -390,8 +285,11 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
   /// Favourites shelf — uses FAVOURITES service (British).
   /// If your service exposes a different getter, change the next line only.
   Widget _buildFavouritesShelf(BuildContext context) {
-    final raw = FavoritesService.instance.itemsOrEmpty; // <- adapter
-    final favs = raw.map(toFavouriteVm).whereType<FavouriteVm>().toList();
+    final List<FavoriteItem> raw =
+        FavoritesService.instance.itemsOrEmpty.cast<FavoriteItem>();
+
+    final List<FavouriteVm> favs =
+        raw.map<FavouriteVm?>(toFavouriteVm).whereType<FavouriteVm>().toList();
 
     if (favs.isEmpty) {
       return const Center(
@@ -473,8 +371,6 @@ class _CollectionsGrid extends StatelessWidget {
           thumbnailUrl: meta.thumbnailUrl,
           downloads: meta.downloads,
           onTap: () => onTap(meta),
-          showPin: true,
-          onPinToggle: () {}, // no-op in grid; managed in Manage screen
         );
       },
     );
@@ -510,13 +406,14 @@ class SectionHeader extends StatelessWidget {
 class _BrandMark extends StatelessWidget {
   const _BrandMark();
   @override
-  Widget build(BuildContext context) => const Icon(Icons.book, size: 32);
+  Widget build(BuildContext context) =>
+      const Icon(Icons.home_outlined, size: 32);
 }
 
 class _BrandWordmark extends StatelessWidget {
   const _BrandWordmark();
   @override
-  Widget build(BuildContext context) => const Text('Archive');
+  Widget build(BuildContext context) => const Text('Home');
 }
 
 class HList extends StatelessWidget {
@@ -594,7 +491,7 @@ class CategoriesGrid extends StatelessWidget {
                     Category.classic => 'gutenberg',
                     Category.books => 'books',
                     Category.magazines => 'magazines',
-                    Category.comics => 'comic_books',
+                    Category.comics => 'comics_inbox',
                     Category.video => 'movies',
                     Category.readingList => 'readinglists',
                   };
@@ -642,6 +539,284 @@ class ExploreCollectionsScreen extends StatelessWidget {
     appBar: AppBar(title: const Text('Explore Collections')),
     body: const Center(child: Text('Coming soon')),
   );
+}
+
+class _BuildContinueReading extends StatelessWidget {
+  const _BuildContinueReading();
+
+  // --------------------------------------------------------------
+  // Helper: turn a raw id (file-path or identifier) into the
+  //         Archive.org *item identifier* that we can use for
+  //         __ia_thumb.jpg
+  // --------------------------------------------------------------
+  String _itemId(String rawId) {
+    // 1. Split on '/'  →  "item123/Invincible 09.pdf"  →  ["item123","Invincible 09.pdf"]
+    // 2. Take the part *before* the last slash (the item identifier)
+    // 3. Remove any file extension just in case
+    final parts = rawId.split('/');
+    final fileName = parts.last;
+    return fileName.split('.').first; // removes .pdf, .cbz, .epub, …
+  }
+
+  String _thumbUrl(String rawId) =>
+      'https://archive.org/download/${_itemId(rawId)}/__ia_thumb.jpg';
+
+  @override
+  Widget build(BuildContext context) {
+    // Newest first, keep only pdf/epub/cbz/cbr/zip/rar
+    final recent =
+        RecentProgressService.instance.recent(limit: 30).where((e) {
+          final k = (e['kind'] as String?)?.toLowerCase();
+          return k == 'pdf' ||
+              k == 'epub' ||
+              k == 'cbz' ||
+              k == 'cbr' ||
+              k == 'zip' ||
+              k == 'rar';
+        }).toList();
+
+    if (recent.isEmpty) {
+      return const SizedBox(
+        height: 48,
+        child: Center(child: Text('No recent reading')),
+      );
+    }
+
+    return SizedBox(
+      height: 180,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: recent.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (_, i) {
+          final e = recent[i];
+          final String rawId = e['id'] as String; // <-- may be "item/file.pdf"
+          final String itemId = _itemId(rawId); // <-- clean identifier
+          final title = (e['title'] as String?) ?? itemId;
+
+          // Prefer a thumb that the service already saved, otherwise use __ia_thumb.jpg
+          final thumb = (e['thumb'] as String?) ?? _thumbUrl(rawId);
+
+          // ---------- progress ----------
+          double? progress;
+          String? progressLabel;
+
+          final p = e['progress'];
+          if (p is num) progress = p.toDouble().clamp(0.0, 1.0);
+
+          final cur = e['currentPage'];
+          final tot = e['totalPages'];
+          if (cur is num && tot is num && tot > 0) {
+            progress = (cur / tot).clamp(0.0, 1.0);
+            progressLabel = 'Page ${cur.toInt()} of ${tot.toInt()}';
+          }
+
+          // ---------- card ----------
+          return _ResumeBookCard(
+            id: itemId, // <-- clean identifier for the query
+            title: title,
+            thumb: thumb,
+            progress: progress,
+            progressLabel: progressLabel,
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder:
+                      (_) => CollectionDetailScreen(
+                        categoryName: title,
+                        customQuery:
+                            'identifier:$itemId', // <-- uses the clean id
+                      ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ResumeBookCard extends StatelessWidget {
+  final String id;
+  final String title;
+  final String thumb;
+  final double? progress; // 0..1
+  final String? progressLabel; // optional “Page X of Y”
+  final VoidCallback onTap;
+
+  const _ResumeBookCard({
+    required this.id,
+    required this.title,
+    required this.thumb,
+    required this.onTap,
+    this.progress,
+    this.progressLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AspectRatio(
+      aspectRatio: 2 / 3,
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: CachedNetworkImage(
+                  imageUrl: thumb,
+                  fit: BoxFit.cover,
+                  errorWidget:
+                      (_, __, ___) => Image.network(
+                        'https://archive.org/download/$id/$id.jpg',
+                        fit: BoxFit.cover,
+                        errorBuilder:
+                            (_, __, ___) => const Icon(Icons.broken_image),
+                      ),
+                ),
+              ),
+              if (progress != null) ...[
+                LinearProgressIndicator(value: progress),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    progressLabel ??
+                        '${(progress! * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                ),
+              ],
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BuildContinueWatching extends StatelessWidget {
+  const _BuildContinueWatching();
+
+  @override
+  Widget build(BuildContext context) {
+    // Pull recent, keep only videos, newest first
+    final recent =
+        RecentProgressService.instance
+            .recent(limit: 20)
+            .where((e) => (e['kind'] as String?) == 'video')
+            .toList();
+
+    if (recent.isEmpty) {
+      return const SizedBox(
+        height: 48,
+        child: Center(child: Text('No recent videos')),
+      );
+    }
+
+    return SizedBox(
+      height: 180,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: recent.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (_, i) {
+          final e = recent[i];
+          final id = e['id'] as String;
+          final title = (e['title'] as String?) ?? id;
+          final thumb =
+              (e['thumb'] as String?) ?? 'https://archive.org/services/img/$id';
+
+          return _ResumeVideoCard(
+            id: id,
+            title: title,
+            thumb: thumb,
+            onTap: () {
+              // Jump to a screen that lists just this item, then the user picks a file;
+              // your CollectionDetailScreen will open the chooser from there.
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder:
+                      (_) => CollectionDetailScreen(
+                        categoryName: title,
+                        customQuery: 'identifier:$id', // shows only this item
+                      ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ResumeVideoCard extends StatelessWidget {
+  final String id;
+  final String title;
+  final String thumb;
+  final VoidCallback onTap;
+
+  const _ResumeVideoCard({
+    required this.id,
+    required this.title,
+    required this.thumb,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AspectRatio(
+      aspectRatio: 2 / 3,
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: CachedNetworkImage(
+                  imageUrl: thumb,
+                  fit: BoxFit.cover,
+                  errorWidget:
+                      (_, __, ___) => Image.network(
+                        'https://archive.org/download/$id/$id.jpg',
+                        fit: BoxFit.cover,
+                        errorBuilder:
+                            (_, __, ___) => const Icon(Icons.broken_image),
+                      ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class ManagePinsScreen extends StatelessWidget {

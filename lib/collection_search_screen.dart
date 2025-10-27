@@ -1,6 +1,7 @@
 // lib/collection_search_screen.dart
 import 'dart:async';
 
+import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
@@ -75,7 +76,14 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
     }
   }
 
-  void _open(ArchiveCollection c) {
+  Future<void> _open(ArchiveCollection c) async {
+    await RecentProgressService.instance.touch(
+      id: c.identifier,
+      title: c.title?.isNotEmpty == true ? c.title! : c.identifier,
+      thumb:
+          c.thumbnailUrl ?? 'https://archive.org/services/img/${c.identifier}',
+      kind: 'collection',
+    );
     Navigator.of(context).push(
       MaterialPageRoute(
         builder:
@@ -175,16 +183,17 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
                               if (pinned) {
                                 pins?.unpin(c.identifier);
                               } else {
-                                pins?.pin(
-                                  CollectionMeta(
-                                    categoryName: c.identifier,
-                                    title:
-                                        c.title.isNotEmpty
-                                            ? c.title
-                                            : c.identifier,
-                                    tags: const [],
-                                  ),
-                                );
+                                onPinToggle:
+                                () {
+                                  if (pinned) {
+                                    pins?.unpin(c.identifier);
+                                  } else {
+                                    pins?.pin(
+                                      c.identifier,
+                                    ); // ⟵ change to String
+                                  }
+                                  setState(() {});
+                                };
                               }
                               setState(() {});
                             },
@@ -230,14 +239,14 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
 class _CollectionCard extends StatelessWidget {
   final ArchiveCollection collection;
   final bool pinned;
-  final VoidCallback onTap;
-  final VoidCallback onPinToggle;
+  final VoidCallback? onTap;
+  final VoidCallback? onPinToggle;
 
   const _CollectionCard({
     required this.collection,
     required this.pinned,
-    required this.onTap,
-    required this.onPinToggle,
+    this.onTap,
+    this.onPinToggle,
   });
 
   @override

@@ -1,23 +1,30 @@
+// lib/services/recent_progress_service.dart
+import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 
-/// Stores last opened + reading progress for PDFs/EPUBs/videos.
-/// Keyed by a stable id (e.g., Archive.org identifier or file path).
 class RecentProgressService {
   RecentProgressService._();
   static final instance = RecentProgressService._();
 
-  late Box _box; // key: id, value: Map<String, dynamic>
+  late Box _box;
+
+  // REACTIVE NOTIFIER
+  final version = ValueNotifier<int>(0);
+  void _notify() => version.value++;
 
   Future<void> init() async {
     _box = await Hive.openBox('recent_progress');
+    _notify();
   }
 
-  /// Call whenever a thing is opened (collection, pdf, epub, video, etc).
+  /// First open — merge with existing
   Future<void> touch({
     required String id,
     required String title,
     String? thumb,
-    required String kind, // 'collection' | 'pdf' | 'epub' | 'video'
+    required String kind,
+    String? fileUrl,
+    String? fileName,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final prev = Map<String, dynamic>.from(_box.get(id) ?? {});
@@ -27,17 +34,22 @@ class RecentProgressService {
       'thumb': thumb,
       'kind': kind,
       'lastOpenedAt': now,
+      if (fileUrl != null) 'fileUrl': fileUrl,
+      if (fileName != null) 'fileName': fileName,
     });
     await _box.put(id, prev);
+    _notify();
   }
 
-  /// Update PDF progress (1-based page + total)
+  /// PDF page update
   Future<void> updatePdf({
     required String id,
     required String title,
     String? thumb,
     required int page,
     required int total,
+    String? fileUrl,
+    String? fileName,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     await _box.put(id, {
@@ -50,16 +62,23 @@ class RecentProgressService {
       'percent': total > 0 ? page / total : 0.0,
       'lastReadAt': now,
       'lastOpenedAt': now,
+      if (fileUrl != null) 'fileUrl': fileUrl,
+      if (fileName != null) 'fileName': fileName,
     });
+    _notify();
   }
 
-  /// Update EPUB progress (CFI + percent 0..1)
+  /// EPUB progress – FIXED: uses Hive, same key
   Future<void> updateEpub({
     required String id,
     required String title,
     String? thumb,
-    required String cfi,
+    required int page,
+    required int total,
     required double percent,
+    required String cfi,
+    String? fileUrl,
+    String? fileName,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     await _box.put(id, {
@@ -67,14 +86,23 @@ class RecentProgressService {
       'title': title,
       'thumb': thumb,
       'kind': 'epub',
-      'cfi': cfi,
+      'page': page,
+      'total': total,
       'percent': percent,
-      'lastReadAt': now,
+      'cfi': cfi,
+      'fileUrl': fileUrl,
+      'fileName': fileName,
       'lastOpenedAt': now,
+      'lastReadAt': now,
     });
+    _notify();
   }
 
-  /// Most recent anything
+  Future<void> remove(String id) async {
+    await _box.delete(id);
+    _notify();
+  }
+
   Map<String, dynamic>? get lastViewed {
     final values = _box.values;
     if (values.isEmpty) return null;
@@ -85,7 +113,6 @@ class RecentProgressService {
     return list.first;
   }
 
-  /// A short list for the “Previously viewed/watched” shelf
   List<Map<String, dynamic>> recent({int limit = 10}) {
     final list = _box.values.map((v) => Map<String, dynamic>.from(v)).toList();
     list.sort(
@@ -97,5 +124,29 @@ class RecentProgressService {
   Map<String, dynamic>? getById(String id) {
     final v = _box.get(id);
     return v == null ? null : Map<String, dynamic>.from(v);
+  }
+
+  /// Video progress – percent-based (0.0 … 1.0)
+  Future<void> updateVideo({
+    required String id,
+    required String title,
+    String? thumb,
+    required double percent,
+    required String fileUrl,
+    required String fileName,
+  }) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _box.put(id, {
+      'id': id,
+      'title': title,
+      'thumb': thumb,
+      'kind': 'video',
+      'percent': percent,
+      'fileUrl': fileUrl,
+      'fileName': fileName,
+      'lastOpenedAt': now,
+      'lastWatchedAt': now,
+    });
+    _notify();
   }
 }

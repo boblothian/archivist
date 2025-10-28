@@ -1,17 +1,25 @@
 // lib/screens/home_page_screen.dart
 import 'dart:async';
+import 'dart:io';
 
+import 'package:android_intent_plus/android_intent.dart';
+import 'package:android_intent_plus/flag.dart';
 // Project imports
-import 'package:archivereader/services/favourites_service.dart'; // British spelling in file path
+import 'package:archivereader/pdf_viewer_screen.dart';
+import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/favourites_service_compat.dart';
 import 'package:archivereader/services/filters.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
+import 'package:archivereader/text_viewer_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import 'cbz_viewer_screen.dart';
 import 'collection_detail_screen.dart';
-import 'favourites_screen.dart'; // US spelling in screen name is fine
+import 'epub_viewer_screen.dart';
 
 // ===== Categories (Explore grid) =====
 enum Category { classic, books, magazines, comics, video, readingList }
@@ -73,7 +81,7 @@ class CollectionCapsuleCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final imgUrl = thumbnailUrl ?? _thumbForId(identifier); // ← fallback
+    final imgUrl = thumbnailUrl ?? _thumbForId(identifier);
     return Card(
       shape: const StadiumBorder(),
       child: InkWell(
@@ -86,7 +94,7 @@ class CollectionCapsuleCard extends StatelessWidget {
               ClipRRect(
                 borderRadius: BorderRadius.circular(999),
                 child: CachedNetworkImage(
-                  imageUrl: imgUrl, // ← always non-null now
+                  imageUrl: imgUrl,
                   width: 48,
                   height: 48,
                   fit: BoxFit.cover,
@@ -216,16 +224,12 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
           const SizedBox(height: 16.0),
 
           // Favourites shelf
-          SectionHeader(
-            title: 'Favourites',
-            actionLabel: 'See all',
-            onAction:
-                () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const FavoritesScreen()),
-                ),
-          ),
+          SectionHeader(title: 'Favourites'),
           const SizedBox(height: 8.0),
-          _buildFavouritesShelf(context),
+          ValueListenableBuilder<int>(
+            valueListenable: FavoritesService.instance.version,
+            builder: (context, _, __) => _buildFavouritesShelf(context),
+          ),
 
           const SizedBox(height: 16.0),
 
@@ -278,8 +282,6 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
     );
   }
 
-  /// Favourites shelf — uses FAVOURITES service (British).
-  /// If your service exposes a different getter, change the next line only.
   Widget _buildFavouritesShelf(BuildContext context) {
     final List<FavoriteItem> raw =
         FavoritesService.instance.itemsOrEmpty.cast<FavoriteItem>();
@@ -319,9 +321,515 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
   }
 }
 
-// ===== Pinned grid =====
+// ===== UNIFIED CARD (PDF + VIDEO) =====
+class _ResumeMediaCard extends StatelessWidget {
+  final String id;
+  final String title;
+  final String thumb;
+  final double progress;
+  final String? progressLabel;
+  final VoidCallback? onTap;
+  final VoidCallback? onDelete;
+
+  const _ResumeMediaCard({
+    required this.id,
+    required this.title,
+    required this.thumb,
+    required this.progress,
+    this.progressLabel,
+    this.onTap,
+    this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 140,
+      height: 220,
+      child: Card(
+        shape: const RoundedRectangleBorder(),
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        child: InkWell(
+          onTap: onTap,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: CachedNetworkImage(
+                  imageUrl: thumb,
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => Container(color: Colors.grey[300]),
+                  errorWidget:
+                      (_, __, ___) =>
+                          const Icon(Icons.play_circle_outline, size: 40),
+                ),
+              ),
+              Positioned.fill(
+                child: Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.transparent, Colors.black54],
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 8,
+                right: 8,
+                bottom: 8,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    if (progressLabel != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        progressLabel!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      LinearProgressIndicator(
+                        value: progress,
+                        backgroundColor: Colors.white24,
+                        valueColor: const AlwaysStoppedAnimation(Colors.white),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (onDelete != null)
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: Material(
+                    color: Colors.black54,
+                    shape: const CircleBorder(),
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: onDelete,
+                      child: const Padding(
+                        padding: EdgeInsets.all(6),
+                        child: Icon(Icons.close, color: Colors.white, size: 16),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ===== CONTINUE READING (PDF/EPUB/CBZ/CBR/TXT) =====
+class _BuildContinueReading extends StatelessWidget {
+  const _BuildContinueReading();
+
+  // Prettify the file name the same way ArchiveItemScreen does
+  String _prettify(String name) {
+    name = name.replaceAll('.pdf', '');
+    final match = RegExp(r'^(\d+)[_\s-]+(.*)').firstMatch(name);
+    String number = '';
+    String title = name;
+
+    if (match != null) {
+      number = match.group(1)!;
+      title = match.group(2)!;
+    }
+
+    title = title.replaceAll(RegExp(r'[_-]+'), ' ');
+    title = title
+        .split(' ')
+        .map((w) => w.isEmpty ? '' : '${w[0].toUpperCase()}${w.substring(1)}')
+        .join(' ');
+
+    return number.isNotEmpty ? '$number. $title' : title;
+  }
+
+  // Open the exact viewer with the cached file
+  Future<void> _openResumeFile({
+    required BuildContext context,
+    required String id,
+    required String title,
+    required String fileUrl,
+    required String fileName,
+    required String kind,
+  }) async {
+    final lower = fileName.toLowerCase();
+
+    if (kind == 'epub' || lower.endsWith('.epub')) {
+      if (!context.mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder:
+              (_) => EpubViewerScreen(
+                url: fileUrl,
+                filenameHint: fileName,
+                identifier: id,
+                title: title,
+              ),
+        ),
+      );
+    } else if (lower.endsWith('.cbz') || lower.endsWith('.cbr')) {
+      if (!context.mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder:
+              (_) => CbzViewerScreen(
+                url: fileUrl,
+                filenameHint: fileName,
+                title: title,
+                identifier: id,
+              ),
+        ),
+      );
+    } else if (lower.endsWith('.txt')) {
+      if (!context.mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder:
+              (_) => TextViewerScreen(
+                url: fileUrl,
+                filenameHint: fileName,
+                identifier: id,
+                title: title,
+              ),
+        ),
+      );
+    } else {
+      // PDF (or unknown) – use the cached file if it exists
+      final tempDir = await getTemporaryDirectory();
+      final localFile = File('${tempDir.path}/$fileName');
+      final exists = await localFile.exists();
+
+      if (!context.mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder:
+              (_) => PdfViewerScreen(
+                file: exists ? localFile : null,
+                url: exists ? null : fileUrl,
+                filenameHint: fileName,
+                identifier: id,
+                title: title,
+              ),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: RecentProgressService.instance.version,
+      builder: (context, _, __) {
+        final recent =
+            RecentProgressService.instance
+                .recent(limit: 30)
+                .where(
+                  (e) =>
+                      [
+                        'pdf',
+                        'epub',
+                        'cbz',
+                        'cbr',
+                        'txt',
+                      ].contains(e['kind']) ||
+                      (e['fileName'] as String?)?.toLowerCase().endsWith(
+                            '.txt',
+                          ) ==
+                          true,
+                )
+                .toList();
+
+        if (recent.isEmpty) {
+          return const SizedBox(
+            height: 48,
+            child: Center(
+              child: Text(
+                'No recent reading',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(padding: EdgeInsets.fromLTRB(16, 16, 16, 8)),
+            SizedBox(
+              height: 220,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                itemCount: recent.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 16),
+                itemBuilder: (_, i) {
+                  final e = recent[i];
+                  final id = e['id'] as String;
+                  final rawTitle = (e['title'] as String?) ?? id;
+                  final fileName = e['fileName'] as String?;
+                  final fileUrl = e['fileUrl'] as String?;
+                  final kind = (e['kind'] as String?) ?? 'pdf';
+
+                  // ---- THUMBNAIL ----
+                  // Prefer the thumbnail saved with the file entry (most accurate)
+                  final thumb =
+                      (e['thumb'] as String?) ??
+                      'https://archive.org/services/img/$id';
+
+                  // ---- TITLE ----
+                  // Show the prettified file name, fall back to collection title
+                  final displayTitle =
+                      fileName != null ? _prettify(fileName) : rawTitle;
+
+                  // ---- PROGRESS ----
+                  double progress = 0.0;
+                  String? progressLabel;
+
+                  if (kind == 'pdf') {
+                    final page = e['page'] as int?;
+                    final total = e['total'] as int?;
+                    if (page != null && total != null && total > 0) {
+                      progress = page / total;
+                      progressLabel = 'Page $page of $total';
+                    }
+                  } else if (kind == 'epub') {
+                    final percent = (e['percent'] as double?) ?? 0.0;
+                    progress = percent;
+                    progressLabel =
+                        percent > 0
+                            ? '${(percent * 100).toStringAsFixed(0)}%'
+                            : null;
+                  }
+
+                  return _ResumeMediaCard(
+                    id: id,
+                    title: displayTitle,
+                    thumb: thumb,
+                    progress: progress,
+                    progressLabel: progressLabel,
+                    onTap: () async {
+                      if (fileUrl == null || fileName == null) {
+                        debugPrint(
+                          'ERROR: Missing fileUrl/fileName for recent entry $id',
+                        );
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Cannot resume: missing file info'),
+                          ),
+                        );
+                        return;
+                      }
+
+                      await _openResumeFile(
+                        context: context,
+                        id: id,
+                        title: displayTitle,
+                        fileUrl: fileUrl,
+                        fileName: fileName,
+                        kind: kind,
+                      );
+                    },
+                    onDelete: () => RecentProgressService.instance.remove(id),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// ===== CONTINUE WATCHING (VIDEO) — OPENS IN VLC/MX PLAYER =====
+class _BuildContinueWatching extends StatelessWidget {
+  const _BuildContinueWatching();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: RecentProgressService.instance.version,
+      builder: (context, _, __) {
+        final recent =
+            RecentProgressService.instance
+                .recent(limit: 30)
+                .where((e) => e['kind'] == 'video')
+                .toList();
+
+        if (recent.isEmpty) return const SizedBox.shrink();
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text(
+                'Continue watching',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+            ),
+            SizedBox(
+              height: 220,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                itemCount: recent.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 16),
+                itemBuilder: (_, i) {
+                  final e = recent[i];
+                  final id = e['id'] as String;
+                  final title = (e['title'] as String?) ?? id;
+                  final thumb =
+                      (e['thumb'] as String?) ??
+                      'https://archive.org/services/img/$id';
+                  final fileUrl = e['fileUrl'] as String?;
+                  final fileName = e['fileName'] as String?;
+                  final percent = (e['percent'] as double?) ?? 0.0;
+
+                  return _ResumeMediaCard(
+                    id: id,
+                    title: title,
+                    thumb: thumb,
+                    progress: percent,
+                    progressLabel:
+                        percent > 0
+                            ? '${(percent * 100).toStringAsFixed(0)}% watched'
+                            : 'Tap to open',
+                    onTap: () async {
+                      if (fileUrl == null || fileName == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('No video file recorded.'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                        return;
+                      }
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Row(
+                            children: [
+                              const Icon(
+                                Icons.play_circle_outline,
+                                color: Colors.white,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Opening: $fileName',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          backgroundColor: Colors.black87,
+                          behavior: SnackBarBehavior.floating,
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+
+                      String mime = 'video/*';
+                      final ext = fileName.toLowerCase();
+                      if (ext.endsWith('.mp4') || ext.endsWith('.m4v')) {
+                        mime = 'video/mp4';
+                      } else if (ext.endsWith('.webm')) {
+                        mime = 'video/webm';
+                      } else if (ext.endsWith('.mkv')) {
+                        mime = 'video/x-matroska';
+                      } else if (ext.endsWith('.m3u8')) {
+                        mime = 'application/vnd.apple.mpegurl';
+                      }
+
+                      try {
+                        await openExternallyWithChooser(
+                          url: fileUrl,
+                          mimeType: mime,
+                          chooserTitle: 'Open with',
+                        );
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Failed to open: $e')),
+                          );
+                        }
+                      }
+                    },
+                    onDelete: () => RecentProgressService.instance.remove(id),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// ===== OPEN EXTERNALLY WITH CHOOSER (VLC, MX PLAYER, etc.) =====
+Future<void> openExternallyWithChooser({
+  required String url,
+  required String mimeType,
+  String chooserTitle = 'Open with',
+}) async {
+  if (!Platform.isAndroid) {
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    return;
+  }
+
+  final viewIntent = AndroidIntent(
+    action: 'android.intent.action.VIEW',
+    data: url,
+    type: mimeType,
+    flags: <int>[
+      Flag.FLAG_ACTIVITY_NEW_TASK,
+      Flag.FLAG_GRANT_READ_URI_PERMISSION,
+    ],
+  );
+
+  try {
+    await viewIntent.launchChooser(chooserTitle);
+  } catch (_) {
+    final chooserIntent = AndroidIntent(
+      action: 'android.intent.action.CHOOSER',
+      arguments: <String, dynamic>{
+        'android.intent.extra.INTENT': viewIntent,
+        'android.intent.extra.TITLE': chooserTitle,
+      },
+      flags: <int>[Flag.FLAG_ACTIVITY_NEW_TASK],
+    );
+    await chooserIntent.launch();
+  }
+}
+
+// ===== REST OF FILE (UNCHANGED) =====
 class _CollectionsGrid extends StatelessWidget {
-  final List<String> data; // collection identifiers
+  final List<String> data;
   final void Function(CollectionMeta) onTap;
   final void Function(int, int) onReorder;
 
@@ -373,7 +881,6 @@ class _CollectionsGrid extends StatelessWidget {
   }
 }
 
-// ===== UI helpers / placeholders kept minimal for now =====
 class SectionHeader extends StatelessWidget {
   final String title;
   final String? actionLabel;
@@ -405,62 +912,6 @@ class _BrandWordmark extends StatelessWidget {
   Widget build(BuildContext context) => const Text('Home');
 }
 
-class HList extends StatelessWidget {
-  final List<Widget> children;
-  const HList({super.key, required this.children});
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 180,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: children.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemBuilder: (_, i) => children[i],
-      ),
-    );
-  }
-}
-
-// ===== Placeholders to match layout (keep or swap with real ones) =====
-class ResumePlaceholderCard extends StatelessWidget {
-  const ResumePlaceholderCard({super.key});
-  @override
-  Widget build(BuildContext context) => const SizedBox();
-}
-
-class PosterCard extends StatelessWidget {
-  final String title;
-  final String? subtitle;
-  final String? captionTopRight;
-  final String? chip;
-  const PosterCard.large({
-    super.key,
-    required this.title,
-    this.subtitle,
-    this.captionTopRight,
-    this.chip,
-  });
-  @override
-  Widget build(BuildContext context) => const SizedBox();
-}
-
-class BookCard extends StatelessWidget {
-  final String title;
-  final String author;
-  final String progressLabel;
-  const BookCard({
-    super.key,
-    required this.title,
-    required this.author,
-    required this.progressLabel,
-  });
-  @override
-  Widget build(BuildContext context) => const SizedBox();
-}
-
-// ===== Explore grid =====
 class CategoriesGrid extends StatelessWidget {
   const CategoriesGrid({super.key});
 
@@ -513,7 +964,6 @@ class CategoriesGrid extends StatelessWidget {
   }
 }
 
-// ===== Reading lists placeholder =====
 class ReadingListCarousel extends StatelessWidget {
   const ReadingListCarousel({super.key});
   @override
@@ -528,284 +978,6 @@ class ExploreCollectionsScreen extends StatelessWidget {
     appBar: AppBar(title: const Text('Explore Collections')),
     body: const Center(child: Text('Coming soon')),
   );
-}
-
-class _BuildContinueReading extends StatelessWidget {
-  const _BuildContinueReading();
-
-  // --------------------------------------------------------------
-  // Helper: turn a raw id (file-path or identifier) into the
-  //         Archive.org *item identifier* that we can use for
-  //         __ia_thumb.jpg
-  // --------------------------------------------------------------
-  String _itemId(String rawId) {
-    // 1. Split on '/'  →  "item123/Invincible 09.pdf"  →  ["item123","Invincible 09.pdf"]
-    // 2. Take the part *before* the last slash (the item identifier)
-    // 3. Remove any file extension just in case
-    final parts = rawId.split('/');
-    final fileName = parts.last;
-    return fileName.split('.').first; // removes .pdf, .cbz, .epub, …
-  }
-
-  String _thumbUrl(String rawId) =>
-      'https://archive.org/download/${_itemId(rawId)}/__ia_thumb.jpg';
-
-  @override
-  Widget build(BuildContext context) {
-    // Newest first, keep only pdf/epub/cbz/cbr/zip/rar
-    final recent =
-        RecentProgressService.instance.recent(limit: 30).where((e) {
-          final k = (e['kind'] as String?)?.toLowerCase();
-          return k == 'pdf' ||
-              k == 'epub' ||
-              k == 'cbz' ||
-              k == 'cbr' ||
-              k == 'zip' ||
-              k == 'rar';
-        }).toList();
-
-    if (recent.isEmpty) {
-      return const SizedBox(
-        height: 48,
-        child: Center(child: Text('No recent reading')),
-      );
-    }
-
-    return SizedBox(
-      height: 180,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: recent.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemBuilder: (_, i) {
-          final e = recent[i];
-          final String rawId = e['id'] as String; // <-- may be "item/file.pdf"
-          final String itemId = _itemId(rawId); // <-- clean identifier
-          final title = (e['title'] as String?) ?? itemId;
-
-          // Prefer a thumb that the service already saved, otherwise use __ia_thumb.jpg
-          final thumb = (e['thumb'] as String?) ?? _thumbUrl(rawId);
-
-          // ---------- progress ----------
-          double? progress;
-          String? progressLabel;
-
-          final p = e['progress'];
-          if (p is num) progress = p.toDouble().clamp(0.0, 1.0);
-
-          final cur = e['currentPage'];
-          final tot = e['totalPages'];
-          if (cur is num && tot is num && tot > 0) {
-            progress = (cur / tot).clamp(0.0, 1.0);
-            progressLabel = 'Page ${cur.toInt()} of ${tot.toInt()}';
-          }
-
-          // ---------- card ----------
-          return _ResumeBookCard(
-            id: itemId, // <-- clean identifier for the query
-            title: title,
-            thumb: thumb,
-            progress: progress,
-            progressLabel: progressLabel,
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder:
-                      (_) => CollectionDetailScreen(
-                        categoryName: title,
-                        customQuery:
-                            'identifier:$itemId', // <-- uses the clean id
-                      ),
-                ),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _ResumeBookCard extends StatelessWidget {
-  final String id;
-  final String title;
-  final String thumb;
-  final double? progress; // 0..1
-  final String? progressLabel; // optional “Page X of Y”
-  final VoidCallback onTap;
-
-  const _ResumeBookCard({
-    required this.id,
-    required this.title,
-    required this.thumb,
-    required this.onTap,
-    this.progress,
-    this.progressLabel,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AspectRatio(
-      aspectRatio: 2 / 3,
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: CachedNetworkImage(
-                  imageUrl: thumb,
-                  fit: BoxFit.cover,
-                  errorWidget:
-                      (_, __, ___) => Image.network(
-                        'https://archive.org/download/$id/$id.jpg',
-                        fit: BoxFit.cover,
-                        errorBuilder:
-                            (_, __, ___) => const Icon(Icons.broken_image),
-                      ),
-                ),
-              ),
-              if (progress != null) ...[
-                LinearProgressIndicator(value: progress),
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    progressLabel ??
-                        '${(progress! * 100).clamp(0, 100).toStringAsFixed(0)}%',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.labelSmall,
-                  ),
-                ),
-              ],
-              Padding(
-                padding: const EdgeInsets.all(8),
-                child: Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BuildContinueWatching extends StatelessWidget {
-  const _BuildContinueWatching();
-
-  @override
-  Widget build(BuildContext context) {
-    // Pull recent, keep only videos, newest first
-    final recent =
-        RecentProgressService.instance
-            .recent(limit: 20)
-            .where((e) => (e['kind'] as String?) == 'video')
-            .toList();
-
-    if (recent.isEmpty) {
-      return const SizedBox(
-        height: 48,
-        child: Center(child: Text('No recent videos')),
-      );
-    }
-
-    return SizedBox(
-      height: 180,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: recent.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemBuilder: (_, i) {
-          final e = recent[i];
-          final id = e['id'] as String;
-          final title = (e['title'] as String?) ?? id;
-          final thumb =
-              (e['thumb'] as String?) ?? 'https://archive.org/services/img/$id';
-
-          return _ResumeVideoCard(
-            id: id,
-            title: title,
-            thumb: thumb,
-            onTap: () {
-              // Jump to a screen that lists just this item, then the user picks a file;
-              // your CollectionDetailScreen will open the chooser from there.
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder:
-                      (_) => CollectionDetailScreen(
-                        categoryName: title,
-                        customQuery: 'identifier:$id', // shows only this item
-                      ),
-                ),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _ResumeVideoCard extends StatelessWidget {
-  final String id;
-  final String title;
-  final String thumb;
-  final VoidCallback onTap;
-
-  const _ResumeVideoCard({
-    required this.id,
-    required this.title,
-    required this.thumb,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AspectRatio(
-      aspectRatio: 2 / 3,
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: CachedNetworkImage(
-                  imageUrl: thumb,
-                  fit: BoxFit.cover,
-                  errorWidget:
-                      (_, __, ___) => Image.network(
-                        'https://archive.org/download/$id/$id.jpg',
-                        fit: BoxFit.cover,
-                        errorBuilder:
-                            (_, __, ___) => const Icon(Icons.broken_image),
-                      ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(8),
-                child: Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class ManagePinsScreen extends StatelessWidget {
@@ -844,7 +1016,6 @@ class ReadingListScreen extends StatelessWidget {
   );
 }
 
-// ===== Local meta model for grid =====
 class CollectionMeta {
   final String categoryName;
   final String title;
@@ -858,7 +1029,6 @@ class CollectionMeta {
   });
 }
 
-// ===== Search Delegate (unchanged) =====
 class _SimpleSearchDelegate extends SearchDelegate<void> {
   _SimpleSearchDelegate(this.filters);
   final ArchiveFilters filters;

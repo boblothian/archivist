@@ -1,14 +1,20 @@
+// archive_item_screen.dart
 import 'dart:io';
 
+import 'package:archivereader/services/recent_progress_service.dart';
+import 'package:archivereader/text_viewer_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'cbz_viewer_screen.dart';
+import 'epub_viewer_screen.dart';
 import 'net.dart';
 import 'pdf_viewer_screen.dart';
 import 'services/jellyfin_service.dart';
+import 'utils.dart'; // ← Required for downloadWithCache
 
 class ArchiveItemScreen extends StatefulWidget {
   final String title;
@@ -28,13 +34,119 @@ class ArchiveItemScreen extends StatefulWidget {
 
 class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
   Set<String> _favoriteFiles = {};
-  final Set<String> _loadingFiles = {};
   final Map<String, double> _downloadProgress = {};
 
   @override
   void initState() {
     super.initState();
     _loadFavorites();
+
+    // AUTO-OPEN IF SINGLE FILE
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.files.length == 1) {
+        final fileName = widget.files.first['name']!;
+        final fileUrl =
+            'https://archive.org/download/${widget.identifier}/${Uri.encodeComponent(fileName)}';
+        final thumbUrl = buildJp2ThumbnailUrl(fileName, widget.identifier);
+        _openFile(fileName, fileUrl, thumbUrl);
+      }
+    });
+  }
+
+  // Unified open function: cache + progress + auto-open
+  Future<void> _openFile(
+    String fileName,
+    String fileUrl,
+    String thumbUrl, // ← NEW
+  ) async {
+    final ext = p.extension(fileName).toLowerCase();
+    late final Widget viewer;
+    late final String kind;
+
+    if (ext == '.pdf') {
+      viewer = PdfViewerScreen(
+        url: fileUrl,
+        filenameHint: fileName,
+        identifier: widget.identifier,
+        title: widget.title,
+        thumbUrl: thumbUrl, // ← PASS IT!
+      );
+      kind = 'pdf';
+    } else if (ext == '.epub') {
+      viewer = EpubViewerScreen(
+        url: fileUrl,
+        filenameHint: fileName,
+        identifier: widget.identifier,
+        title: widget.title,
+      );
+      kind = 'epub';
+    } else if (['.cbz', '.cbr'].contains(ext)) {
+      viewer = CbzViewerScreen(
+        url: fileUrl,
+        filenameHint: fileName,
+        title: widget.title,
+        identifier: widget.identifier,
+      );
+      kind = 'cbz';
+    } else if (ext == '.txt') {
+      viewer = TextViewerScreen(
+        url: fileUrl,
+        filenameHint: fileName,
+        identifier: widget.identifier,
+        title: widget.title,
+      );
+      kind = 'text';
+    } else {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Unsupported: $fileName')));
+      return;
+    }
+
+    // SAVE THUMBNAIL FROM JP2!
+    await RecentProgressService.instance.touch(
+      id: widget.identifier,
+      title: widget.title,
+      thumb: thumbUrl, // ← NOW SAVED!
+      kind: kind,
+      fileUrl: fileUrl,
+      fileName: fileName,
+    );
+
+    try {
+      final cachedFile = await downloadWithCache(
+        url: fileUrl,
+        filenameHint: fileName,
+        onProgress:
+            (p) => ifMounted(
+              this,
+              () => setState(() => _downloadProgress[fileName] = p),
+            ),
+      );
+
+      Widget finalViewer;
+      if (ext == '.pdf') {
+        finalViewer = PdfViewerScreen(
+          file: cachedFile,
+          identifier: widget.identifier,
+          title: widget.title,
+        );
+      } else {
+        finalViewer = viewer; // EPUB/CBZ/TXT use URL
+      }
+
+      ifMounted(this, () {
+        setState(() => _downloadProgress.remove(fileName));
+        Navigator.push(context, MaterialPageRoute(builder: (_) => finalViewer));
+      });
+    } catch (e) {
+      ifMounted(this, () {
+        setState(() => _downloadProgress.remove(fileName));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      });
+    }
   }
 
   void _saveToJellyfin(String fileUrl, String title) async {
@@ -85,55 +197,15 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
   Future<void> _toggleFavorite(String fileName, String fileUrl) async {
     final prefs = await SharedPreferences.getInstance();
     final appDir = await getApplicationDocumentsDirectory();
-    final filePath = '${appDir.path}/$fileName';
-    final file = File(filePath);
+    final file = File('${appDir.path}/$fileName');
 
     if (_favoriteFiles.contains(fileName)) {
       _favoriteFiles.remove(fileName);
       if (await file.exists()) await file.delete();
     } else {
-      if (!await file.exists()) {
-        final uri = Uri.parse(fileUrl);
-        final request = http.Request('GET', uri);
-        final response = await request.send();
-
-        final total = response.contentLength ?? 0;
-        int received = 0;
-        final fileSink = file.openWrite();
-
-        await response.stream.listen(
-          (chunk) {
-            fileSink.add(chunk);
-            received += chunk.length;
-            setState(() {
-              _downloadProgress[fileName] =
-                  (total > 0 ? received / total : null)!;
-            });
-          },
-          onDone: () async {
-            await fileSink.close();
-            setState(() {
-              _downloadProgress.remove(fileName);
-            });
-
-            await Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => PdfViewerScreen(file: file)),
-            );
-          },
-          onError: (e) async {
-            await fileSink.close();
-            setState(() {
-              _downloadProgress.remove(fileName);
-            });
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('Download failed: $e')));
-          },
-          cancelOnError: true,
-        );
-      }
       _favoriteFiles.add(fileName);
+      final thumbUrl = buildJp2ThumbnailUrl(fileName, widget.identifier);
+      _openFile(fileName, fileUrl, thumbUrl); // ← NOW 3 args
     }
 
     await prefs.setStringList('reading_list', _favoriteFiles.toList());
@@ -198,7 +270,6 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
     return number.isNotEmpty ? '$number. $title' : title;
   }
 
-  // 🔹 Detect if a file is a video
   bool _isVideoFile(String name) {
     final lower = name.toLowerCase();
     return lower.endsWith('.mp4') ||
@@ -244,80 +315,7 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
           return Stack(
             children: [
               InkWell(
-                onTap: () async {
-                  final tempDir = await getTemporaryDirectory();
-                  final filePath = '${tempDir.path}/$fileName';
-                  final file = File(filePath);
-
-                  if (await file.exists()) {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => PdfViewerScreen(file: file),
-                      ),
-                    );
-                    return;
-                  }
-
-                  setState(() {
-                    _loadingFiles.add(fileName);
-                    _downloadProgress[fileName] = 0.0;
-                  });
-
-                  try {
-                    final uri = Uri.parse(fileUrl);
-                    final request = http.Request('GET', uri);
-                    final response = await request.send();
-
-                    final total = response.contentLength ?? 0;
-                    int received = 0;
-                    final fileSink = file.openWrite();
-
-                    await response.stream.listen(
-                      (chunk) {
-                        fileSink.add(chunk);
-                        received += chunk.length;
-                        setState(() {
-                          _downloadProgress[fileName] =
-                              (total > 0 ? received / total : null)!;
-                        });
-                      },
-                      onDone: () async {
-                        await fileSink.close();
-                        setState(() {
-                          _loadingFiles.remove(fileName);
-                          _downloadProgress.remove(fileName);
-                        });
-
-                        await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => PdfViewerScreen(file: file),
-                          ),
-                        );
-                      },
-                      onError: (e) async {
-                        await fileSink.close();
-                        setState(() {
-                          _loadingFiles.remove(fileName);
-                          _downloadProgress.remove(fileName);
-                        });
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Download failed: $e')),
-                        );
-                      },
-                      cancelOnError: true,
-                    );
-                  } catch (e) {
-                    setState(() {
-                      _loadingFiles.remove(fileName);
-                      _downloadProgress.remove(fileName);
-                    });
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(SnackBar(content: Text('Error: $e')));
-                  }
-                },
+                onTap: () => _openFile(fileName, fileUrl, thumbnailUrl),
                 child: Column(
                   children: [
                     Expanded(

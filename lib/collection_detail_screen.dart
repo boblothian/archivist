@@ -17,7 +17,9 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'archive_item_screen.dart';
+import 'epub_viewer_screen.dart';
 import 'net.dart';
+import 'pdf_viewer_screen.dart'; // <-- NEW: Import for PDF viewer
 
 const Map<String, String> _HEADERS = Net.headers;
 
@@ -168,7 +170,10 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
   String _prettyFilename(String raw) {
     var s = raw;
-    s = s.replaceFirst(RegExp(r'\.(mp4|mkv|webm)$', caseSensitive: false), '');
+    s = s.replaceFirst(
+      RegExp(r'\.(mp4|mkv|webm|pdf|epub|cbz|cbr|txt)$', caseSensitive: false),
+      '',
+    );
     s = s.replaceFirst(RegExp(r'\.ia$', caseSensitive: false), '');
     s = s.replaceAll('_', ' ');
     s = s.replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -355,6 +360,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         return;
       }
 
+      // === UPDATED FILES LOOP ===
       final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
       final files = <Map<String, dynamic>>[];
       for (final f in rawFiles) {
@@ -363,6 +369,8 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         if (name.isEmpty) continue;
         final fmt = (f['format'] ?? '').toString().toLowerCase();
         final lower = name.toLowerCase();
+
+        // Video detection (unchanged)
         final isVideo =
             fmt.contains('mp4') ||
             fmt.contains('mpeg4') ||
@@ -374,23 +382,42 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             lower.endsWith('.mkv') ||
             lower.endsWith('.webm') ||
             lower.endsWith('.m3u8');
+
+        // Text / document detection
+        final isDocument =
+            fmt.contains('pdf') ||
+            fmt.contains('epub') ||
+            fmt.contains('comic book') ||
+            lower.endsWith('.pdf') ||
+            lower.endsWith('.epub') ||
+            lower.endsWith('.cbz') ||
+            lower.endsWith('.cbr') ||
+            lower.endsWith('.txt');
+
         files.add({
           'name': name,
           'format': fmt,
           'isVideo': isVideo,
-          'width': f['width'],
-          'height': f['height'],
+          'isDocument': isDocument,
           'size': f['size'],
         });
       }
 
-      final videoFiles = files.where((f) => (f['isVideo'] as bool)).toList();
+      final videoFiles = files.where((f) => f['isVideo'] as bool).toList();
+      final docFiles = files.where((f) => f['isDocument'] as bool).toList();
 
       if (videoFiles.isNotEmpty) {
         await _openVideoChooser(context, id, item['title'] ?? id, videoFiles);
         return;
       }
 
+      if (docFiles.isNotEmpty) {
+        await _openDocumentChooser(context, id, item['title'] ?? id, docFiles);
+        return;
+      }
+      // === END UPDATED LOOP ===
+
+      // Fallback: show generic file list
       final justNames =
           files
               .where((f) => (f['name'] as String).isNotEmpty)
@@ -423,7 +450,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         ),
       );
     } catch (_) {
-      if (!mounted) return;
+      if (!this.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Failed to open item (network).')),
       );
@@ -504,39 +531,30 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
   Future<void> openExternallyWithChooser({
     required String url,
-    required String mimeType, // e.g. 'video/*', 'audio/*', 'application/pdf'
+    required String mimeType,
     String chooserTitle = 'Open with',
   }) async {
     if (!Platform.isAndroid) {
-      // fallback to url_launcher on iOS/desktop
-      if (!Platform.isAndroid) {
-        // fallback to url_launcher on iOS/desktop
-        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-        return;
-      }
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      return;
     }
 
-    // Base VIEW intent
     final viewIntent = AndroidIntent(
       action: 'android.intent.action.VIEW',
-      data: url, // http(s)://, content://, file://
-      type: mimeType, // <-- IMPORTANT for resolver to show correct apps
+      data: url,
+      type: mimeType,
       flags: <int>[
         Flag.FLAG_ACTIVITY_NEW_TASK,
-        // Grant read permission if you're passing a content:// URI
         Flag.FLAG_GRANT_READ_URI_PERMISSION,
       ],
     );
 
-    // Most versions of android_intent_plus support this convenience:
     try {
       await viewIntent.launchChooser(chooserTitle);
       return;
     } catch (_) {
-      // If your plugin version lacks launchChooser, build ACTION_CHOOSER manually:
       final chooserIntent = AndroidIntent(
         action: 'android.intent.action.CHOOSER',
-        // EXTRA_INTENT expects a parcelable intent; plugin accepts map via extras
         arguments: <String, dynamic>{
           'android.intent.extra.INTENT': viewIntent,
           'android.intent.extra.TITLE': chooserTitle,
@@ -965,10 +983,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     );
   }
 
-  // Unified long-press handler
-  // lib/screens/collection_detail_screen.dart
-  // ... (your full code, but update the _handleLongPressItem to this)
-
   Future<void> _handleLongPressItem(Map<String, String> item) async {
     HapticFeedback.mediumImpact();
 
@@ -992,16 +1006,10 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Added to "$folder"')));
-
-      // Auto-open the folder
-      /*Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => FavoritesScreen(initialFolder: folder),
-        ),
-      );*/
     }
   }
 
+  // === VIDEO CHOOSER (unchanged) ===
   Future<void> _openVideoChooser(
     BuildContext context,
     String identifier,
@@ -1096,7 +1104,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                           );
                         }
 
-                        // Ask how to open
                         final choice = await showDialog<String>(
                           context: context,
                           builder:
@@ -1120,14 +1127,24 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                         );
                         if (choice == null) return;
 
-                        // Close the sheet before launching
                         if (mounted) Navigator.pop(context);
 
-                        // Best-effort MIME from format/extension
+                        final name = op['name'] as String;
+                        final videoUrl =
+                            'https://archive.org/download/$identifier/$name';
+
+                        await RecentProgressService.instance.updateVideo(
+                          id: identifier,
+                          title: title,
+                          thumb: _thumbForId(identifier),
+                          percent: 0.0,
+                          fileUrl: videoUrl,
+                          fileName: name,
+                        );
+
                         String mime = 'video/*';
                         final fmt = (op['fmt'] ?? '').toString().toLowerCase();
-                        final nameLower =
-                            (op['name'] ?? '').toString().toLowerCase();
+                        final nameLower = name.toLowerCase();
                         if (fmt.contains('webm') ||
                             nameLower.endsWith('.webm')) {
                           mime = 'video/webm';
@@ -1143,22 +1160,12 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                           mime = 'application/vnd.apple.mpegurl';
                         }
 
-                        // Log as “viewed / watched”
-                        await RecentProgressService.instance.touch(
-                          id: identifier,
-                          title: title,
-                          thumb: _thumbForId(identifier),
-                          kind: 'video',
-                        );
-
                         if (choice == 'browser') {
-                          // Open in default external handler (likely browser)
                           await launchUrl(
                             uri,
                             mode: LaunchMode.externalApplication,
                           );
                         } else {
-                          // Force Android chooser so the popup appears
                           await openExternallyWithChooser(
                             url: uri.toString(),
                             mimeType: mime,
@@ -1176,10 +1183,171 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       },
     );
   }
+
+  // === NEW DOCUMENT CHOOSER ===
+  Future<void> _openDocumentChooser(
+    BuildContext context,
+    String identifier,
+    String title,
+    List<Map<String, dynamic>> docFiles,
+  ) async {
+    // 1. Build a map: format → list of files
+    final Map<String, List<Map<String, dynamic>>> filesByFormat = {};
+    for (final f in docFiles) {
+      final name = (f['name'] ?? '').toString().toLowerCase();
+      String fmt;
+      if (name.endsWith('.pdf'))
+        fmt = 'pdf';
+      else if (name.endsWith('.epub'))
+        fmt = 'epub';
+      else if (name.endsWith('.txt'))
+        fmt = 'txt';
+      else if (name.endsWith('.cbz'))
+        fmt = 'cbz';
+      else if (name.endsWith('.cbr'))
+        fmt = 'cbr';
+      else
+        continue;
+
+      filesByFormat.putIfAbsent(fmt, () => []).add(f);
+    }
+
+    if (filesByFormat.isEmpty) return;
+
+    // 2. Ask user which format
+    final chosenFmt = await showFormatPickerDialog(
+      context,
+      filesByFormat.keys.toList(),
+    );
+    if (chosenFmt == null || !context.mounted) return;
+
+    final chosenFiles = filesByFormat[chosenFmt]!;
+
+    // 3. TXT → open ArchiveItemScreen (generic file list)
+    if (chosenFmt == 'txt') {
+      final txtFiles =
+          chosenFiles.map((f) => {'name': f['name'] as String}).toList();
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder:
+              (_) => ArchiveItemScreen(
+                title: title,
+                identifier: identifier,
+                files: txtFiles,
+              ),
+        ),
+      );
+      return;
+    }
+
+    // 4. PDF / EPUB / CBZ / CBR → open in-app viewer
+    if (chosenFiles.length == 1) {
+      final f = chosenFiles.first;
+      final name = f['name'] as String;
+      final fileUrl =
+          'https://archive.org/download/$identifier/${Uri.encodeComponent(name)}';
+
+      // Save progress
+      await RecentProgressService.instance.touch(
+        id: identifier,
+        title: title,
+        thumb: _thumbForId(identifier),
+        kind: chosenFmt,
+        fileUrl: fileUrl,
+        fileName: name,
+      );
+
+      if (chosenFmt == 'pdf') {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder:
+                (_) => PdfViewerScreen(
+                  url: fileUrl,
+                  filenameHint: name,
+                  identifier: identifier,
+                  title: title,
+                ),
+          ),
+        );
+      } else if (chosenFmt == 'epub') {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder:
+                (_) => EpubViewerScreen(
+                  url: fileUrl,
+                  filenameHint: name,
+                  identifier: identifier,
+                  title: title,
+                ),
+          ),
+        );
+      } else {
+        // CBZ/CBR → external
+        final mime =
+            chosenFmt == 'cbz'
+                ? 'application/vnd.comicbook+zip'
+                : 'application/vnd.comicbook-rar';
+        await openExternallyWithChooser(
+          url: fileUrl,
+          mimeType: mime,
+          chooserTitle: 'Open with',
+        );
+      }
+    } else {
+      // Multiple files → show ArchiveItemScreen
+      final list =
+          chosenFiles.map((f) => {'name': f['name'] as String}).toList();
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder:
+              (_) => ArchiveItemScreen(
+                title: title,
+                identifier: identifier,
+                files: list,
+              ),
+        ),
+      );
+    }
+  }
+}
+
+Future<String?> showFormatPickerDialog(
+  BuildContext context,
+  List<String> formats,
+) async {
+  return showDialog<String>(
+    context: context,
+    builder:
+        (ctx) => AlertDialog(
+          title: const Text('Choose format'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children:
+                formats.map((f) {
+                  return ListTile(
+                    leading: Icon(
+                      f == 'pdf'
+                          ? Icons.picture_as_pdf
+                          : f == 'epub'
+                          ? Icons.book
+                          : Icons.description,
+                    ),
+                    title: Text(f.toUpperCase()),
+                    onTap: () => Navigator.pop(ctx, f),
+                  );
+                }).toList(),
+          ),
+        ),
+  );
 }
 
 // ---------- UI helpers ----------
-
 class _CenteredSpinner extends StatelessWidget {
   final String label;
   const _CenteredSpinner({required this.label});
@@ -1315,7 +1483,6 @@ class _GridCard extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
 
     return Material(
-      // ensures InkWell ripple without layout impact
       type: MaterialType.transparency,
       child: InkWell(
         onTap: onTap,
@@ -1325,12 +1492,11 @@ class _GridCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              // WHY: allow the image to flex so Column never overflows
               child: CapsuleThumbCard(
                 heroTag: 'thumb:$id',
                 imageUrl: thumb,
                 fit: BoxFit.contain,
-                fillParent: true, // NEW: react to available height
+                fillParent: true,
                 topRightOverlay:
                     mediatype.isNotEmpty
                         ? mediaTypePill(context, mediatype)

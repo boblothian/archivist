@@ -1,25 +1,33 @@
+// pdf_viewer_screen.dart
 import 'dart:io';
 
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'net.dart';
 import 'utils.dart';
 
 class PdfViewerScreen extends StatefulWidget {
-  final File? file; // if already downloaded
-  final String? url; // OR download from URL
-  final String? filenameHint; // cache filename when url is provided
+  final File? file;
+  final String? url;
+  final String? filenameHint;
+  final String identifier;
+  final String title;
+  final String? thumbUrl; // ← NEW
 
-  const PdfViewerScreen({super.key, this.file, this.url, this.filenameHint})
-    : assert(file != null || url != null, 'Provide either file or url');
+  const PdfViewerScreen({
+    super.key,
+    this.file,
+    this.url,
+    this.filenameHint,
+    required this.identifier,
+    required this.title,
+    this.thumbUrl,
+  }) : assert(file != null || url != null);
 
   @override
-  State<PdfViewerScreen> createState() => _PdfViewerScreenState();
+  State<PdfViewerScreen> createState() => _PdfViewerScreenState(); // ← THIS WAS MISSING!
 }
 
 class _PdfViewerScreenState extends State<PdfViewerScreen> {
@@ -29,23 +37,17 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   String? _error;
   int _currentPage = 0;
   int _totalPages = 0;
+  int _defaultPage = 0; // ← Set once
 
-  String get _resumeKey =>
-      'pdf_resume_${_localFile?.path.hashCode ?? widget.url.hashCode}';
-
-  String get _progressId =>
-      widget.filenameHint ??
-      widget.url ??
-      _localFile?.path ??
-      'pdf-${_localFile.hashCode}';
+  String get _progressId => widget.identifier;
 
   @override
   void initState() {
     super.initState();
-    _loadPdf();
+    _loadPdfAndResume();
   }
 
-  Future<void> _loadPdf() async {
+  Future<void> _loadPdfAndResume() async {
     setState(() {
       _loading = true;
       _error = null;
@@ -53,6 +55,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     });
 
     try {
+      // 1. Download file
       if (widget.file != null) {
         _localFile = widget.file;
       } else {
@@ -63,6 +66,12 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
               (p) => ifMounted(this, () => setState(() => _progress = p)),
         );
       }
+
+      // 2. Read saved page
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getInt('pdf_page_${widget.identifier}') ?? 0;
+      _defaultPage = saved;
+
       ifMounted(this, () => setState(() => _loading = false));
     } catch (e) {
       ifMounted(this, () {
@@ -74,68 +83,13 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
   Future<void> _saveResume(int page) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_resumeKey, page);
-  }
-
-  Future<int?> _readResume() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt(_resumeKey);
-  }
-
-  @override
-  void dispose() {
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    super.dispose();
-  }
-
-  Future<bool> _downloadToFile(
-    String url,
-    File dst,
-    void Function(double progress)? onProgress,
-  ) async {
-    final client = http.Client();
-    try {
-      final req = http.Request('GET', Uri.parse(url));
-      req.headers.addAll(Net.headers); // ← IMPORTANT
-      final resp = await client.send(req);
-
-      if (resp.statusCode != 200) return false;
-
-      final total = resp.contentLength ?? 0;
-      int received = 0;
-      final sink = dst.openWrite();
-
-      await resp.stream
-          .listen(
-            (chunk) {
-              sink.add(chunk);
-              received += chunk.length;
-              if (total > 0 && onProgress != null) {
-                onProgress(received / total);
-              }
-            },
-            onError: (_) async {
-              await sink.close();
-            },
-            onDone: () async {
-              await sink.close();
-            },
-            cancelOnError: true,
-          )
-          .asFuture(); // await completion
-
-      // basic integrity check
-      final len = await dst.length();
-      return len > 0;
-    } finally {
-      client.close();
-    }
+    await prefs.setInt('pdf_page_${widget.identifier}', page);
   }
 
   @override
   Widget build(BuildContext context) {
     final appBar = AppBar(
-      title: Text(widget.filenameHint ?? 'PDF'),
+      title: Text(widget.title),
       actions: [
         if (_totalPages > 0)
           Center(
@@ -148,6 +102,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     );
 
     Widget body;
+
     if (_loading) {
       body = Center(
         child: Column(
@@ -172,59 +127,69 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
             const SizedBox(height: 8),
             Text(_error!, textAlign: TextAlign.center),
             const SizedBox(height: 8),
-            FilledButton(onPressed: _loadPdf, child: const Text('Retry')),
+            FilledButton(
+              onPressed: _loadPdfAndResume,
+              child: const Text('Retry'),
+            ),
           ],
         ),
       );
     } else {
-      body = FutureBuilder<int?>(
-        future: _readResume(),
-        builder: (context, snap) {
-          final initial = (snap.data ?? 0).clamp(
-            0,
-            _totalPages == 0 ? 0 : _totalPages - 1,
+      // ← SHOW PDF IMMEDIATELY
+      body = PDFView(
+        filePath: _localFile!.path,
+        defaultPage: _defaultPage,
+        enableSwipe: true,
+        swipeHorizontal: false,
+        autoSpacing: true,
+        pageFling: true,
+        onRender: (pages) {
+          if (pages == null || pages == 0) return;
+          setState(() => _totalPages = pages);
+
+          // Save first touch
+          RecentProgressService.instance.touch(
+            id: _progressId,
+            title: widget.title,
+            thumb: null,
+            kind: 'pdf',
+            fileUrl: widget.url,
+            fileName: widget.filenameHint,
           );
-          return PDFView(
-            filePath: _localFile!.path,
-            defaultPage: initial,
-            enableSwipe: true,
-            swipeHorizontal: false,
-            autoSpacing: true,
-            pageFling: true,
-            onRender: (pages) {
-              setState(() => _totalPages = pages ?? 0);
 
-              // tell the recent service we opened this PDF
-              RecentProgressService.instance.updatePdf(
-                id: _progressId,
-                title: widget.filenameHint ?? 'PDF',
-                thumb: null, // pass a thumb if you have one
-                page: _currentPage + 1, // 1-based
-                total: _totalPages,
-              );
-            },
-
-            onPageChanged: (page, total) {
-              if (page != null && total != null) {
-                setState(() {
-                  _currentPage = page;
-                  _totalPages = total;
-                });
-                _saveResume(page);
-
-                // also update global recent/progress
-                RecentProgressService.instance.updatePdf(
-                  id: _progressId,
-                  title: widget.filenameHint ?? 'PDF',
-                  thumb: null,
-                  page: page + 1, // 1-based
-                  total: total,
-                );
-              }
-            },
-            onError: (e) => setState(() => _error = e.toString()),
-            onPageError: (page, e) => setState(() => _error = 'Page $page: $e'),
+          final initPage = _defaultPage.clamp(0, pages - 1);
+          RecentProgressService.instance.updatePdf(
+            id: _progressId,
+            title: widget.title,
+            thumb: null,
+            page: initPage + 1,
+            total: pages,
+            fileUrl: widget.url ?? _localFile?.path,
+            fileName: widget.filenameHint ?? _localFile?.path.split('/').last,
           );
+        },
+        onPageChanged: (page, total) {
+          if (page != null && total != null && total > 0) {
+            setState(() {
+              _currentPage = page;
+              _totalPages = total;
+            });
+            _saveResume(page);
+
+            RecentProgressService.instance.updatePdf(
+              id: _progressId,
+              title: widget.title,
+              thumb: widget.thumbUrl, // ← USE IT!
+              page: page + 1,
+              total: total,
+              fileUrl: widget.url ?? _localFile?.path,
+              fileName: widget.filenameHint ?? _localFile?.path.split('/').last,
+            );
+          }
+        },
+        onError: (e) => setState(() => _error = e.toString()),
+        onPageError: (page, e) {
+          setState(() => _error = 'Page ${(page ?? 0) + 1}: $e');
         },
       );
     }

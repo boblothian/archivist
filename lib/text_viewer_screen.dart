@@ -4,9 +4,17 @@ import 'utils.dart';
 
 class TextViewerScreen extends StatefulWidget {
   final String url;
+  final String? filenameHint;
+  final String identifier;
   final String title;
 
-  const TextViewerScreen({super.key, required this.url, required this.title});
+  const TextViewerScreen({
+    super.key,
+    required this.url,
+    this.filenameHint,
+    required this.identifier,
+    required this.title,
+  });
 
   @override
   State<TextViewerScreen> createState() => _TextViewerScreenState();

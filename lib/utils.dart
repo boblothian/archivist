@@ -17,7 +17,7 @@ const Map<String, String> kHttpHeaders = {
 };
 
 Future<Directory> appCacheDir() async {
-  final dir = await getTemporaryDirectory();
+  final dir = await getApplicationCacheDirectory(); // 🚀 Persistent!
   final sub = Directory(p.join(dir.path, 'arch_reader_cache'));
   if (!await sub.exists()) {
     await sub.create(recursive: true);

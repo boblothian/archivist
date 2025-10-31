@@ -1,4 +1,3 @@
-// lib/pinned_collections_screen.dart
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';

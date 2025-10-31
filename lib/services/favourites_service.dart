@@ -22,10 +22,14 @@ class FavoriteItem extends HiveObject {
   final String? author;
 
   @HiveField(5)
-  final String? mediatype; // e.g. "movies", "texts", "audio"
+  final String? mediatype;
 
   @HiveField(6)
-  final List<String> formats; // e.g. ["MPEG4", "PDF"]
+  final List<String> formats;
+
+  // NEW: nullable list of downloadable files (safe for old data)
+  @HiveField(7)
+  final List<Map<String, String>>? files;
 
   FavoriteItem({
     required this.id,
@@ -35,32 +39,15 @@ class FavoriteItem extends HiveObject {
     this.author,
     this.mediatype,
     this.formats = const [],
+    this.files,
   });
 
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'title': title,
-    'url': url,
-    'thumb': thumb,
-    'author': author,
-    'mediatype': mediatype,
-    'formats': formats,
-  };
-
-  factory FavoriteItem.fromJson(Map<String, dynamic> json) => FavoriteItem(
-    id: json['id'] as String,
-    title: json['title'] as String,
-    url: json['url'] as String?,
-    thumb: json['thumb'] as String?,
-    author: json['author'] as String?,
-    mediatype: json['mediatype'] as String?,
-    formats: (json['formats'] as List?)?.cast<String>() ?? [],
-  );
-
+  // Updated copyWith
   FavoriteItem copyWith({
     String? thumb,
     String? mediatype,
     List<String>? formats,
+    List<Map<String, String>>? files,
   }) => FavoriteItem(
     id: id,
     title: title,
@@ -69,11 +56,38 @@ class FavoriteItem extends HiveObject {
     author: author,
     mediatype: mediatype ?? this.mediatype,
     formats: formats ?? this.formats,
+    files: files ?? this.files,
+  );
+
+  // Updated toJson
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'url': url,
+    'thumb': thumb,
+    'author': author,
+    'mediatype': mediatype,
+    'formats': formats,
+    'files': files,
+  };
+
+  // Updated fromJson
+  factory FavoriteItem.fromJson(Map<String, dynamic> json) => FavoriteItem(
+    id: json['id'] as String,
+    title: json['title'] as String,
+    url: json['url'] as String?,
+    thumb: json['thumb'] as String?,
+    author: json['author'] as String?,
+    mediatype: json['mediatype'] as String?,
+    formats: (json['formats'] as List?)?.cast<String>() ?? [],
+    files: (json['files'] as List?)
+        ?.map((e) => Map<String, String>.from(e as Map))
+        .toList(),
   );
 
   @override
   String toString() =>
-      'FavoriteItem(id: $id, title: $title, mediatype: $mediatype)';
+      'FavoriteItem(id: $id, title: $title, files: ${files?.length ?? 0})';
 }
 
 class FavoritesService {
@@ -161,12 +175,16 @@ class FavoritesService {
                     title: (e['title'] ?? '').toString(),
                     url: (e['url'] as String?) ?? '',
                     thumb:
-                        (e['thumb'] as String?) ??
+                    (e['thumb'] as String?) ??
                         (e['thumbnail'] as String?) ??
                         '',
                     author: (e['author'] as String?),
                     mediatype: e['mediatype'] as String?,
                     formats: (e['formats'] as List?)?.cast<String>() ?? [],
+                    files: (e['files'] as List?)
+                        ?.map((f) => Map<String, String>.from(f as Map))
+                        .toList() ??
+                        null,
                   ),
                 );
               }
@@ -302,10 +320,9 @@ class FavoritesService {
     for (final items in _data.values) {
       for (final item in items) {
         final latestThumb = getThumbForId(item.id);
-        final updated =
-            latestThumb != null && latestThumb != item.thumb
-                ? item.copyWith(thumb: latestThumb)
-                : item;
+        final updated = latestThumb != null && latestThumb != item.thumb
+            ? item.copyWith(thumb: latestThumb)
+            : item;
         seen[updated.id] = updated;
       }
     }

@@ -5,8 +5,10 @@ import 'package:archivereader/ui/capsule_theme.dart';
 import 'package:archivereader/widgets/capsule_thumb_card.dart';
 import 'package:flutter/material.dart';
 
+import 'archive_api.dart';
 import 'archive_item_loader.dart';
 import 'archive_item_screen.dart';
+import 'collection_detail_screen.dart';
 import 'utils/archive_helpers.dart';
 
 class FavoritesScreen extends StatelessWidget {
@@ -24,11 +26,9 @@ class FavoritesScreen extends StatelessWidget {
         final folders = svc.folders();
         final selectedFolder = initialFolder ?? folders.firstOrNull ?? 'All';
 
-        // Get items for the selected folder
-        final items =
-            selectedFolder == 'All'
-                ? svc.allItems
-                : svc.itemsIn(selectedFolder);
+        final items = selectedFolder == 'All'
+            ? svc.allItems
+            : svc.itemsIn(selectedFolder);
 
         return Scaffold(
           appBar: AppBar(
@@ -39,7 +39,6 @@ class FavoritesScreen extends StatelessWidget {
                 folders: folders,
                 selected: selectedFolder,
                 onChanged: (folder) {
-                  // Navigate to same screen with new folder
                   Navigator.of(context).pushReplacement(
                     MaterialPageRoute(
                       builder: (_) => FavoritesScreen(initialFolder: folder),
@@ -74,7 +73,7 @@ class _GridBodyState extends State<_GridBody>
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    super.build(context);
 
     if (widget.items.isEmpty) {
       return Center(
@@ -109,53 +108,78 @@ class _GridBodyState extends State<_GridBody>
             final fav = widget.items[i];
             final id = fav.id.trim();
             final title = fav.title.trim().isEmpty ? id : fav.title.trim();
-            final thumb =
-                fav.thumb?.trim().isNotEmpty == true
-                    ? fav.thumb!.trim()
-                    : archiveThumbUrl(id);
+            final thumb = fav.thumb?.trim().isNotEmpty == true
+                ? fav.thumb!.trim()
+                : archiveThumbUrl(id);
 
             return Material(
               type: MaterialType.transparency,
               child: InkWell(
                 borderRadius: BorderRadius.circular(kCapsuleRadius),
                 onTap: () async {
-                  // 1. Update recent
                   await RecentProgressService.instance.touch(
                     id: id,
                     title: title,
                     thumb: thumb,
-                    kind: 'auto',
+                    kind: 'item',
                   );
 
-                  // 2. Fetch file list
-                  List<Map<String, String>> files;
-                  try {
-                    files = await fetchFilesForIdentifier(id);
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Failed to load item: $e')),
+                  if (!context.mounted) return;
+
+                  // FIXED: Handle nullable files
+                  final cachedFiles = fav.files;
+                  if (cachedFiles != null && cachedFiles.isNotEmpty) {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ArchiveItemScreen(
+                          title: title,
+                          identifier: id,
+                          files: cachedFiles,
+                        ),
+                      ),
                     );
                     return;
                   }
 
-                  // 3. Open real viewer
-                  if (!context.mounted) return;
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder:
-                          (_) => ArchiveItemScreen(
-                            title: title,
-                            identifier: id,
-                            files: files,
-                          ),
-                    ),
+                  // FALLBACK: fetch from network
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Loading files...')),
                   );
+
+                  try {
+                    final files = await fetchFilesForIdentifier(id);
+                    if (files.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text('No downloadable files found')),
+                      );
+                      return;
+                    }
+
+                    // Cache the files
+                    final updated = fav.copyWith(files: files);
+                    await svc.addToFolder(widget.folderName, updated);
+
+                    if (!context.mounted) return;
+
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ArchiveItemScreen(
+                          title: title,
+                          identifier: id,
+                          files: files,
+                        ),
+                      ),
+                    );
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to load files: $e')),
+                    );
+                  }
                 },
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Thumbnail + Delete X
                     Expanded(
                       child: Stack(
                         children: [
@@ -174,26 +198,24 @@ class _GridBodyState extends State<_GridBody>
                               onDelete: () async {
                                 final confirmed = await showDialog<bool>(
                                   context: context,
-                                  builder:
-                                      (dCtx) => AlertDialog(
-                                        title: const Text('Remove favourite?'),
-                                        content: Text(
-                                          'Remove "$title" from favourites?',
-                                        ),
-                                        actions: [
-                                          TextButton(
-                                            onPressed:
-                                                () =>
-                                                    Navigator.pop(dCtx, false),
-                                            child: const Text('Cancel'),
-                                          ),
-                                          TextButton(
-                                            onPressed:
-                                                () => Navigator.pop(dCtx, true),
-                                            child: const Text('Remove'),
-                                          ),
-                                        ],
+                                  builder: (dCtx) => AlertDialog(
+                                    title: const Text('Remove favourite?'),
+                                    content: Text(
+                                      'Remove "$title" from favourites?',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(dCtx, false),
+                                        child: const Text('Cancel'),
                                       ),
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(dCtx, true),
+                                        child: const Text('Remove'),
+                                      ),
+                                    ],
+                                  ),
                                 );
 
                                 if (confirmed != true) return;
@@ -229,7 +251,7 @@ class _GridBodyState extends State<_GridBody>
   }
 }
 
-// ── Delete Chip (unchanged) ─────────────────────────────────────
+// ── Delete Chip ─────────────────────────────────────────────────────
 class _DeleteChip extends StatelessWidget {
   final VoidCallback onDelete;
   const _DeleteChip({required this.onDelete});
@@ -260,7 +282,7 @@ class _DeleteChip extends StatelessWidget {
   }
 }
 
-// ── Folder Selector Dropdown ─────────────────────────────────────
+// ── Folder Selector Dropdown ────────────────────────────────────────
 class _FolderSelector extends StatelessWidget {
   final List<String> folders;
   final String selected;

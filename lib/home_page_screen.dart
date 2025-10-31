@@ -19,7 +19,6 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'cbz_viewer_screen.dart';
 import 'collection_detail_screen.dart';
-import 'epub_viewer_screen.dart';
 
 // ===== Categories (Explore grid) =====
 enum Category { classic, books, magazines, comics, video, readingList }
@@ -471,22 +470,7 @@ class _BuildContinueReading extends StatelessWidget {
     required String kind,
   }) async {
     final lower = fileName.toLowerCase();
-
-    if (kind == 'epub' || lower.endsWith('.epub')) {
-      if (!context.mounted) return;
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder:
-              (_) => EpubViewerScreen(
-                url: fileUrl,
-                filenameHint: fileName,
-                identifier: id,
-                title: title,
-              ),
-        ),
-      );
-    } else if (lower.endsWith('.cbz') || lower.endsWith('.cbr')) {
+    if (lower.endsWith('.cbz') || lower.endsWith('.cbr')) {
       if (!context.mounted) return;
       Navigator.push(
         context,

@@ -7,6 +7,8 @@ import 'package:android_intent_plus/android_intent.dart';
 import 'package:android_intent_plus/flag.dart';
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
+import 'package:archivereader/services/thumb_override_service.dart';
+import 'package:archivereader/services/tmdb_service.dart';
 import 'package:archivereader/ui/capsule_theme.dart';
 import 'package:archivereader/widgets/capsule_thumb_card.dart';
 import 'package:archivereader/widgets/favourite_add_dialogue.dart';
@@ -17,9 +19,11 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'archive_item_screen.dart';
-import 'epub_viewer_screen.dart';
 import 'net.dart';
-import 'pdf_viewer_screen.dart'; // <-- NEW: Import for PDF viewer
+import 'pdf_viewer_screen.dart';
+
+// TOP-LEVEL ENUM — MUST BE HERE
+enum DialogResult { addToFolder, generateThumb }
 
 const Map<String, String> _HEADERS = Net.headers;
 
@@ -31,15 +35,6 @@ enum SortMode {
   oldest,
   alphaAZ,
   alphaZA,
-}
-
-String _kindFor(dynamic item) {
-  final mt = (item.mediaType ?? item.format ?? '').toString().toLowerCase();
-  if (mt.contains('pdf')) return 'pdf';
-  if (mt.contains('epub')) return 'epub';
-  if (mt.contains('video')) return 'video';
-  if (mt.contains('audio')) return 'audio';
-  return 'collection';
 }
 
 enum SearchScope { metadata, title }
@@ -119,6 +114,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   static const int _rows = 120;
   int _page = 1;
   int _numFound = 0;
+
   bool get _hasMore => _items.length < _numFound;
 
   SortMode _sort = SortMode.popularAllTime;
@@ -247,6 +243,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       'subject',
       'creator',
       'description',
+      'year',
     ].map((f) => 'fl[]=$f').join('&');
 
     final url =
@@ -287,6 +284,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           docs.map<Map<String, String>>((doc) {
             final id = (doc['identifier'] ?? '').toString();
             final title = flat(doc['title']).trim();
+            final year = flat(doc['year']);
             return {
               'identifier': id,
               'title': title.isEmpty ? id : title,
@@ -295,6 +293,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               'description': flat(doc['description']),
               'creator': flat(doc['creator']),
               'subject': flat(doc['subject']),
+              'year': year,
             };
           }).toList();
 
@@ -309,6 +308,24 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             FavoritesService.instance.allItems.map((e) => e.id).toSet();
         batch = batch.where((m) => favs.contains(m['identifier'])).toList();
       }
+
+      await ThumbOverrideService.instance.applyToItemMaps(batch);
+      final existingIds = _items.map((m) => m['identifier']).toSet();
+      batch =
+          batch
+              .where(
+                (m) =>
+                    m['identifier'] != null &&
+                    !existingIds.contains(m['identifier']),
+              )
+              .toList();
+
+      setState(() {
+        _items.addAll(batch);
+        _loading = false;
+        _loadingMore = false;
+        _error = null;
+      });
 
       setState(() {
         _items.addAll(batch);
@@ -331,6 +348,434 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   }
 
   void _runSearch() => _fetch(reset: true);
+
+  // === SMART THUMBNAIL FETCHER ===
+  // Kept for possible future fallback needs; not used by the cards anymore.
+  Future<String> _getSmartThumb(
+    String id,
+    String mediatype,
+    String title, {
+    String? year,
+  }) async {
+    // 1. Archive.org itemimage
+    final itemImage = await _fetchItemImage(id);
+    if (itemImage != null) return itemImage;
+
+    // 2. MPDB box art
+    if (mediatype.toLowerCase().contains('video') || mediatype == 'movies') {
+      final poster = await TmdbService.getPosterUrl(
+        title: title,
+        year: year,
+        type: mediatype == 'movies' ? 'movie' : 'tv',
+      );
+      if (poster != null) return poster;
+    }
+
+    // 3. Video frame
+    if (mediatype.toLowerCase().contains('video')) {
+      return 'https://archive.org/download/$id/${id}__thumb.jpg';
+    }
+
+    // 4. Default
+    return _thumbForId(id);
+  }
+
+  Future<String?> _fetchItemImage(String id) async {
+    try {
+      final resp = await http.get(
+        Uri.parse('https://archive.org/metadata/$id'),
+        headers: _HEADERS,
+      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final itemImage = data['metadata']?['itemimage']?.toString();
+        if (itemImage != null && itemImage.isNotEmpty) {
+          return 'https://archive.org/services/img/$itemImage';
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // Returns a de-duplicated list of candidate poster URLs from TMDb, MPDB, and Archive fallbacks.
+  Future<List<String>> _gatherPosterCandidates({
+    required String query,
+    required String id,
+    required String mediatype,
+    String? year,
+  }) async {
+    final urls = <String>[];
+
+    // 1) TMDb: Prefer a multi-result API if your service exposes one.
+    try {
+      // If you have a multi-search method, use it:
+      // final fromTmdb = await TmdbService.searchPosterUrls(
+      //   title: query,
+      //   year: year,
+      //   type: mediatype == 'movies' ? 'movie' : 'tv',
+      // );
+      // urls.addAll(fromTmdb);
+
+      // Fallback to single-result method:
+      final one = await TmdbService.getPosterUrl(
+        title: query,
+        type: mediatype == 'movies' ? 'movie' : 'tv',
+      );
+      if (one != null && one.trim().isNotEmpty) urls.add(one);
+    } catch (_) {}
+
+    // 2) MPDB
+    try {
+      final mpdb = await TmdbService.getPosterUrl(
+        title: query,
+        year: year,
+        type: mediatype == 'movies' ? 'movie' : 'tv',
+      );
+      if (mpdb != null && mpdb.trim().isNotEmpty) urls.add(mpdb);
+    } catch (_) {}
+
+    // 3) Archive itemimage (metadata->itemimage)
+    try {
+      final itemImage = await _fetchItemImage(id);
+      if (itemImage != null && itemImage.trim().isNotEmpty) urls.add(itemImage);
+    } catch (_) {}
+
+    // 4) Archive video frame (if video)
+    if (mediatype.toLowerCase().contains('video')) {
+      urls.add('https://archive.org/download/$id/${id}__thumb.jpg');
+    }
+
+    // 5) Default archive thumb
+    urls.add(_thumbForId(id));
+
+    // Dedupe + keep https where possible
+    final seen = <String>{};
+    final deduped = <String>[];
+    for (final u in urls) {
+      final s = u.trim();
+      if (s.isEmpty) continue;
+      if (!seen.contains(s)) {
+        seen.add(s);
+        deduped.add(s);
+      }
+    }
+    return deduped;
+  }
+
+  // Opens a bottom sheet grid so the user can choose a poster.
+  // Returns the selected URL or null if cancelled.
+  Future<String?> _choosePoster(List<String> urls, {String? title}) async {
+    if (urls.isEmpty) return null;
+    return showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final cross = (MediaQuery.of(ctx).size.width ~/ 120).clamp(2, 5);
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: Text(title ?? 'Choose a thumbnail'),
+                subtitle: Text(
+                  '${urls.length} option${urls.length == 1 ? '' : 's'}',
+                ),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: GridView.builder(
+                  padding: const EdgeInsets.all(12),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: cross,
+                    childAspectRatio: 3 / 4,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                  ),
+                  itemCount: urls.length,
+                  itemBuilder: (_, i) {
+                    final u = urls[i];
+                    return InkWell(
+                      onTap: () => Navigator.pop(ctx, u),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: CachedNetworkImage(
+                          imageUrl: u,
+                          fit: BoxFit.cover,
+                          errorWidget:
+                              (_, __, ___) => Container(
+                                color: Theme.of(ctx).colorScheme.surfaceVariant,
+                                alignment: Alignment.center,
+                                child: const Icon(Icons.broken_image),
+                              ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  //  LONG-PRESS MENU – TMDb thumbnail + add-to-favourites
+  // ─────────────────────────────────────────────────────────────────────────────
+  Future<void> _handleLongPressItem(Map<String, String> item) async {
+    HapticFeedback.mediumImpact();
+
+    // Always use the page’s messenger — not the dialog’s context.
+    final messenger = ScaffoldMessenger.maybeOf(context);
+
+    final id = item['identifier']!;
+    final title = item['title'] ?? id;
+    final mediatype = item['mediatype'] ?? '';
+    final year = item['year'] ?? '';
+
+    FavoriteItem fav = FavoriteItem(
+      id: id,
+      title: title,
+      url: 'https://archive.org/details/$id',
+      thumb: item['thumb']!,
+    );
+
+    final svc = FavoritesService.instance;
+    if (svc.folders().isEmpty) {
+      await svc.createFolder('Favourites');
+    }
+
+    final titleCtrl = TextEditingController(text: title);
+    bool isSearching = false;
+
+    // This will return DialogResult.generateThumb when search succeeds
+    final result = await showDialog<DialogResult>(
+      context: context,
+      barrierDismissible: false, // Prevent accidental dismiss
+      builder:
+          (ctx) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  title: const Text('Options'),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.favorite_border),
+                        title: const Text('Add to Favourites'),
+                        subtitle: Text('Add "$title" to a folder'),
+                        onTap:
+                            () => Navigator.pop(ctx, DialogResult.addToFolder),
+                      ),
+
+                      if (mediatype.toLowerCase().contains('video') ||
+                          mediatype == 'movies')
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 12),
+                            const Text(
+                              'Generate Thumbnail from TMDb',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: titleCtrl,
+                              decoration: InputDecoration(
+                                hintText: 'Enter movie/TV title',
+                                border: const OutlineInputBorder(),
+                                suffixIcon:
+                                    isSearching
+                                        ? const Padding(
+                                          padding: EdgeInsets.all(12),
+                                          child: SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          ),
+                                        )
+                                        : IconButton(
+                                          icon: const Icon(Icons.search),
+                                          onPressed:
+                                              isSearching
+                                                  ? null
+                                                  : () async {
+                                                    final query =
+                                                        titleCtrl.text.trim();
+                                                    if (query.isEmpty) {
+                                                      messenger?.showSnackBar(
+                                                        const SnackBar(
+                                                          content: Text(
+                                                            'Please enter a title',
+                                                          ),
+                                                          backgroundColor:
+                                                              Colors.orange,
+                                                        ),
+                                                      );
+                                                      return;
+                                                    }
+
+                                                    setDialogState(
+                                                      () => isSearching = true,
+                                                    );
+
+                                                    List<String> candidates =
+                                                        const [];
+                                                    try {
+                                                      candidates =
+                                                          await _gatherPosterCandidates(
+                                                            query: query,
+                                                            id: id,
+                                                            mediatype:
+                                                                mediatype,
+                                                            year:
+                                                                year.isNotEmpty
+                                                                    ? year
+                                                                    : null,
+                                                          );
+                                                    } catch (e) {
+                                                      messenger?.showSnackBar(
+                                                        SnackBar(
+                                                          content: Text(
+                                                            'Search failed: $e',
+                                                          ),
+                                                          backgroundColor:
+                                                              Colors.red,
+                                                        ),
+                                                      );
+                                                    } finally {
+                                                      if (ctx.mounted) {
+                                                        setDialogState(
+                                                          () =>
+                                                              isSearching =
+                                                                  false,
+                                                        );
+                                                      }
+                                                    }
+
+                                                    if (candidates.isEmpty) {
+                                                      messenger?.showSnackBar(
+                                                        const SnackBar(
+                                                          content: Text(
+                                                            'No thumbnails found',
+                                                          ),
+                                                          backgroundColor:
+                                                              Colors.orange,
+                                                        ),
+                                                      );
+                                                      return;
+                                                    }
+
+                                                    // Let the user pick
+                                                    final chosen =
+                                                        await _choosePoster(
+                                                          candidates,
+                                                          title:
+                                                              'Pick a thumbnail for "$title"',
+                                                        );
+                                                    if (chosen == null) return;
+
+                                                    // SUCCESS: Update everything with chosen poster
+                                                    fav = fav.copyWith(
+                                                      thumb: chosen,
+                                                    );
+                                                    await FavoritesService
+                                                        .instance
+                                                        .updateThumbForId(
+                                                          id,
+                                                          chosen,
+                                                        );
+
+                                                    final idx = _items
+                                                        .indexWhere(
+                                                          (i) =>
+                                                              i['identifier'] ==
+                                                              id,
+                                                        );
+                                                    if (idx != -1 && mounted) {
+                                                      setState(
+                                                        () =>
+                                                            _items[idx]['thumb'] =
+                                                                chosen,
+                                                      );
+                                                    }
+
+                                                    await ThumbOverrideService
+                                                        .instance
+                                                        .set(id, chosen);
+
+                                                    messenger?.showSnackBar(
+                                                      SnackBar(
+                                                        content: const Text(
+                                                          'Thumbnail updated!',
+                                                        ),
+                                                        backgroundColor:
+                                                            Colors.green,
+                                                        action: SnackBarAction(
+                                                          label: 'View',
+                                                          onPressed:
+                                                              () => launchUrl(
+                                                                Uri.parse(
+                                                                  chosen,
+                                                                ),
+                                                              ),
+                                                        ),
+                                                      ),
+                                                    );
+
+                                                    // Close the options dialog with a success result
+                                                    if (ctx.mounted) {
+                                                      Navigator.pop(
+                                                        ctx,
+                                                        DialogResult
+                                                            .generateThumb,
+                                                      );
+                                                    }
+                                                  },
+                                        ),
+                              ),
+                            ),
+                            if (year.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  'Year: $year',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ),
+                          ],
+                        ),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Cancel'),
+                    ),
+                  ],
+                ),
+          ),
+    );
+
+    titleCtrl.dispose();
+
+    // Handle "Add to Favourites" after dialog closes
+    if (result == DialogResult.addToFolder) {
+      final folder = await showAddToFavoritesDialog(context, item: fav);
+      if (folder != null && context.mounted) {
+        await svc.addToFolder(folder, fav);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Added to "$folder"')));
+      }
+    }
+  }
 
   Future<void> _openItem(Map<String, String> item) async {
     final id = item['identifier']!;
@@ -360,9 +805,78 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         return;
       }
 
-      // === UPDATED FILES LOOP ===
+      // === HANDLE TEXTS AS PDF (WITH MULTI-FILE SUPPORT) ===
+      if (mediatype == 'texts') {
+        final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
+        final pdfFiles =
+            rawFiles.cast<Map<String, dynamic>>().where((f) {
+              final name = (f['name'] ?? '').toString().toLowerCase();
+              final fmt = (f['format'] ?? '').toString().toLowerCase();
+              return name.endsWith('.pdf') || fmt.contains('pdf');
+            }).toList();
+
+        if (pdfFiles.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No PDF found in this text item.')),
+          );
+          return;
+        }
+
+        if (pdfFiles.length == 1) {
+          final pdf = pdfFiles.first;
+          final name = pdf['name'] as String;
+          final fileUrl =
+              'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
+
+          await RecentProgressService.instance.touch(
+            id: id,
+            title: item['title'] ?? id,
+            thumb: _thumbForId(id),
+            kind: 'pdf',
+            fileUrl: fileUrl,
+            fileName: name,
+          );
+
+          if (!mounted) return;
+
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder:
+                  (_) => PdfViewerScreen(
+                    url: fileUrl,
+                    filenameHint: name,
+                    identifier: id,
+                    title: item['title'] ?? id,
+                  ),
+            ),
+          );
+          return;
+        }
+
+        final pdfList =
+            pdfFiles
+                .map((f) => {'name': f['name'] as String})
+                .cast<Map<String, String>>()
+                .toList();
+
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder:
+                (_) => ArchiveItemScreen(
+                  title: item['title'] ?? id,
+                  identifier: id,
+                  files: pdfList,
+                ),
+          ),
+        );
+        return;
+      }
+
+      // === VIDEO DETECTION ONLY ===
       final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
-      final files = <Map<String, dynamic>>[];
+      final videoFiles = <Map<String, dynamic>>[];
       for (final f in rawFiles) {
         if (f is! Map) continue;
         final name = (f['name'] ?? '').toString();
@@ -370,7 +884,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         final fmt = (f['format'] ?? '').toString().toLowerCase();
         final lower = name.toLowerCase();
 
-        // Video detection (unchanged)
         final isVideo =
             fmt.contains('mp4') ||
             fmt.contains('mpeg4') ||
@@ -383,44 +896,26 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             lower.endsWith('.webm') ||
             lower.endsWith('.m3u8');
 
-        // Text / document detection
-        final isDocument =
-            fmt.contains('pdf') ||
-            fmt.contains('epub') ||
-            fmt.contains('comic book') ||
-            lower.endsWith('.pdf') ||
-            lower.endsWith('.epub') ||
-            lower.endsWith('.cbz') ||
-            lower.endsWith('.cbr') ||
-            lower.endsWith('.txt');
-
-        files.add({
-          'name': name,
-          'format': fmt,
-          'isVideo': isVideo,
-          'isDocument': isDocument,
-          'size': f['size'],
-        });
+        if (isVideo) {
+          videoFiles.add({
+            'name': name,
+            'format': fmt,
+            'isVideo': true,
+            'size': f['size'],
+          });
+        }
       }
-
-      final videoFiles = files.where((f) => f['isVideo'] as bool).toList();
-      final docFiles = files.where((f) => f['isDocument'] as bool).toList();
 
       if (videoFiles.isNotEmpty) {
         await _openVideoChooser(context, id, item['title'] ?? id, videoFiles);
         return;
       }
 
-      if (docFiles.isNotEmpty) {
-        await _openDocumentChooser(context, id, item['title'] ?? id, docFiles);
-        return;
-      }
-      // === END UPDATED LOOP ===
-
       // Fallback: show generic file list
       final justNames =
-          files
-              .where((f) => (f['name'] as String).isNotEmpty)
+          rawFiles
+              .whereType<Map>()
+              .where((f) => (f['name'] as String?)?.isNotEmpty == true)
               .map<Map<String, String>>((f) => {'name': f['name'] as String})
               .toList();
 
@@ -576,6 +1071,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       'subject',
       'creator',
       'description',
+      'year',
     ].map((f) => 'fl[]=$f').join('&');
 
     final url =
@@ -603,6 +1099,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           docs.map<Map<String, String>>((doc) {
             final id = (doc['identifier'] ?? '').toString();
             final title = flat(doc['title']).trim();
+            final year = flat(doc['year']);
             return {
               'identifier': id,
               'title': title.isEmpty ? id : title,
@@ -611,6 +1108,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               'description': flat(doc['description']),
               'creator': flat(doc['creator']),
               'subject': flat(doc['subject']),
+              'year': year,
             };
           }).toList();
 
@@ -620,6 +1118,20 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             FavoritesService.instance.allItems.map((e) => e.id).toSet();
         items = items.where((m) => favs.contains(m['identifier'])).toList();
       }
+
+      await ThumbOverrideService.instance.applyToItemMaps(items);
+
+      // NEW: de-duplicate by identifier
+      final seen = <String>{};
+      items =
+          items.where((m) {
+            final id = m['identifier'] ?? '';
+            if (id.isEmpty || seen.contains(id)) return false;
+            seen.add(id);
+            return true;
+          }).toList();
+
+      return items;
 
       return items;
     } catch (_) {
@@ -942,8 +1454,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                 it['creator']?.isNotEmpty == true
                     ? it['creator']!
                     : it['subject'] ?? '',
-            thumb: it['thumb']!,
             mediatype: it['mediatype'] ?? '',
+            year: it['year'],
+            thumb: it['thumb'],
             onTap: () => _openItem(it),
             onLongPress: () => _handleLongPressItem(it),
           );
@@ -971,8 +1484,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             return _GridCard(
               id: it['identifier']!,
               title: it['title']!,
-              thumb: it['thumb']!,
               mediatype: it['mediatype'] ?? '',
+              year: it['year'],
+              thumb: it['thumb'],
               highlight: isCollection,
               onTap: () => _openItem(it),
               onLongPress: () => _handleLongPressItem(it),
@@ -981,32 +1495,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         );
       },
     );
-  }
-
-  Future<void> _handleLongPressItem(Map<String, String> item) async {
-    HapticFeedback.mediumImpact();
-
-    final id = item['identifier']!;
-    final fav = FavoriteItem(
-      id: id,
-      title: item['title'] ?? id,
-      url: 'https://archive.org/details/$id',
-      thumb: item['thumb']!,
-    );
-
-    final svc = FavoritesService.instance;
-    if (svc.folders().isEmpty) {
-      await svc.createFolder('Favourites');
-    }
-
-    final folder = await showAddToFavoritesDialog(context, item: fav);
-
-    if (folder != null && context.mounted) {
-      await svc.addToFolder(folder, fav);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Added to "$folder"')));
-    }
   }
 
   // === VIDEO CHOOSER (unchanged) ===
@@ -1183,168 +1671,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       },
     );
   }
-
-  // === NEW DOCUMENT CHOOSER ===
-  Future<void> _openDocumentChooser(
-    BuildContext context,
-    String identifier,
-    String title,
-    List<Map<String, dynamic>> docFiles,
-  ) async {
-    // 1. Build a map: format → list of files
-    final Map<String, List<Map<String, dynamic>>> filesByFormat = {};
-    for (final f in docFiles) {
-      final name = (f['name'] ?? '').toString().toLowerCase();
-      String fmt;
-      if (name.endsWith('.pdf'))
-        fmt = 'pdf';
-      else if (name.endsWith('.epub'))
-        fmt = 'epub';
-      else if (name.endsWith('.txt'))
-        fmt = 'txt';
-      else if (name.endsWith('.cbz'))
-        fmt = 'cbz';
-      else if (name.endsWith('.cbr'))
-        fmt = 'cbr';
-      else
-        continue;
-
-      filesByFormat.putIfAbsent(fmt, () => []).add(f);
-    }
-
-    if (filesByFormat.isEmpty) return;
-
-    // 2. Ask user which format
-    final chosenFmt = await showFormatPickerDialog(
-      context,
-      filesByFormat.keys.toList(),
-    );
-    if (chosenFmt == null || !context.mounted) return;
-
-    final chosenFiles = filesByFormat[chosenFmt]!;
-
-    // 3. TXT → open ArchiveItemScreen (generic file list)
-    if (chosenFmt == 'txt') {
-      final txtFiles =
-          chosenFiles.map((f) => {'name': f['name'] as String}).toList();
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder:
-              (_) => ArchiveItemScreen(
-                title: title,
-                identifier: identifier,
-                files: txtFiles,
-              ),
-        ),
-      );
-      return;
-    }
-
-    // 4. PDF / EPUB / CBZ / CBR → open in-app viewer
-    if (chosenFiles.length == 1) {
-      final f = chosenFiles.first;
-      final name = f['name'] as String;
-      final fileUrl =
-          'https://archive.org/download/$identifier/${Uri.encodeComponent(name)}';
-
-      // Save progress
-      await RecentProgressService.instance.touch(
-        id: identifier,
-        title: title,
-        thumb: _thumbForId(identifier),
-        kind: chosenFmt,
-        fileUrl: fileUrl,
-        fileName: name,
-      );
-
-      if (chosenFmt == 'pdf') {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder:
-                (_) => PdfViewerScreen(
-                  url: fileUrl,
-                  filenameHint: name,
-                  identifier: identifier,
-                  title: title,
-                ),
-          ),
-        );
-      } else if (chosenFmt == 'epub') {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder:
-                (_) => EpubViewerScreen(
-                  url: fileUrl,
-                  filenameHint: name,
-                  identifier: identifier,
-                  title: title,
-                ),
-          ),
-        );
-      } else {
-        // CBZ/CBR → external
-        final mime =
-            chosenFmt == 'cbz'
-                ? 'application/vnd.comicbook+zip'
-                : 'application/vnd.comicbook-rar';
-        await openExternallyWithChooser(
-          url: fileUrl,
-          mimeType: mime,
-          chooserTitle: 'Open with',
-        );
-      }
-    } else {
-      // Multiple files → show ArchiveItemScreen
-      final list =
-          chosenFiles.map((f) => {'name': f['name'] as String}).toList();
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder:
-              (_) => ArchiveItemScreen(
-                title: title,
-                identifier: identifier,
-                files: list,
-              ),
-        ),
-      );
-    }
-  }
-}
-
-Future<String?> showFormatPickerDialog(
-  BuildContext context,
-  List<String> formats,
-) async {
-  return showDialog<String>(
-    context: context,
-    builder:
-        (ctx) => AlertDialog(
-          title: const Text('Choose format'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children:
-                formats.map((f) {
-                  return ListTile(
-                    leading: Icon(
-                      f == 'pdf'
-                          ? Icons.picture_as_pdf
-                          : f == 'epub'
-                          ? Icons.book
-                          : Icons.description,
-                    ),
-                    title: Text(f.toUpperCase()),
-                    onTap: () => Navigator.pop(ctx, f),
-                  );
-                }).toList(),
-          ),
-        ),
-  );
 }
 
 // ---------- UI helpers ----------
@@ -1462,8 +1788,9 @@ class _EmptyPane extends StatelessWidget {
 class _GridCard extends StatelessWidget {
   final String id;
   final String title;
-  final String thumb;
   final String mediatype;
+  final String? year;
+  final String? thumb;
   final bool highlight;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
@@ -1471,8 +1798,9 @@ class _GridCard extends StatelessWidget {
   const _GridCard({
     required this.id,
     required this.title,
-    required this.thumb,
     required this.mediatype,
+    this.year,
+    required this.thumb,
     required this.highlight,
     required this.onTap,
     required this.onLongPress,
@@ -1481,6 +1809,8 @@ class _GridCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final thumbUrl =
+        (thumb != null && thumb!.trim().isNotEmpty) ? thumb! : _thumbForId(id);
 
     return Material(
       type: MaterialType.transparency,
@@ -1494,8 +1824,8 @@ class _GridCard extends StatelessWidget {
             Expanded(
               child: CapsuleThumbCard(
                 heroTag: 'thumb:$id',
-                imageUrl: thumb,
-                fit: BoxFit.contain,
+                imageUrl: thumbUrl,
+                fit: BoxFit.cover,
                 fillParent: true,
                 topRightOverlay:
                     mediatype.isNotEmpty
@@ -1521,8 +1851,9 @@ class _ListTileCard extends StatelessWidget {
   final String id;
   final String title;
   final String subtitle;
-  final String thumb;
   final String mediatype;
+  final String? year;
+  final String? thumb;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
@@ -1530,8 +1861,9 @@ class _ListTileCard extends StatelessWidget {
     required this.id,
     required this.title,
     required this.subtitle,
-    required this.thumb,
     required this.mediatype,
+    this.year,
+    required this.thumb,
     required this.onTap,
     required this.onLongPress,
   });
@@ -1539,6 +1871,8 @@ class _ListTileCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final thumbUrl =
+        (thumb != null && thumb!.trim().isNotEmpty) ? thumb! : _thumbForId(id);
 
     return InkWell(
       onTap: onTap,
@@ -1551,9 +1885,9 @@ class _ListTileCard extends StatelessWidget {
             width: 96,
             child: CapsuleThumbCard(
               heroTag: 'thumb:$id',
-              imageUrl: thumb,
+              imageUrl: thumbUrl,
               aspectRatio: 3 / 4,
-              fit: BoxFit.contain,
+              fit: BoxFit.cover,
               topRightOverlay:
                   mediatype.isNotEmpty
                       ? mediaTypePill(context, mediatype)
@@ -1665,25 +1999,25 @@ class _CollectionQuickPick extends StatelessWidget {
                   final it = items[i];
                   final id = it['identifier']!;
                   final mediatype = (it['mediatype'] ?? '').toUpperCase();
+                  final thumbUrl =
+                      (it['thumb']?.isNotEmpty == true)
+                          ? it['thumb']!
+                          : _fallbackThumbForId(id);
+
                   return ListTile(
                     leading: ClipRRect(
                       borderRadius: BorderRadius.circular(8),
                       child: CachedNetworkImage(
-                        httpHeaders: Net.headers,
-                        imageUrl: it['thumb']!,
+                        imageUrl: thumbUrl,
                         width: 48,
                         height: 64,
                         fit: BoxFit.cover,
                         errorWidget:
                             (_, __, ___) => Image.network(
                               _fallbackThumbForId(id),
-                              headers: Net.headers,
                               width: 48,
                               height: 64,
                               fit: BoxFit.cover,
-                              errorBuilder:
-                                  (_, __, ___) =>
-                                      const Icon(Icons.broken_image),
                             ),
                       ),
                     ),
@@ -1733,7 +2067,7 @@ class _CollectionQuickPick extends StatelessWidget {
                 },
               ),
             ),
-            Divider(height: 1),
+            const Divider(height: 1),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
               child: Row(

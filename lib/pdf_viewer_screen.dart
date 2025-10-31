@@ -62,8 +62,12 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         _localFile = await downloadWithCache(
           url: widget.url!,
           filenameHint: widget.filenameHint,
-          onProgress:
-              (p) => ifMounted(this, () => setState(() => _progress = p)),
+          onProgress: (received, total) {
+            if (total != null && total > 0) {
+              final p = received / total;
+              ifMounted(this, () => setState(() => _progress = p));
+            }
+          },
         );
       }
 

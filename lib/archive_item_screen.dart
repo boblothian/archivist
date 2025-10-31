@@ -2,19 +2,18 @@
 import 'dart:io';
 
 import 'package:archivereader/services/recent_progress_service.dart';
-import 'package:archivereader/text_viewer_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:open_filex/open_filex.dart'; // Correct package
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'cbz_viewer_screen.dart';
-import 'epub_viewer_screen.dart';
 import 'net.dart';
 import 'pdf_viewer_screen.dart';
-import 'services/jellyfin_service.dart';
-import 'utils.dart'; // ← Required for downloadWithCache
+import 'utils.dart'; // For downloadWithCache
 
 class ArchiveItemScreen extends StatefulWidget {
   final String title;
@@ -57,44 +56,20 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
   Future<void> _openFile(
     String fileName,
     String fileUrl,
-    String thumbUrl, // ← NEW
+    String thumbUrl,
   ) async {
     final ext = p.extension(fileName).toLowerCase();
-    late final Widget viewer;
     late final String kind;
 
     if (ext == '.pdf') {
-      viewer = PdfViewerScreen(
-        url: fileUrl,
-        filenameHint: fileName,
-        identifier: widget.identifier,
-        title: widget.title,
-        thumbUrl: thumbUrl, // ← PASS IT!
-      );
       kind = 'pdf';
     } else if (ext == '.epub') {
-      viewer = EpubViewerScreen(
-        url: fileUrl,
-        filenameHint: fileName,
-        identifier: widget.identifier,
-        title: widget.title,
-      );
       kind = 'epub';
+      await _launchEpubExternal(fileName, fileUrl, thumbUrl);
+      return; // No Navigator.push
     } else if (['.cbz', '.cbr'].contains(ext)) {
-      viewer = CbzViewerScreen(
-        url: fileUrl,
-        filenameHint: fileName,
-        title: widget.title,
-        identifier: widget.identifier,
-      );
       kind = 'cbz';
     } else if (ext == '.txt') {
-      viewer = TextViewerScreen(
-        url: fileUrl,
-        filenameHint: fileName,
-        identifier: widget.identifier,
-        title: widget.title,
-      );
       kind = 'text';
     } else {
       ScaffoldMessenger.of(
@@ -107,7 +82,7 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
     await RecentProgressService.instance.touch(
       id: widget.identifier,
       title: widget.title,
-      thumb: thumbUrl, // ← NOW SAVED!
+      thumb: thumbUrl,
       kind: kind,
       fileUrl: fileUrl,
       fileName: fileName,
@@ -117,13 +92,18 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
       final cachedFile = await downloadWithCache(
         url: fileUrl,
         filenameHint: fileName,
-        onProgress:
-            (p) => ifMounted(
+        onProgress: (received, total) {
+          if (total != null && total > 0) {
+            final p = received / total;
+            ifMounted(
               this,
               () => setState(() => _downloadProgress[fileName] = p),
-            ),
+            );
+          }
+        },
       );
 
+      // NOW: Use cachedFile for ALL viewers
       Widget finalViewer;
       if (ext == '.pdf') {
         finalViewer = PdfViewerScreen(
@@ -131,8 +111,14 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
           identifier: widget.identifier,
           title: widget.title,
         );
+      } else if (['.cbz', '.cbr'].contains(ext)) {
+        finalViewer = CbzViewerScreen(
+          cbzFile: cachedFile,
+          title: widget.title,
+          identifier: widget.identifier,
+        );
       } else {
-        finalViewer = viewer; // EPUB/CBZ/TXT use URL
+        finalViewer = Container();
       }
 
       ifMounted(this, () {
@@ -149,42 +135,61 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
     }
   }
 
-  void _saveToJellyfin(String fileUrl, String title) async {
-    final svc = JellyfinService.instance;
-    final cfg = await svc.loadConfig() ?? await svc.showConfigDialog(context);
-    if (cfg == null) return;
-
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Uploading to Jellyfin…')));
-
+  // Launch EPUB in external reader
+  Future<void> _launchEpubExternal(
+    String fileName,
+    String fileUrl,
+    String thumbUrl,
+  ) async {
     try {
-      await svc.addMovieFromUrl(
-        url: Uri.parse(fileUrl),
-        title: title,
-        httpHeaders: Net.headers,
-        onProgress: (sent, total) {
+      final cachedFile = await downloadWithCache(
+        url: fileUrl,
+        filenameHint: fileName,
+        onProgress: (received, total) {
           if (total != null && total > 0) {
-            final pct = ((sent / total) * 100).floor();
-            ScaffoldMessenger.of(context).hideCurrentSnackBar();
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('Uploading… $pct%')));
+            final p = received / total;
+            ifMounted(
+              this,
+              () => setState(() => _downloadProgress[fileName] = p),
+            );
           }
         },
       );
 
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Added to Jellyfin! Library refresh triggered.'),
-        ),
+      // Request storage permission (Android)
+      if (Platform.isAndroid) {
+        final status = await Permission.storage.request();
+        if (!status.isGranted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Storage permission required to open EPUB'),
+            ),
+          );
+          return;
+        }
+      }
+
+      final result = await OpenFilex.open(
+        cachedFile.path,
+        type: 'application/epub+zip',
       );
+
+      if (result.type != ResultType.done) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No app found to open EPUB: ${result.message}'),
+          ),
+        );
+      }
+
+      ifMounted(this, () => setState(() => _downloadProgress.remove(fileName)));
     } catch (e) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      ifMounted(this, () {
+        setState(() => _downloadProgress.remove(fileName));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to open EPUB: $e')));
+      });
     }
   }
 
@@ -205,7 +210,7 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
     } else {
       _favoriteFiles.add(fileName);
       final thumbUrl = buildJp2ThumbnailUrl(fileName, widget.identifier);
-      _openFile(fileName, fileUrl, thumbUrl); // ← NOW 3 args
+      _openFile(fileName, fileUrl, thumbUrl);
     }
 
     await prefs.setStringList('reading_list', _favoriteFiles.toList());
@@ -268,15 +273,6 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
         .join(' ');
 
     return number.isNotEmpty ? '$number. $title' : title;
-  }
-
-  bool _isVideoFile(String name) {
-    final lower = name.toLowerCase();
-    return lower.endsWith('.mp4') ||
-        lower.endsWith('.mkv') ||
-        lower.endsWith('.avi') ||
-        lower.endsWith('.mov') ||
-        lower.endsWith('.webm');
   }
 
   @override
@@ -415,15 +411,6 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (_isVideoFile(fileName))
-                      IconButton(
-                        icon: const Icon(
-                          Icons.cloud_upload,
-                          color: Colors.lightBlueAccent,
-                        ),
-                        tooltip: 'Save to Jellyfin',
-                        onPressed: () => _saveToJellyfin(fileUrl, fileName),
-                      ),
                     IconButton(
                       icon: Icon(
                         isFavorited ? Icons.favorite : Icons.favorite_border,
@@ -440,4 +427,9 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
       ),
     );
   }
+}
+
+// Helper to prevent setState after dispose
+void ifMounted(State state, VoidCallback callback) {
+  if (state.mounted) callback();
 }

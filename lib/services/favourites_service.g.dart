@@ -22,13 +22,15 @@ class FavoriteItemAdapter extends TypeAdapter<FavoriteItem> {
       url: fields[2] as String?,
       thumb: fields[3] as String?,
       author: fields[4] as String?,
+      mediatype: fields[5] as String?,
+      formats: (fields[6] as List).cast<String>(),
     );
   }
 
   @override
   void write(BinaryWriter writer, FavoriteItem obj) {
     writer
-      ..writeByte(5)
+      ..writeByte(7)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -38,7 +40,11 @@ class FavoriteItemAdapter extends TypeAdapter<FavoriteItem> {
       ..writeByte(3)
       ..write(obj.thumb)
       ..writeByte(4)
-      ..write(obj.author);
+      ..write(obj.author)
+      ..writeByte(5)
+      ..write(obj.mediatype)
+      ..writeByte(6)
+      ..write(obj.formats);
   }
 
   @override

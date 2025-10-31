@@ -82,11 +82,12 @@ class _CbzViewerScreenState extends State<CbzViewerScreen> {
           await downloadWithCache(
             url: widget.url!,
             filenameHint: fileName,
-            onProgress:
-                (p) => ifMounted(
-                  this,
-                  () => setState(() => _downloadProgress = p),
-                ),
+            onProgress: (received, total) {
+              if (total != null && total > 0) {
+                final p = received / total;
+                ifMounted(this, () => setState(() => _downloadProgress = p));
+              }
+            },
           );
         }
         await _loadSavedPage();

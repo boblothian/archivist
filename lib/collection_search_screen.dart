@@ -9,6 +9,7 @@ import 'archive_api.dart';
 import 'collection_detail_screen.dart';
 import 'collection_store.dart';
 
+/// Helper – safe access to the store
 CollectionsHomeState? collectionsHomeMaybeOf(BuildContext context) =>
     context
         .dependOnInheritedWidgetOfExactType<CollectionsHomeScope>()
@@ -22,8 +23,7 @@ class CollectionSearchScreen extends StatefulWidget {
 }
 
 class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
-  final _controller =
-      TextEditingController(); // <-- Fixed: was TTextEditingController
+  final _controller = TextEditingController();
   final _focus = FocusNode();
   Timer? _debounce;
 
@@ -51,7 +51,7 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
   void _onChanged() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () {
-      final q = _controller.text;
+      final q = _controller.text.trim();
       if (q == _query) return;
       _runSearch(q);
     });
@@ -84,16 +84,35 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
           c.thumbnailUrl ?? 'https://archive.org/services/img/${c.identifier}',
       kind: 'collection',
     );
+
+    if (!mounted) return;
+
     Navigator.of(context).push(
       MaterialPageRoute(
         builder:
             (_) => CollectionDetailScreen(
               categoryName:
-                  c.identifier, // This is what CollectionDetailScreen expects
+                  c.title?.isNotEmpty == true ? c.title! : c.identifier,
               customQuery: 'collection:${c.identifier}',
             ),
       ),
     );
+  }
+
+  /// Pin / unpin a collection using the shared store
+  Future<void> _togglePin(String identifier) async {
+    final store = collectionsHomeMaybeOf(context);
+    if (store == null) return; // safety – the scope should always be present
+
+    if (store.isPinned(identifier)) {
+      await store.unpin(identifier);
+    } else {
+      await store.pin(identifier);
+    }
+
+    // UI updates automatically because CollectionsHomeState is a ChangeNotifier
+    // but we also force a rebuild here to be 100% safe
+    if (mounted) setState(() {});
   }
 
   @override
@@ -119,7 +138,7 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
       ),
       body: Column(
         children: [
-          // Search Field
+          // ── Search Field ─────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: TextField(
@@ -150,7 +169,7 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
             ),
           ),
 
-          // Error
+          // ── Error ───────────────────────────────────────────
           if (_error != null)
             Padding(
               padding: const EdgeInsets.all(16),
@@ -160,7 +179,7 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
               ),
             ),
 
-          // Results
+          // ── Results ────────────────────────────────────────
           Expanded(
             child: RefreshIndicator(
               onRefresh: () => _runSearch(_query),
@@ -175,28 +194,12 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
                         itemBuilder: (_, i) {
                           final c = _results[i];
                           final pinned = pins?.isPinned(c.identifier) ?? false;
+
                           return _CollectionCard(
                             collection: c,
                             pinned: pinned,
-                            onTap: () => _open(c), // TAP OPENS DETAIL SCREEN
-                            onPinToggle: () {
-                              if (pinned) {
-                                pins?.unpin(c.identifier);
-                              } else {
-                                onPinToggle:
-                                () {
-                                  if (pinned) {
-                                    pins?.unpin(c.identifier);
-                                  } else {
-                                    pins?.pin(
-                                      c.identifier,
-                                    ); // ⟵ change to String
-                                  }
-                                  setState(() {});
-                                };
-                              }
-                              setState(() {});
-                            },
+                            onTap: () => _open(c),
+                            onPinToggle: () => _togglePin(c.identifier),
                           );
                         },
                       ),
@@ -225,7 +228,7 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
                 'subject:cartoons',
                 'creator:prelinger',
                 'language:eng',
-                'year: a..1960',
+                'year:1950..1960',
                 'identifier:classic_tv',
                 'subject:horror',
               ].map(_QuickChip.new).toList(),
@@ -236,6 +239,9 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
   }
 }
 
+/// ──────────────────────────────────────────────────────────────
+///  CARD
+/// ──────────────────────────────────────────────────────────────
 class _CollectionCard extends StatelessWidget {
   final ArchiveCollection collection;
   final bool pinned;
@@ -261,7 +267,7 @@ class _CollectionCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Thumbnail
+              // ── Thumbnail ─────────────────────────────────────
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: SizedBox(
@@ -299,7 +305,7 @@ class _CollectionCard extends StatelessWidget {
               ),
               const SizedBox(width: 16),
 
-              // Text
+              // ── Text ───────────────────────────────────────────
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -322,6 +328,7 @@ class _CollectionCard extends StatelessWidget {
                       ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
                     ),
                     const SizedBox(height: 8),
+                    // Optional "In progress" badge – keep if you want
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
@@ -344,8 +351,8 @@ class _CollectionCard extends StatelessWidget {
                 ),
               ),
 
-              // Pin Button
-              if (collectionsHomeMaybeOf(context) != null)
+              // ── Pin Button ─────────────────────────────────────
+              if (onPinToggle != null)
                 TextButton.icon(
                   onPressed: onPinToggle,
                   icon: Icon(
@@ -362,6 +369,9 @@ class _CollectionCard extends StatelessWidget {
   }
 }
 
+/// ──────────────────────────────────────────────────────────────
+///  QUICK SEARCH CHIPS
+/// ──────────────────────────────────────────────────────────────
 class _QuickChip extends StatelessWidget {
   final String q;
   const _QuickChip(this.q);

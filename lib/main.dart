@@ -1,11 +1,13 @@
 // lib/main.dart
 import 'package:animated_splash_screen/animated_splash_screen.dart';
+import 'package:archivereader/pinned_collections_screen.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'collection_search_screen.dart';
+import 'collection_store.dart'; // ← ADD THIS
 import 'favourites_screen.dart';
 import 'home_page_screen.dart';
 import 'reading_lists_screen.dart';
@@ -21,7 +23,7 @@ Future<void> main() async {
   await FavoritesService.instance.init();
   await RecentProgressService.instance.init();
 
-  // Immersive mode; overlay icon brightness handled per-screen below
+  // Immersive mode
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
   runApp(const ArchivistApp());
@@ -30,7 +32,6 @@ Future<void> main() async {
 ThemeData _buildTheme(Brightness brightness) {
   final isDark = brightness == Brightness.dark;
 
-  // Seeded scheme, but force our backgrounds
   final scheme = ColorScheme.fromSeed(
     seedColor: _seed,
     brightness: brightness,
@@ -44,7 +45,6 @@ ThemeData _buildTheme(Brightness brightness) {
     colorScheme: scheme,
     scaffoldBackgroundColor: scheme.background,
 
-    // 📖 Typography — Merriweather for headings, Inter for body
     textTheme: TextTheme(
       displayLarge: GoogleFonts.merriweather(
         fontWeight: FontWeight.w700,
@@ -63,7 +63,6 @@ ThemeData _buildTheme(Brightness brightness) {
       ),
     ),
 
-    // 🧭 AppBar styling
     appBarTheme: AppBarTheme(
       backgroundColor: scheme.surface,
       foregroundColor: scheme.onSurface,
@@ -84,7 +83,6 @@ ThemeData _buildTheme(Brightness brightness) {
       ),
     ),
 
-    // 🎴 Cards
     cardTheme: CardThemeData(
       elevation: 1,
       margin: const EdgeInsets.all(8),
@@ -93,7 +91,6 @@ ThemeData _buildTheme(Brightness brightness) {
       color: scheme.surface,
     ),
 
-    // 🔘 Buttons
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -111,7 +108,6 @@ ThemeData _buildTheme(Brightness brightness) {
       ),
     ),
 
-    // ✏️ Input Fields
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: scheme.surface,
@@ -127,7 +123,6 @@ ThemeData _buildTheme(Brightness brightness) {
       labelStyle: GoogleFonts.inter(color: scheme.onSurfaceVariant),
     ),
 
-    // 📚 Navigation Bar
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: scheme.surface,
       indicatorColor: scheme.primaryContainer,
@@ -144,26 +139,27 @@ class ArchivistApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Archivist',
-      debugShowCheckedModeBanner: false,
-      theme: _buildTheme(Brightness.light),
-      darkTheme: _buildTheme(Brightness.dark),
-      themeMode: ThemeMode.system,
-      home: AnimatedSplashScreen(
-        // Use theme-aware background for a seamless handoff
-        backgroundColor: kLightBg,
-        splash: 'assets/images/logo.png',
-        splashIconSize: 300,
-        duration: 2500,
-        splashTransition: SplashTransition.fadeTransition,
-        nextScreen: const RootShell(),
+    return CollectionsHomeScope(
+      notifier: CollectionsHomeState()..load(), // ← WRAP ENTIRE APP
+      child: MaterialApp(
+        title: 'Archivist',
+        debugShowCheckedModeBanner: false,
+        theme: _buildTheme(Brightness.light),
+        darkTheme: _buildTheme(Brightness.dark),
+        themeMode: ThemeMode.system,
+        home: AnimatedSplashScreen(
+          backgroundColor: kLightBg,
+          splash: 'assets/images/logo.png',
+          splashIconSize: 300,
+          duration: 2500,
+          splashTransition: SplashTransition.fadeTransition,
+          nextScreen: RootShell(key: RootShell.rootKey), // ← PASS KEY
+        ),
       ),
     );
   }
 }
 
-/// Simple reusable AppBar that shows your banner logo everywhere.
 class ArchivistAppBar extends StatelessWidget implements PreferredSizeWidget {
   const ArchivistAppBar({super.key});
 
@@ -186,7 +182,16 @@ class ArchivistAppBar extends StatelessWidget implements PreferredSizeWidget {
 
 /// Bottom-nav shell with independent navigation stacks per tab.
 class RootShell extends StatefulWidget {
+  static final GlobalKey<_RootShellState> rootKey =
+      GlobalKey<_RootShellState>();
+
   const RootShell({super.key});
+
+  /// Public method to switch tabs from anywhere
+  static void switchToTab(int index) {
+    rootKey.currentState?._select(index);
+  }
+
   @override
   State<RootShell> createState() => _RootShellState();
 }
@@ -207,7 +212,6 @@ class _RootShellState extends State<RootShell> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Keep system icons legible against our themed backgrounds
     final overlay = SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       systemNavigationBarColor: Colors.transparent,
@@ -250,8 +254,8 @@ class _RootShellState extends State<RootShell> {
               ),
               _TabNav(
                 navigatorKey: _keys[4],
-                builder: (_) => const Placeholder(),
-              ), // future Collections hub
+                builder: (_) => const PinnedCollectionsScreen(), // ← TAB 4
+              ),
             ],
           ),
           bottomNavigationBar: NavigationBar(
@@ -283,7 +287,6 @@ class _RootShellState extends State<RootShell> {
   }
 }
 
-/// Per-tab Navigator.
 class _TabNav extends StatelessWidget {
   final GlobalKey<NavigatorState> navigatorKey;
   final WidgetBuilder builder;

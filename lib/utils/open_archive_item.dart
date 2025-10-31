@@ -4,6 +4,9 @@ import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'archive_helpers.dart';
+import 'external_launch.dart';
+
 /// Opens a bottom-sheet that lets the user:
 ///  • pick a video file from the list
 ///  • choose “Browser” or “Installed app”
@@ -21,8 +24,7 @@ Future<void> showVideoFileChooser({
   // -----------------------------------------------------------------
   // Helper: default thumb URL (used for recent-progress)
   // -----------------------------------------------------------------
-  String _defaultThumb(String id) => 'https://archive.org/services/img/$id';
-  final thumbUrl = (thumbForId ?? _defaultThumb)(identifier);
+  final thumbUrl = (thumbForId ?? archiveThumbUrl)(identifier);
 
   // -----------------------------------------------------------------
   // Show the bottom sheet
@@ -196,22 +198,3 @@ class _VideoChooserSheet extends StatelessWidget {
   }
 }
 
-// -----------------------------------------------------------------
-// Helper that lives in your project (already exists)
-// -----------------------------------------------------------------
-Future<void> openExternallyWithChooser({
-  required String url,
-  required String mimeType,
-  required String chooserTitle,
-}) async {
-  // You already have this somewhere (android_intent_plus, url_launcher, …)
-  // Keep the exact implementation you used before.
-  // Example using android_intent_plus:
-  // final intent = AndroidIntent(
-  //   action: 'action_view',
-  //   data: url,
-  //   type: mimeType,
-  //   flags: [Flag.FLAG_ACTIVITY_NEW_TASK],
-  // );
-  // await intent.launchChooser(chooserTitle);
-}

@@ -3,6 +3,8 @@
 
 import 'package:archivereader/services/favourites_service.dart';
 
+import '../utils/archive_helpers.dart';
+
 class FavouriteVm {
   final String identifier;
   final String title;
@@ -17,12 +19,8 @@ class FavouriteVm {
   });
 }
 
-String _thumbForId(String id) => 'https://archive.org/services/img/$id';
-String _fallbackThumbForId(String id) =>
-    'https://archive.org/download/$id/$id.jpg';
-
 FavouriteVm? toFavouriteVm(FavoriteItem it) {
-  final thumb = it.thumb ?? it.url ?? _thumbForId(it.id);
+  final thumb = it.thumb ?? it.url ?? archiveThumbUrl(it.id);
   return FavouriteVm(
     identifier: it.id,
     title: it.title,

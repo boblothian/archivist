@@ -1,9 +1,6 @@
 // lib/screens/home_page_screen.dart
 import 'dart:async';
 import 'dart:io';
-
-import 'package:android_intent_plus/android_intent.dart';
-import 'package:android_intent_plus/flag.dart';
 // Project imports
 import 'package:archivereader/pdf_viewer_screen.dart';
 import 'package:archivereader/services/favourites_service.dart';
@@ -15,10 +12,11 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'cbz_viewer_screen.dart';
 import 'collection_detail_screen.dart';
+import 'utils/archive_helpers.dart';
+import 'utils/external_launch.dart';
 
 // ===== Categories (Explore grid) =====
 enum Category { classic, books, magazines, comics, video, readingList }
@@ -76,11 +74,9 @@ class CollectionCapsuleCard extends StatelessWidget {
     this.onTap,
   });
 
-  String _thumbForId(String id) => 'https://archive.org/services/img/$id';
-
   @override
   Widget build(BuildContext context) {
-    final imgUrl = thumbnailUrl ?? _thumbForId(identifier);
+    final imgUrl = thumbnailUrl ?? archiveThumbUrl(identifier);
     return Card(
       shape: const StadiumBorder(),
       child: InkWell(
@@ -772,42 +768,6 @@ class _BuildContinueWatching extends StatelessWidget {
         );
       },
     );
-  }
-}
-
-// ===== OPEN EXTERNALLY WITH CHOOSER (VLC, MX PLAYER, etc.) =====
-Future<void> openExternallyWithChooser({
-  required String url,
-  required String mimeType,
-  String chooserTitle = 'Open with',
-}) async {
-  if (!Platform.isAndroid) {
-    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-    return;
-  }
-
-  final viewIntent = AndroidIntent(
-    action: 'android.intent.action.VIEW',
-    data: url,
-    type: mimeType,
-    flags: <int>[
-      Flag.FLAG_ACTIVITY_NEW_TASK,
-      Flag.FLAG_GRANT_READ_URI_PERMISSION,
-    ],
-  );
-
-  try {
-    await viewIntent.launchChooser(chooserTitle);
-  } catch (_) {
-    final chooserIntent = AndroidIntent(
-      action: 'android.intent.action.CHOOSER',
-      arguments: <String, dynamic>{
-        'android.intent.extra.INTENT': viewIntent,
-        'android.intent.extra.TITLE': chooserTitle,
-      },
-      flags: <int>[Flag.FLAG_ACTIVITY_NEW_TASK],
-    );
-    await chooserIntent.launch();
   }
 }
 

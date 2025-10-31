@@ -21,6 +21,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'archive_item_screen.dart';
 import 'net.dart';
 import 'pdf_viewer_screen.dart';
+import 'utils/archive_helpers.dart';
+import 'utils/external_launch.dart';
 
 // TOP-LEVEL ENUM — MUST BE HERE
 enum DialogResult { addToFolder, generateThumb }
@@ -62,10 +64,6 @@ String _sortParam(SortMode m) {
       return 'titleSorter desc';
   }
 }
-
-String _thumbForId(String id) => 'https://archive.org/services/img/$id';
-String _fallbackThumbForId(String id) =>
-    'https://archive.org/download/$id/$id.jpg';
 
 class _SfwFilter {
   static final List<RegExp> _bad = <RegExp>[
@@ -288,7 +286,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             return {
               'identifier': id,
               'title': title.isEmpty ? id : title,
-              'thumb': _thumbForId(id),
+              'thumb': archiveThumbUrl(id),
               'mediatype': flat(doc['mediatype']),
               'description': flat(doc['description']),
               'creator': flat(doc['creator']),
@@ -377,7 +375,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     }
 
     // 4. Default
-    return _thumbForId(id);
+    return archiveThumbUrl(id);
   }
 
   Future<String?> _fetchItemImage(String id) async {
@@ -446,7 +444,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     }
 
     // 5) Default archive thumb
-    urls.add(_thumbForId(id));
+    urls.add(archiveThumbUrl(id));
 
     // Dedupe + keep https where possible
     final seen = <String>{};
@@ -831,7 +829,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           await RecentProgressService.instance.touch(
             id: id,
             title: item['title'] ?? id,
-            thumb: _thumbForId(id),
+            thumb: archiveThumbUrl(id),
             kind: 'pdf',
             fileUrl: fileUrl,
             fileName: name,
@@ -1024,42 +1022,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     );
   }
 
-  Future<void> openExternallyWithChooser({
-    required String url,
-    required String mimeType,
-    String chooserTitle = 'Open with',
-  }) async {
-    if (!Platform.isAndroid) {
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-      return;
-    }
-
-    final viewIntent = AndroidIntent(
-      action: 'android.intent.action.VIEW',
-      data: url,
-      type: mimeType,
-      flags: <int>[
-        Flag.FLAG_ACTIVITY_NEW_TASK,
-        Flag.FLAG_GRANT_READ_URI_PERMISSION,
-      ],
-    );
-
-    try {
-      await viewIntent.launchChooser(chooserTitle);
-      return;
-    } catch (_) {
-      final chooserIntent = AndroidIntent(
-        action: 'android.intent.action.CHOOSER',
-        arguments: <String, dynamic>{
-          'android.intent.extra.INTENT': viewIntent,
-          'android.intent.extra.TITLE': chooserTitle,
-        },
-        flags: <int>[Flag.FLAG_ACTIVITY_NEW_TASK],
-      );
-      await chooserIntent.launch();
-    }
-  }
-
   Future<List<Map<String, String>>> _fetchCollectionChildren(
     String collectionId,
   ) async {
@@ -1103,7 +1065,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             return {
               'identifier': id,
               'title': title.isEmpty ? id : title,
-              'thumb': _thumbForId(id),
+              'thumb': archiveThumbUrl(id),
               'mediatype': flat(doc['mediatype']),
               'description': flat(doc['description']),
               'creator': flat(doc['creator']),
@@ -1185,14 +1147,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       setState(() => _sort = m);
       _fetch(reset: true);
     }
-  }
-
-  int _computeCrossAxis(double w) {
-    if (w >= 1280) return 6;
-    if (w >= 1024) return 5;
-    if (w >= 840) return 4;
-    if (w >= 600) return 3;
-    return 2;
   }
 
   @override
@@ -1466,7 +1420,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
     return LayoutBuilder(
       builder: (context, c) {
-        final cross = _computeCrossAxis(c.maxWidth);
+        final cross = adaptiveCrossAxisCount(c.maxWidth);
         return GridView.builder(
           controller: _scrollCtrl,
           padding: const EdgeInsets.all(8),
@@ -1624,7 +1578,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                         await RecentProgressService.instance.updateVideo(
                           id: identifier,
                           title: title,
-                          thumb: _thumbForId(identifier),
+                          thumb: archiveThumbUrl(identifier),
                           percent: 0.0,
                           fileUrl: videoUrl,
                           fileName: name,
@@ -1810,7 +1764,9 @@ class _GridCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final thumbUrl =
-        (thumb != null && thumb!.trim().isNotEmpty) ? thumb! : _thumbForId(id);
+        (thumb != null && thumb!.trim().isNotEmpty)
+            ? thumb!
+            : archiveThumbUrl(id);
 
     return Material(
       type: MaterialType.transparency,
@@ -1872,7 +1828,9 @@ class _ListTileCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final thumbUrl =
-        (thumb != null && thumb!.trim().isNotEmpty) ? thumb! : _thumbForId(id);
+        (thumb != null && thumb!.trim().isNotEmpty)
+            ? thumb!
+            : archiveThumbUrl(id);
 
     return InkWell(
       onTap: onTap,
@@ -2002,7 +1960,7 @@ class _CollectionQuickPick extends StatelessWidget {
                   final thumbUrl =
                       (it['thumb']?.isNotEmpty == true)
                           ? it['thumb']!
-                          : _fallbackThumbForId(id);
+                          : archiveFallbackThumbUrl(id);
 
                   return ListTile(
                     leading: ClipRRect(
@@ -2014,7 +1972,7 @@ class _CollectionQuickPick extends StatelessWidget {
                         fit: BoxFit.cover,
                         errorWidget:
                             (_, __, ___) => Image.network(
-                              _fallbackThumbForId(id),
+                              archiveFallbackThumbUrl(id),
                               width: 48,
                               height: 64,
                               fit: BoxFit.cover,
@@ -2052,7 +2010,7 @@ class _CollectionQuickPick extends StatelessWidget {
                       final thumb =
                           (it['thumb'] as String?)?.trim().isNotEmpty == true
                               ? it['thumb'] as String
-                              : _fallbackThumbForId(id);
+                              : archiveFallbackThumbUrl(id);
 
                       await RecentProgressService.instance.touch(
                         id: id,

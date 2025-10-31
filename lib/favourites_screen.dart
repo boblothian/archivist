@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import 'archive_item_loader.dart';
 import 'archive_item_screen.dart';
+import 'utils/archive_helpers.dart';
 
 class FavoritesScreen extends StatelessWidget {
   final String? initialFolder;
@@ -71,16 +72,6 @@ class _GridBodyState extends State<_GridBody>
   @override
   bool get wantKeepAlive => true;
 
-  String _thumbForId(String id) => 'https://archive.org/services/img/$id';
-
-  int _computeCrossAxis(double w) {
-    if (w >= 1280) return 6;
-    if (w >= 1024) return 5;
-    if (w >= 840) return 4;
-    if (w >= 600) return 3;
-    return 2;
-  }
-
   @override
   Widget build(BuildContext context) {
     super.build(context); // Required for AutomaticKeepAliveClientMixin
@@ -103,7 +94,7 @@ class _GridBodyState extends State<_GridBody>
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final crossAxisCount = _computeCrossAxis(constraints.maxWidth);
+        final crossAxisCount = adaptiveCrossAxisCount(constraints.maxWidth);
 
         return GridView.builder(
           padding: const EdgeInsets.all(8),
@@ -121,7 +112,7 @@ class _GridBodyState extends State<_GridBody>
             final thumb =
                 fav.thumb?.trim().isNotEmpty == true
                     ? fav.thumb!.trim()
-                    : _thumbForId(id);
+                    : archiveThumbUrl(id);
 
             return Material(
               type: MaterialType.transparency,

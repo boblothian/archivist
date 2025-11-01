@@ -1,5 +1,3 @@
-// lib/utils/video_file_chooser.dart
-
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -18,13 +16,20 @@ Future<void> showVideoFileChooser({
   required String identifier,
   required String title,
   required List<Map<String, String>> videoOptions,
-  String Function(String)?
-  thumbForId, // optional – defaults to archive.org service
+  String Function(String)? thumbForId,
+  String? thumb,
 }) async {
   // -----------------------------------------------------------------
-  // Helper: default thumb URL (used for recent-progress)
+  // Helper: choose the best thumbnail (Archive Item screen thumb wins)
   // -----------------------------------------------------------------
-  final thumbUrl = (thumbForId ?? archiveThumbUrl)(identifier);
+  final String thumbUrl =
+      (() {
+        final t = thumb?.trim();
+        if (t != null && t.isNotEmpty) return t; // 1) explicit thumb
+        if (thumbForId != null)
+          return thumbForId(identifier); // 2) provided resolver
+        return archiveThumbUrl(identifier); // 3) default IA services/img
+      })();
 
   // -----------------------------------------------------------------
   // Show the bottom sheet
@@ -80,21 +85,21 @@ class _VideoChooserSheet extends StatelessWidget {
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (_, i) {
                 final op = options[i];
+                final fmtLower = (op['fmt'] ?? '').toLowerCase();
                 final icon =
-                    (op['fmt'] ?? '').toLowerCase().contains('mp4') ||
-                            (op['fmt'] ?? '').toLowerCase().contains('h.264')
+                    (fmtLower.contains('mp4') || fmtLower.contains('h.264'))
                         ? Icons.movie
                         : Icons.video_file;
 
                 return ListTile(
                   leading: Icon(icon),
                   title: Text(
-                    op['pretty']!,
+                    op['pretty'] ?? op['name'] ?? 'Video',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   subtitle: Text(
-                    '${(op['fmt'] ?? '').toUpperCase()}  •  ${op['res']}  •  ${op['size']}',
+                    '${(op['fmt'] ?? '').toUpperCase()}  •  ${op['res'] ?? ''}  •  ${op['size'] ?? ''}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -109,22 +114,26 @@ class _VideoChooserSheet extends StatelessWidget {
   }
 
   // ---------------------------------------------------------------
-  // Core logic – same as the original block
+  // Core logic – unified URL + recent-progress with correct thumb
   // ---------------------------------------------------------------
   Future<void> _handleTap(BuildContext ctx, Map<String, String> op) async {
-    final uri = Uri.parse(op['url']!);
-    final name = op['name']!;
-    final videoUrl =
-        'https://archive.org/download/$identifier/${Uri.encodeComponent(name)}';
+    final name = op['name'] ?? '';
+    if (name.isEmpty) return;
 
-    // ---- show a tiny toast with the selected file ----
+    // Prefer the provided URL; if missing, build from identifier + name.
+    final urlStr =
+        op['url'] ??
+        'https://archive.org/download/$identifier/${Uri.encodeComponent(name)}';
+    final uri = Uri.parse(urlStr);
+
+    // ---- tiny toast with the selected file ----
     if (ctx.mounted) {
       ScaffoldMessenger.of(ctx).showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 2),
           content: Text(
-            '${op['pretty']} • ${(op['fmt'] ?? '').toUpperCase()} • ${op['size']}',
+            '${op['pretty'] ?? name} • ${(op['fmt'] ?? '').toUpperCase()} • ${op['size'] ?? ''}',
           ),
         ),
       );
@@ -157,13 +166,13 @@ class _VideoChooserSheet extends StatelessWidget {
     // close the bottom-sheet
     if (ctx.mounted) Navigator.pop(ctx);
 
-    // ---- update recent progress (same as original) ----
+    // ---- update recent progress (uses the chosen thumb) ----
     await RecentProgressService.instance.updateVideo(
       id: identifier,
       title: title,
       thumb: thumbUrl,
       percent: 0.0,
-      fileUrl: videoUrl,
+      fileUrl: urlStr,
       fileName: name,
     );
 
@@ -197,4 +206,3 @@ class _VideoChooserSheet extends StatelessWidget {
     }
   }
 }
-

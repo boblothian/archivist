@@ -1,6 +1,7 @@
 // lib/screens/home_page_screen.dart
 import 'dart:async';
 import 'dart:io';
+
 // Project imports
 import 'package:archivereader/pdf_viewer_screen.dart';
 import 'package:archivereader/services/favourites_service.dart';
@@ -215,30 +216,6 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
           ),
           const SizedBox(height: 8.0),
           const CategoriesGrid(),
-
-          const SizedBox(height: 16.0),
-
-          // Favourites shelf
-          SectionHeader(title: 'Favourites'),
-          const SizedBox(height: 8.0),
-          ValueListenableBuilder<int>(
-            valueListenable: FavoritesService.instance.version,
-            builder: (context, _, __) => _buildFavouritesShelf(context),
-          ),
-
-          const SizedBox(height: 16.0),
-
-          // Reading lists
-          SectionHeader(
-            title: 'Reading lists',
-            actionLabel: 'See all',
-            onAction:
-                () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const ReadingListScreen()),
-                ),
-          ),
-          const SizedBox(height: 8.0),
-          const ReadingListCarousel(),
         ],
       ),
     );

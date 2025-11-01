@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 import 'net.dart';
-import 'services/jellyfin_service.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
   final File? file;
@@ -60,42 +59,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (mounted) setState(() {});
   }
 
-  void _saveToJellyfin() async {
-    final svc = JellyfinService.instance;
-    final cfg = await svc.loadConfig() ?? await svc.showConfigDialog(context);
-    if (cfg == null) return;
-
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Uploading to Jellyfin…')));
-
-    try {
-      await svc.addMovieFromUrl(
-        url: Uri.parse(widget.url ?? ''),
-        title: widget.title,
-        httpHeaders: Net.headers,
-        onProgress: (sent, total) {
-          if (total != null && total > 0) {
-            final pct = (sent / total * 100).toStringAsFixed(0);
-            ScaffoldMessenger.of(context).hideCurrentSnackBar();
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('Uploading… $pct%')));
-          }
-        },
-      );
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Uploaded to Jellyfin!')));
-    } catch (e) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Upload failed: $e')));
-    }
-  }
-
   @override
   void dispose() {
     _chewieController?.dispose();
@@ -110,16 +73,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         _chewieController!.videoPlayerController.value.isInitialized;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-        actions: [
-          IconButton(
-            tooltip: 'Save to Jellyfin',
-            icon: const Icon(Icons.cloud_upload),
-            onPressed: _saveToJellyfin,
-          ),
-        ],
-      ),
+      appBar: AppBar(title: Text(widget.title), actions: []),
       body:
           playerReady
               ? Chewie(controller: _chewieController!)

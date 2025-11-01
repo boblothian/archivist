@@ -23,9 +23,6 @@ class LongPressFavoriteTarget extends StatelessWidget {
         HapticFeedback.mediumImpact();
         final folder = await showAddToFavoritesDialog(context, item: item);
         if (folder != null && context.mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Added to "$folder"')));
           onAdded?.call();
         }
       },

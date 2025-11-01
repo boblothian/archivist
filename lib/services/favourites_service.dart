@@ -2,6 +2,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import '../archive_api.dart'; // FIXED: Correct import for fetchFilesForIdentifier
+
 part 'favourites_service.g.dart';
 
 @HiveType(typeId: 0)
@@ -80,9 +82,10 @@ class FavoriteItem extends HiveObject {
     author: json['author'] as String?,
     mediatype: json['mediatype'] as String?,
     formats: (json['formats'] as List?)?.cast<String>() ?? [],
-    files: (json['files'] as List?)
-        ?.map((e) => Map<String, String>.from(e as Map))
-        .toList(),
+    files:
+        (json['files'] as List?)
+            ?.map((e) => Map<String, String>.from(e as Map))
+            .toList(),
   );
 
   @override
@@ -110,10 +113,11 @@ class FavoritesService {
 
     _box = await Hive.openBox(_boxName);
     await _migrateIfNeeded();
+    await _migrateOldFavorites(); // Auto-fix old items
     _notify();
   }
 
-  // ----------------------- THUMBNAIL MAP -----------------------
+  // ─────────────────────── THUMBNAIL MAP ───────────────────────
   Map<String, String> get _thumbMap {
     final raw = _box.get(_thumbsKey);
     if (raw is Map) return Map<String, String>.from(raw);
@@ -148,7 +152,7 @@ class FavoritesService {
     _notify();
   }
 
-  // ----------------------- FOLDER DATA -----------------------
+  // ─────────────────────── FOLDER DATA ───────────────────────
   Map<String, List<FavoriteItem>> get _data {
     final dynamic raw = _box.get('folders') ?? _box.get('data');
     if (raw == null) return <String, List<FavoriteItem>>{};
@@ -175,15 +179,16 @@ class FavoritesService {
                     title: (e['title'] ?? '').toString(),
                     url: (e['url'] as String?) ?? '',
                     thumb:
-                    (e['thumb'] as String?) ??
+                        (e['thumb'] as String?) ??
                         (e['thumbnail'] as String?) ??
                         '',
-                    author: (e['author'] as String?),
+                    author: e['author'] as String?,
                     mediatype: e['mediatype'] as String?,
                     formats: (e['formats'] as List?)?.cast<String>() ?? [],
-                    files: (e['files'] as List?)
-                        ?.map((f) => Map<String, String>.from(f as Map))
-                        .toList() ??
+                    files:
+                        (e['files'] as List?)
+                            ?.map((f) => Map<String, String>.from(f as Map))
+                            .toList() ??
                         null,
                   ),
                 );
@@ -222,7 +227,34 @@ class FavoritesService {
     }
   }
 
-  // ----------------------- FOLDER OPERATIONS -----------------------
+  // ─────────────────────── AUTO-MIGRATE OLD FAVORITES ───────────────────────
+  Future<void> _migrateOldFavorites() async {
+    final data = Map<String, List<FavoriteItem>>.from(_data);
+    bool changed = false;
+
+    for (final folder in data.keys) {
+      final list = data[folder]!;
+      for (int i = 0; i < list.length; i++) {
+        final item = list[i];
+        if (item.files == null) {
+          try {
+            final files = await ArchiveApi.fetchFilesForIdentifier(item.id);
+            list[i] = item.copyWith(files: files);
+            changed = true;
+            debugPrint('Migrated files for ${item.id}');
+          } catch (e) {
+            debugPrint('Failed to migrate files for ${item.id}: $e');
+          }
+        }
+      }
+    }
+
+    if (changed) {
+      await _save(data);
+    }
+  }
+
+  // ─────────────────────── FOLDER OPERATIONS ───────────────────────
   List<String> folders() {
     final names = _data.keys.toList();
     names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
@@ -253,7 +285,7 @@ class FavoritesService {
     if (data.remove(name) != null) await _save(data);
   }
 
-  // ----------------------- ITEM OPERATIONS -----------------------
+  // ─────────────────────── ITEM OPERATIONS ───────────────────────
   List<FavoriteItem> itemsIn(String folder) {
     final list = _data[folder] ?? const <FavoriteItem>[];
     return list.map((item) {
@@ -274,6 +306,44 @@ class FavoritesService {
     });
     res.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     return res;
+  }
+
+  // ─────────────────────── ADD WITH FILES (MAIN FIX) ───────────────────────
+  /// Adds a favorite and **fetches + caches files** immediately.
+  Future<void> addFavoriteWithFiles({
+    required String folder,
+    required String id,
+    required String title,
+    String? url,
+    String? thumb,
+    String? author,
+    String? mediatype,
+    List<String> formats = const [],
+  }) async {
+    final trimmedFolder = folder.trim();
+    if (contains(trimmedFolder, id)) return;
+
+    final item = FavoriteItem(
+      id: id,
+      title: title,
+      url: url,
+      thumb: thumb,
+      author: author,
+      mediatype: mediatype,
+      formats: formats,
+    );
+
+    // Fetch files in background
+    List<Map<String, String>> files = [];
+    try {
+      files = await ArchiveApi.fetchFilesForIdentifier(id);
+      debugPrint('Fetched ${files.length} files for $id');
+    } catch (e) {
+      debugPrint('Failed to fetch files for $id: $e');
+    }
+
+    final finalItem = item.copyWith(files: files);
+    await addToFolder(trimmedFolder, finalItem);
   }
 
   Future<void> addToFolder(String folder, FavoriteItem item) async {
@@ -314,15 +384,16 @@ class FavoritesService {
     return true;
   }
 
-  // ----------------------- PUBLIC HELPERS -----------------------
+  // ─────────────────────── PUBLIC HELPERS ───────────────────────
   List<FavoriteItem> get allItems {
     final seen = <String, FavoriteItem>{};
     for (final items in _data.values) {
       for (final item in items) {
         final latestThumb = getThumbForId(item.id);
-        final updated = latestThumb != null && latestThumb != item.thumb
-            ? item.copyWith(thumb: latestThumb)
-            : item;
+        final updated =
+            latestThumb != null && latestThumb != item.thumb
+                ? item.copyWith(thumb: latestThumb)
+                : item;
         seen[updated.id] = updated;
       }
     }

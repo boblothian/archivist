@@ -1,6 +1,7 @@
 // lib/archive_api.dart
 import 'dart:convert';
 
+import 'package:flutter/cupertino.dart';
 import 'package:http/http.dart' as http;
 
 class ArchiveApi {
@@ -10,10 +11,10 @@ class ArchiveApi {
   // SEARCH COLLECTIONS
   // =================================================================
   static Future<List<ArchiveCollection>> searchCollections(
-      String query, {
-        int rows = 50,
-        int page = 1,
-      }) async {
+    String query, {
+    int rows = 50,
+    int page = 1,
+  }) async {
     final q = query.trim();
     if (q.isEmpty) return _searchPopular(rows);
     return _searchKeyword(q, rows, page);
@@ -34,10 +35,10 @@ class ArchiveApi {
   }
 
   static Future<List<ArchiveCollection>> _searchKeyword(
-      String keyword,
-      int rows,
-      int page,
-      ) async {
+    String keyword,
+    int rows,
+    int page,
+  ) async {
     final safe = keyword.trim();
     final queryParts = [
       'title:"$safe"',
@@ -132,6 +133,53 @@ class ArchiveApi {
   }
 
   // =================================================================
+  // FETCH DOWNLOADABLE FILES FOR AN ITEM
+  // =================================================================
+  static Future<List<Map<String, String>>> fetchFilesForIdentifier(
+    String id,
+  ) async {
+    if (id.trim().isEmpty) return [];
+
+    final identifier = id.trim();
+    debugPrint('fetchFilesForIdentifier → metadata/$identifier');
+
+    try {
+      // Use the stable Metadata API
+      final meta = await getMetadata(identifier);
+      final files = (meta['files'] as List?) ?? const [];
+
+      final result = <Map<String, String>>[];
+
+      for (final f in files) {
+        if (f is! Map) continue;
+
+        final name = (f['name'] as String?) ?? '';
+        if (name.isEmpty) continue;
+
+        final format = (f['format'] as String?) ?? '';
+        final sizeStr = f['size']?.toString() ?? '0';
+
+        if (_isDownloadableFormat(format, name)) {
+          result.add({
+            'name': name,
+            'url':
+                'https://archive.org/download/$identifier/${Uri.encodeComponent(name)}',
+            'size': _formatSize(sizeStr),
+            'fmt': format,
+            'pretty': _prettyName(name),
+          });
+        }
+      }
+
+      debugPrint('Found ${result.length} downloadable files for $identifier');
+      return result;
+    } catch (e) {
+      debugPrint('fetchFilesForIdentifier ERROR ($id): $e');
+      return [];
+    }
+  }
+
+  // =================================================================
   // SHARED PARSING LOGIC
   // =================================================================
   static Future<List<ArchiveCollection>> _fetchAndParse(Uri uri) async {
@@ -145,22 +193,27 @@ class ArchiveApi {
       final json = jsonDecode(resp.body) as Map<String, dynamic>;
       final docs = (json['response']?['docs'] as List?) ?? [];
 
-      final results = docs.map((d) {
-        final m = d as Map<String, dynamic>;
-        final identifier = (m['identifier'] ?? '') as String;
+      final results =
+          docs
+              .map((d) {
+                final m = d as Map<String, dynamic>;
+                final identifier = (m['identifier'] ?? '') as String;
 
-        final thumbnail = identifier.isNotEmpty
-            ? 'https://archive.org/services/img/$identifier'
-            : null;
+                final thumbnail =
+                    identifier.isNotEmpty
+                        ? 'https://archive.org/services/img/$identifier'
+                        : null;
 
-        return ArchiveCollection(
-          identifier: identifier,
-          title: _flat(m['title']) ?? '',
-          description: _flat(m['description']) ?? '',
-          downloads: _asInt(m['downloads']),
-          thumbnailUrl: thumbnail,
-        );
-      }).where((c) => c.identifier.isNotEmpty).toList();
+                return ArchiveCollection(
+                  identifier: identifier,
+                  title: _flat(m['title']) ?? '',
+                  description: _flat(m['description']) ?? '',
+                  downloads: _asInt(m['downloads']),
+                  thumbnailUrl: thumbnail,
+                );
+              })
+              .where((c) => c.identifier.isNotEmpty)
+              .toList();
 
       print('Found ${results.length} collections');
       return results;
@@ -171,7 +224,7 @@ class ArchiveApi {
   }
 
   // =================================================================
-  // HELPERS (MUST be inside the class!)
+  // HELPERS
   // =================================================================
   static int _asInt(dynamic v) {
     if (v is int) return v;
@@ -185,6 +238,59 @@ class ArchiveApi {
       return v.whereType<String>().join(', ');
     }
     return v.toString();
+  }
+
+  static bool _isDownloadableFormat(String format, String name) {
+    final allowedFormats = {
+      'PDF',
+      'EPUB',
+      'CBZ',
+      'CBR',
+      'MPEG4',
+      'H.264',
+      'WebM',
+      'Matroska',
+      'Text',
+      'DjVu',
+      'Kindle',
+      'Comic Book ZIP',
+      'Comic Book RAR',
+    };
+    if (allowedFormats.contains(format)) return true;
+
+    final ext = name.split('.').lastOrNull?.toLowerCase() ?? '';
+    return [
+      'pdf',
+      'epub',
+      'cbz',
+      'cbr',
+      'mp4',
+      'mkv',
+      'webm',
+      'txt',
+      'djvu',
+    ].contains(ext);
+  }
+
+  static String _formatSize(String sizeStr) {
+    final bytes = int.tryParse(sizeStr) ?? 0;
+    if (bytes <= 0) return '—';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    double size = bytes.toDouble();
+    int i = 0;
+    while (size >= 1024 && i < units.length - 1) {
+      size /= 1024;
+      i++;
+    }
+    return '${size.toStringAsFixed(size < 10 ? 1 : 0)} ${units[i]}';
+  }
+
+  static String _prettyName(String name) {
+    return name
+        .replaceAll('.ia.', ' ')
+        .replaceAll('_', ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
   }
 
   static const Map<String, String> _headers = {

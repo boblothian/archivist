@@ -29,6 +29,7 @@ Future<String?> _promptNewFolder(BuildContext context) async {
 }
 
 /// Shows the "Add to favourites" dialog and returns the folder name if added.
+/// Files are fetched and cached immediately via `addFavoriteWithFiles`.
 Future<String?> showAddToFavoritesDialog(
   BuildContext context, {
   required FavoriteItem item,
@@ -38,7 +39,6 @@ Future<String?> showAddToFavoritesDialog(
     barrierDismissible: true,
     builder: (ctx) {
       String? selectedFolder;
-      // Use a single StatefulBuilder around the WHOLE dialog to keep it simple/reliable.
       return StatefulBuilder(
         builder: (ctx, setState) {
           final svc = FavoritesService.instance;
@@ -46,9 +46,8 @@ Future<String?> showAddToFavoritesDialog(
 
           return AlertDialog(
             title: const Text('Add to favourites'),
-            // Avoid IntrinsicWidth on a viewport: give the list a fixed height via SizedBox.
             content: SizedBox(
-              width: 440, // safe fixed width; dialog will clamp on phones
+              width: 440,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -60,8 +59,7 @@ Future<String?> showAddToFavoritesDialog(
                     ),
                   if (folders.isNotEmpty)
                     SizedBox(
-                      height:
-                          220, // <-- key: fixed height list to avoid intrinsic sizing
+                      height: 220,
                       child: ListView.separated(
                         shrinkWrap: true,
                         primary: false,
@@ -79,7 +77,9 @@ Future<String?> showAddToFavoritesDialog(
                             value: f,
                             groupValue: selectedFolder,
                             onChanged:
-                                (v) => setState(() => selectedFolder = v),
+                                contains
+                                    ? null
+                                    : (v) => setState(() => selectedFolder = v),
                           );
                         },
                       ),
@@ -96,7 +96,6 @@ Future<String?> showAddToFavoritesDialog(
                         if (!svc.folderExists(name)) {
                           await svc.createFolder(name);
                         }
-                        // Rebuild to show the new folder and preselect it.
                         setState(() => selectedFolder = name);
                       },
                     ),
@@ -110,15 +109,54 @@ Future<String?> showAddToFavoritesDialog(
                 child: const Text('Cancel'),
               ),
               FilledButton(
-                onPressed: () async {
-                  if (selectedFolder == null) return;
-                  await FavoritesService.instance.addToFolder(
-                    selectedFolder!,
-                    item,
-                  );
-                  // ignore: use_build_context_synchronously
-                  Navigator.pop(ctx, selectedFolder);
-                },
+                onPressed:
+                    selectedFolder == null
+                        ? null
+                        : () async {
+                          final folder = selectedFolder!;
+                          final scaffold = ScaffoldMessenger.of(context);
+
+                          // Show loading
+                          scaffold.showSnackBar(
+                            const SnackBar(
+                              content: Text('Adding to favourites...'),
+                            ),
+                          );
+
+                          try {
+                            await FavoritesService.instance
+                                .addFavoriteWithFiles(
+                                  folder: folder,
+                                  id: item.id,
+                                  title: item.title,
+                                  thumb: item.thumb,
+                                  url: item.url,
+                                  author: item.author,
+                                  mediatype: item.mediatype,
+                                  formats: item.formats,
+                                );
+
+                            scaffold.hideCurrentSnackBar();
+                            scaffold.showSnackBar(
+                              SnackBar(
+                                content: Text('Added to "$folder"'),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                          } catch (e) {
+                            scaffold.hideCurrentSnackBar();
+                            scaffold.showSnackBar(
+                              SnackBar(
+                                content: Text('Failed: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                            return;
+                          }
+
+                          // ignore: use_build_context_synchronously
+                          Navigator.pop(ctx, folder);
+                        },
                 child: const Text('Add'),
               ),
             ],

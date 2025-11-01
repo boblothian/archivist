@@ -1,15 +1,16 @@
 // lib/screens/favourites_screen.dart
+import 'package:archivereader/services/downloads_service.dart';
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:archivereader/ui/capsule_theme.dart';
+import 'package:archivereader/utils/open_archive_item.dart'; // for showVideoFileChooser
 import 'package:archivereader/widgets/capsule_thumb_card.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'archive_api.dart';
-import 'archive_item_loader.dart';
-import 'archive_item_screen.dart';
-import 'collection_detail_screen.dart';
 import 'utils/archive_helpers.dart';
+import 'utils/external_launch.dart';
 
 class FavoritesScreen extends StatelessWidget {
   final String? initialFolder;
@@ -26,9 +27,10 @@ class FavoritesScreen extends StatelessWidget {
         final folders = svc.folders();
         final selectedFolder = initialFolder ?? folders.firstOrNull ?? 'All';
 
-        final items = selectedFolder == 'All'
-            ? svc.allItems
-            : svc.itemsIn(selectedFolder);
+        final items =
+            selectedFolder == 'All'
+                ? svc.allItems
+                : svc.itemsIn(selectedFolder);
 
         return Scaffold(
           appBar: AppBar(
@@ -108,9 +110,10 @@ class _GridBodyState extends State<_GridBody>
             final fav = widget.items[i];
             final id = fav.id.trim();
             final title = fav.title.trim().isEmpty ? id : fav.title.trim();
-            final thumb = fav.thumb?.trim().isNotEmpty == true
-                ? fav.thumb!.trim()
-                : archiveThumbUrl(id);
+            final thumb =
+                fav.thumb?.trim().isNotEmpty == true
+                    ? fav.thumb!.trim()
+                    : archiveThumbUrl(id);
 
             return Material(
               type: MaterialType.transparency,
@@ -126,54 +129,56 @@ class _GridBodyState extends State<_GridBody>
 
                   if (!context.mounted) return;
 
-                  // FIXED: Handle nullable files
+                  // 1. Use cached files if available
                   final cachedFiles = fav.files;
                   if (cachedFiles != null && cachedFiles.isNotEmpty) {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => ArchiveItemScreen(
-                          title: title,
-                          identifier: id,
-                          files: cachedFiles,
-                        ),
-                      ),
+                    await _openFileChooser(
+                      context: context,
+                      identifier: id,
+                      title: title,
+                      files: cachedFiles,
+                      thumb: thumb,
                     );
                     return;
                   }
 
-                  // FALLBACK: fetch from network
+                  // 2. Fetch from network, cache, then open
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Loading files...')),
                   );
 
                   try {
-                    final files = await fetchFilesForIdentifier(id);
+                    final files = await ArchiveApi.fetchFilesForIdentifier(id);
                     if (files.isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                            content: Text('No downloadable files found')),
+                          content: Text('No downloadable files found'),
+                        ),
                       );
                       return;
                     }
 
-                    // Cache the files
+                    // Cache files
                     final updated = fav.copyWith(files: files);
                     await svc.addToFolder(widget.folderName, updated);
 
                     if (!context.mounted) return;
 
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => ArchiveItemScreen(
-                          title: title,
-                          identifier: id,
-                          files: files,
-                        ),
-                      ),
+                    await _openFileChooser(
+                      context: context,
+                      identifier: id,
+                      title: title,
+                      files: files,
+                      thumb: thumb,
                     );
                   } catch (e) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Failed to load files: $e')),
+                      SnackBar(
+                        content: Text(
+                          'Failed to load files: ${e.toString().split('\n').first}',
+                        ),
+                        backgroundColor: Colors.red,
+                      ),
                     );
                   }
                 },
@@ -191,6 +196,30 @@ class _GridBodyState extends State<_GridBody>
                               fillParent: true,
                             ),
                           ),
+                          // Optional: "READY" badge when files are cached
+                          if (fav.files != null && fav.files!.isNotEmpty)
+                            Positioned(
+                              top: 6,
+                              left: 6,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withOpacity(0.9),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Text(
+                                  'READY',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
                           Positioned(
                             top: 6,
                             right: 6,
@@ -198,24 +227,26 @@ class _GridBodyState extends State<_GridBody>
                               onDelete: () async {
                                 final confirmed = await showDialog<bool>(
                                   context: context,
-                                  builder: (dCtx) => AlertDialog(
-                                    title: const Text('Remove favourite?'),
-                                    content: Text(
-                                      'Remove "$title" from favourites?',
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () =>
-                                            Navigator.pop(dCtx, false),
-                                        child: const Text('Cancel'),
+                                  builder:
+                                      (dCtx) => AlertDialog(
+                                        title: const Text('Remove favourite?'),
+                                        content: Text(
+                                          'Remove "$title" from favourites?',
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed:
+                                                () =>
+                                                    Navigator.pop(dCtx, false),
+                                            child: const Text('Cancel'),
+                                          ),
+                                          TextButton(
+                                            onPressed:
+                                                () => Navigator.pop(dCtx, true),
+                                            child: const Text('Remove'),
+                                          ),
+                                        ],
                                       ),
-                                      TextButton(
-                                        onPressed: () =>
-                                            Navigator.pop(dCtx, true),
-                                        child: const Text('Remove'),
-                                      ),
-                                    ],
-                                  ),
                                 );
 
                                 if (confirmed != true) return;
@@ -312,5 +343,205 @@ class _FolderSelector extends StatelessWidget {
         style: Theme.of(context).textTheme.titleMedium,
       ),
     );
+  }
+}
+
+// ── File Chooser (PDF/EPUB/CBZ + Videos) ─────────────────────────────
+Future<void> _openFileChooser({
+  required BuildContext context,
+  required String identifier,
+  required String title,
+  required List<Map<String, String>> files,
+  String? thumb,
+}) async {
+  final thumbUrl = thumb ?? archiveThumbUrl(identifier);
+
+  // Detect if all files are videos → use existing video chooser
+  final videoFiles =
+      files.where((f) {
+        final name = (f['name'] ?? '').toLowerCase();
+        return [
+          'mp4',
+          'm4v',
+          'webm',
+          'mkv',
+          'm3u8',
+          'avi',
+          'mov',
+        ].any(name.endsWith);
+      }).toList();
+
+  if (videoFiles.isNotEmpty && videoFiles.length == files.length) {
+    await showVideoFileChooser(
+      context: context,
+      identifier: identifier,
+      title: title,
+      videoOptions: videoFiles,
+      thumbForId: (_) => thumbUrl,
+    );
+    return;
+  }
+
+  // Otherwise: show generic file chooser
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder:
+        (_) => _FileChooserSheet(
+          identifier: identifier,
+          title: title,
+          files: files,
+          thumb: thumbUrl,
+        ),
+  );
+}
+
+class _FileChooserSheet extends StatelessWidget {
+  final String identifier;
+  final String title;
+  final List<Map<String, String>> files;
+  final String thumb;
+
+  const _FileChooserSheet({
+    required this.identifier,
+    required this.title,
+    required this.files,
+    required this.thumb,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.folder_open),
+            title: Text(
+              title,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            subtitle: const Text('Select a file to open or download'),
+          ),
+          const Divider(height: 1),
+          Flexible(
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: files.length,
+              itemBuilder: (_, i) {
+                final f = files[i];
+                final name = f['name'] ?? 'unknown';
+                final size = f['size'] ?? '';
+                final fmt = (f['fmt'] ?? '').toUpperCase();
+
+                return FutureBuilder<bool>(
+                  future: DownloadsService.instance.isDownloaded(identifier),
+                  builder: (c, snap) {
+                    final isDownloaded = snap.data == true;
+                    return ListTile(
+                      leading: Icon(_iconFor(name)),
+                      title: Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        '$fmt • $size${isDownloaded ? '  •  Downloaded' : ''}',
+                        style: TextStyle(
+                          color: isDownloaded ? Colors.green : null,
+                          fontWeight: isDownloaded ? FontWeight.w600 : null,
+                        ),
+                      ),
+                      trailing:
+                          isDownloaded
+                              ? const Icon(
+                                Icons.check_circle,
+                                color: Colors.green,
+                              )
+                              : null,
+                      onTap: () => _openFile(context, f),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _iconFor(String name) {
+    final l = name.toLowerCase();
+    if (l.endsWith('.pdf')) return Icons.picture_as_pdf;
+    if (l.endsWith('.epub')) return Icons.book;
+    if (l.endsWith('.cbz') || l.endsWith('.cbr'))
+      return Icons.collections_bookmark;
+    if (l.contains('mp4') || l.contains('webm') || l.contains('mkv'))
+      return Icons.movie;
+    return Icons.description;
+  }
+
+  Future<void> _openFile(BuildContext ctx, Map<String, String> file) async {
+    Navigator.pop(ctx); // close sheet
+
+    final url = file['url']!;
+    final name = file['name']!;
+    final mime = _mimeFor(name);
+
+    // Update recent progress
+    await RecentProgressService.instance.touch(
+      id: identifier,
+      title: title,
+      thumb: thumb,
+      kind: 'item',
+      fileUrl: url,
+      fileName: name,
+    );
+
+    // Ask: Browser or App?
+    final choice = await showDialog<String>(
+      context: ctx,
+      builder:
+          (d) => AlertDialog(
+            title: const Text('Open file'),
+            content: Text('Open “$name” with:'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(d, 'browser'),
+                child: const Text('Browser'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(d, 'app'),
+                child: const Text('Installed app'),
+              ),
+            ],
+          ),
+    );
+
+    if (choice == null) return;
+
+    if (choice == 'browser') {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } else {
+      await openExternallyWithChooser(
+        url: url,
+        mimeType: mime,
+        chooserTitle: 'Open with',
+      );
+    }
+  }
+
+  String _mimeFor(String name) {
+    final l = name.toLowerCase();
+    if (l.endsWith('.pdf')) return 'application/pdf';
+    if (l.endsWith('.epub')) return 'application/epub+zip';
+    if (l.endsWith('.cbz')) return 'application/vnd.comicbook+zip';
+    if (l.endsWith('.cbr')) return 'application/vnd.comicbook+rar';
+    if (l.contains('mp4')) return 'video/mp4';
+    if (l.contains('webm')) return 'video/webm';
+    if (l.contains('mkv')) return 'video/x-matroska';
+    return '*/*';
   }
 }

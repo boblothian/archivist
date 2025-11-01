@@ -768,9 +768,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       final folder = await showAddToFavoritesDialog(context, item: fav);
       if (folder != null && context.mounted) {
         await svc.addToFolder(folder, fav);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Added to "$folder"')));
       }
     }
   }

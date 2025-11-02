@@ -419,8 +419,8 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
     );
 
     final displayFiles = [
-      ...pdfFiles,
       ...imageFiles,
+      ...pdfFiles,
       ...textFiles,
       ...audioFiles,
     ];

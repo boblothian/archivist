@@ -389,48 +389,156 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     required String id,
     required String mediatype,
     String? year,
+    bool allowArchive = false, // ← default: hide archive.org thumbs
   }) async {
-    final urls = <String>[];
+    final nonArchive = <String>[];
+    final archive = <String>[]; // kept as fallback only
 
-    try {
-      final one = await TmdbService.getPosterUrl(
-        title: query,
-        type: mediatype == 'movies' ? 'movie' : 'tv',
-      );
-      if (one != null && one.trim().isNotEmpty) urls.add(one);
-    } catch (_) {}
-
-    try {
-      final mpdb = await TmdbService.getPosterUrl(
-        title: query,
-        year: year,
-        type: mediatype == 'movies' ? 'movie' : 'tv',
-      );
-      if (mpdb != null && mpdb.trim().isNotEmpty) urls.add(mpdb);
-    } catch (_) {}
-
-    try {
-      final itemImage = await _fetchItemImage(id);
-      if (itemImage != null && itemImage.trim().isNotEmpty) urls.add(itemImage);
-    } catch (_) {}
-
-    if (mediatype.toLowerCase().contains('video')) {
-      urls.add('https://archive.org/download/$id/${id}__thumb.jpg');
+    String cleanTitle(String s) {
+      var t = s.trim();
+      t = t.replaceAll(RegExp(r'\s+\(\d{4}\)$'), '');
+      t = t.split(':').first.trim();
+      t = t.replaceAll(RegExp(r'\bS\d{2}E\d{2}\b', caseSensitive: false), '');
+      return t.trim();
     }
 
-    urls.add(archiveThumbUrl(id));
-
-    final seen = <String>{};
-    final deduped = <String>[];
-    for (final u in urls) {
+    void add(String? u) {
+      if (u == null) return;
       final s = u.trim();
-      if (s.isEmpty) continue;
-      if (!seen.contains(s)) {
-        seen.add(s);
-        deduped.add(s);
+      if (s.isEmpty) return;
+      final isArchive = Uri.tryParse(s)?.host.contains('archive.org') ?? false;
+      (isArchive ? archive : nonArchive).add(s);
+    }
+
+    // — Archive candidates (we'll only show these if nothing else exists) —
+    archive.add('https://archive.org/services/img/$id');
+    archive.add('https://archive.org/download/$id/${id}__thumb.jpg');
+    archive.add(archiveThumbUrl(id));
+
+    // Try pulling itemimage + any image files on the item
+    try {
+      final resp = await http.get(
+        Uri.parse('https://archive.org/metadata/$id'),
+        headers: _HEADERS,
+      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final meta = (data['metadata'] as Map?) ?? const {};
+        final files = (data['files'] as List?) ?? const [];
+
+        final itemImage = meta['itemimage']?.toString();
+        if (itemImage != null && itemImage.trim().isNotEmpty) {
+          archive.add('https://archive.org/services/img/$itemImage');
+          archive.add('https://archive.org/download/$itemImage');
+        }
+
+        final priNames = <String>[
+          'cover',
+          'poster',
+          'front',
+          'thumbnail',
+          'thumb',
+          '00',
+          '000',
+          'title',
+        ];
+        final allImageFiles = <String>[];
+        for (final f in files) {
+          if (f is! Map) continue;
+          final name = (f['name'] ?? '').toString();
+          final fmt = (f['format'] ?? '').toString().toLowerCase();
+          final lower = name.toLowerCase();
+          final looksImage =
+              lower.endsWith('.jpg') ||
+              lower.endsWith('.jpeg') ||
+              lower.endsWith('.png') ||
+              lower.endsWith('.webp') ||
+              lower.endsWith('.gif') ||
+              fmt.contains('jpeg') ||
+              fmt.contains('png') ||
+              fmt.contains('webp') ||
+              fmt.contains('gif');
+          if (looksImage && name.isNotEmpty) {
+            allImageFiles.add(name);
+          }
+        }
+
+        final pri = <String>[];
+        final sec = <String>[];
+        for (final name in allImageFiles) {
+          final lower = name.toLowerCase();
+          final hit = priNames.any((k) => lower.contains(k));
+          (hit ? pri : sec).add(name);
+        }
+
+        for (final name in [...pri, ...sec].take(10)) {
+          archive.add(
+            'https://archive.org/download/$id/${Uri.encodeComponent(name)}',
+          );
+        }
+      }
+    } catch (_) {}
+
+    // — TMDb candidates (non-archive) —
+    final titleVariants =
+        <String>{
+          query,
+          cleanTitle(query),
+        }.where((s) => s.trim().isNotEmpty).toList();
+
+    for (final type in const ['movie', 'tv']) {
+      for (final title in titleVariants) {
+        try {
+          add(await TmdbService.getPosterUrl(title: title, type: type));
+        } catch (_) {}
+        if (year != null && year.trim().isNotEmpty) {
+          try {
+            add(
+              await TmdbService.getPosterUrl(
+                title: title,
+                year: year,
+                type: type,
+              ),
+            );
+          } catch (_) {}
+        }
       }
     }
-    return deduped;
+
+    // Up-res common TMDb sizes to create a few distinct options
+    final upsized = <String>[];
+    for (final u in nonArchive) {
+      final up = u
+          .replaceAll('/w342/', '/w500/')
+          .replaceAll('/w500/', '/w780/')
+          .replaceAll('/w780/', '/original/');
+      if (up != u) upsized.add(up);
+    }
+    nonArchive.addAll(upsized);
+
+    // De-dupe helpers
+    List<String> dedupe(List<String> xs) {
+      final seen = <String>{};
+      final out = <String>[];
+      for (final x in xs) {
+        if (seen.add(x)) out.add(x);
+      }
+      return out;
+    }
+
+    final nonArchDeduped = dedupe(nonArchive).take(24).toList();
+
+    if (nonArchDeduped.isNotEmpty) {
+      return nonArchDeduped;
+    }
+
+    // Nothing external found — only return archive results if explicitly allowed,
+    // otherwise return a *tiny* fallback (1–2) so the UI isn't empty.
+    final archDeduped = dedupe(archive);
+    if (allowArchive) return archDeduped.take(12).toList();
+
+    // strict mode: provide 1–2 just to avoid an empty grid
+    return archDeduped.take(2).toList();
   }
 
   Future<String?> _choosePoster(List<String> urls, {String? title}) async {

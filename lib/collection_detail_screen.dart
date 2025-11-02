@@ -10,6 +10,7 @@ import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:archivereader/services/thumb_override_service.dart';
 import 'package:archivereader/services/tmdb_service.dart';
 import 'package:archivereader/ui/capsule_theme.dart';
+import 'package:archivereader/video_player_screen.dart';
 import 'package:archivereader/widgets/capsule_thumb_card.dart';
 import 'package:archivereader/widgets/favourite_add_dialogue.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -19,8 +20,10 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'archive_item_screen.dart';
+import 'image_viewer_screen.dart'; // ← NEW
 import 'net.dart';
 import 'pdf_viewer_screen.dart';
+import 'text_viewer_screen.dart'; // ← NEW
 import 'utils/archive_helpers.dart';
 import 'utils/external_launch.dart';
 
@@ -71,6 +74,8 @@ class _SfwFilter {
     RegExp(r'\bexplicit\b', caseSensitive: false),
     RegExp(r'\bporn\b', caseSensitive: false),
     RegExp(r'\badult\b', caseSensitive: false),
+    RegExp(r'\bhentai\b', caseSensitive: false),
+    RegExp(r'\bxxx\b', caseSensitive: false),
   ];
   static bool isClean(Map<String, String> m) {
     final hay =
@@ -324,13 +329,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         _loadingMore = false;
         _error = null;
       });
-
-      setState(() {
-        _items.addAll(batch);
-        _loading = false;
-        _loadingMore = false;
-        _error = null;
-      });
     } catch (_) {
       setState(() {
         _loading = false;
@@ -348,33 +346,24 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   void _runSearch() => _fetch(reset: true);
 
   // === SMART THUMBNAIL FETCHER ===
-  // Kept for possible future fallback needs; not used by the cards anymore.
   Future<String> _getSmartThumb(
     String id,
     String mediatype,
     String title, {
     String? year,
   }) async {
-    // 1. Archive.org itemimage
     final itemImage = await _fetchItemImage(id);
     if (itemImage != null) return itemImage;
 
-    // 2. MPDB box art
     if (mediatype.toLowerCase().contains('video') || mediatype == 'movies') {
-      final poster = await TmdbService.getPosterUrl(
-        title: title,
-        year: year,
-        type: mediatype == 'movies' ? 'movie' : 'tv',
-      );
+      final poster = await TmdbService.getPosterUrl(title: title, type: '');
       if (poster != null) return poster;
     }
 
-    // 3. Video frame
     if (mediatype.toLowerCase().contains('video')) {
       return 'https://archive.org/download/$id/${id}__thumb.jpg';
     }
 
-    // 4. Default
     return archiveThumbUrl(id);
   }
 
@@ -395,7 +384,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     return null;
   }
 
-  // Returns a de-duplicated list of candidate poster URLs from TMDb, MPDB, and Archive fallbacks.
   Future<List<String>> _gatherPosterCandidates({
     required String query,
     required String id,
@@ -404,17 +392,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   }) async {
     final urls = <String>[];
 
-    // 1) TMDb: Prefer a multi-result API if your service exposes one.
     try {
-      // If you have a multi-search method, use it:
-      // final fromTmdb = await TmdbService.searchPosterUrls(
-      //   title: query,
-      //   year: year,
-      //   type: mediatype == 'movies' ? 'movie' : 'tv',
-      // );
-      // urls.addAll(fromTmdb);
-
-      // Fallback to single-result method:
       final one = await TmdbService.getPosterUrl(
         title: query,
         type: mediatype == 'movies' ? 'movie' : 'tv',
@@ -422,7 +400,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       if (one != null && one.trim().isNotEmpty) urls.add(one);
     } catch (_) {}
 
-    // 2) MPDB
     try {
       final mpdb = await TmdbService.getPosterUrl(
         title: query,
@@ -432,21 +409,17 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       if (mpdb != null && mpdb.trim().isNotEmpty) urls.add(mpdb);
     } catch (_) {}
 
-    // 3) Archive itemimage (metadata->itemimage)
     try {
       final itemImage = await _fetchItemImage(id);
       if (itemImage != null && itemImage.trim().isNotEmpty) urls.add(itemImage);
     } catch (_) {}
 
-    // 4) Archive video frame (if video)
     if (mediatype.toLowerCase().contains('video')) {
       urls.add('https://archive.org/download/$id/${id}__thumb.jpg');
     }
 
-    // 5) Default archive thumb
     urls.add(archiveThumbUrl(id));
 
-    // Dedupe + keep https where possible
     final seen = <String>{};
     final deduped = <String>[];
     for (final u in urls) {
@@ -460,8 +433,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     return deduped;
   }
 
-  // Opens a bottom sheet grid so the user can choose a poster.
-  // Returns the selected URL or null if cancelled.
   Future<String?> _choosePoster(List<String> urls, {String? title}) async {
     if (urls.isEmpty) return null;
     return showModalBottomSheet<String>(
@@ -526,7 +497,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   Future<void> _handleLongPressItem(Map<String, String> item) async {
     HapticFeedback.mediumImpact();
 
-    // Always use the page’s messenger — not the dialog’s context.
     final messenger = ScaffoldMessenger.maybeOf(context);
 
     final id = item['identifier']!;
@@ -549,10 +519,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     final titleCtrl = TextEditingController(text: title);
     bool isSearching = false;
 
-    // This will return DialogResult.generateThumb when search succeeds
     final result = await showDialog<DialogResult>(
       context: context,
-      barrierDismissible: false, // Prevent accidental dismiss
+      barrierDismissible: false,
       builder:
           (ctx) => StatefulBuilder(
             builder:
@@ -670,7 +639,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                                                       return;
                                                     }
 
-                                                    // Let the user pick
                                                     final chosen =
                                                         await _choosePoster(
                                                           candidates,
@@ -679,7 +647,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                                                         );
                                                     if (chosen == null) return;
 
-                                                    // SUCCESS: Update everything with chosen poster
                                                     fav = fav.copyWith(
                                                       thumb: chosen,
                                                     );
@@ -727,7 +694,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                                                       ),
                                                     );
 
-                                                    // Close the options dialog with a success result
                                                     if (ctx.mounted) {
                                                       Navigator.pop(
                                                         ctx,
@@ -763,7 +729,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
     titleCtrl.dispose();
 
-    // Handle "Add to Favourites" after dialog closes
     if (result == DialogResult.addToFolder) {
       final folder = await showAddToFavoritesDialog(context, item: fav);
       if (folder != null && context.mounted) {
@@ -800,9 +765,11 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         return;
       }
 
-      // === HANDLE TEXTS AS PDF (WITH MULTI-FILE SUPPORT) ===
+      // ──────────────────────── TEXTS FALLBACK CHAIN ────────────────────────
       if (mediatype == 'texts') {
         final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
+
+        // 1. PDFs
         final pdfFiles =
             rawFiles.cast<Map<String, dynamic>>().where((f) {
               final name = (f['name'] ?? '').toString().toLowerCase();
@@ -810,16 +777,118 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               return name.endsWith('.pdf') || fmt.contains('pdf');
             }).toList();
 
-        if (pdfFiles.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No PDF found in this text item.')),
+        if (pdfFiles.isNotEmpty) {
+          if (pdfFiles.length == 1) {
+            final pdf = pdfFiles.first;
+            final name = pdf['name'] as String;
+            final fileUrl =
+                'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
+
+            await RecentProgressService.instance.touch(
+              id: id,
+              title: item['title'] ?? id,
+              thumb: archiveThumbUrl(id),
+              kind: 'pdf',
+              fileUrl: fileUrl,
+              fileName: name,
+            );
+
+            if (!mounted) return;
+
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder:
+                    (_) => PdfViewerScreen(
+                      url: fileUrl,
+                      filenameHint: name,
+                      identifier: id,
+                      title: item['title'] ?? id,
+                    ),
+              ),
+            );
+            return;
+          }
+
+          final pdfList =
+              pdfFiles
+                  .map((f) => {'name': f['name'] as String})
+                  .cast<Map<String, String>>()
+                  .toList();
+
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder:
+                  (_) => ArchiveItemScreen(
+                    title: item['title'] ?? id,
+                    identifier: id,
+                    files: pdfList,
+                  ),
+            ),
           );
           return;
         }
 
-        if (pdfFiles.length == 1) {
-          final pdf = pdfFiles.first;
-          final name = pdf['name'] as String;
+        // 2. Images
+        final imageFiles =
+            rawFiles.cast<Map<String, dynamic>>().where((f) {
+              final name = (f['name'] ?? '').toString().toLowerCase();
+              final fmt = (f['format'] ?? '').toString().toLowerCase();
+              return name.endsWith('.jpg') ||
+                  name.endsWith('.jpeg') ||
+                  name.endsWith('.png') ||
+                  name.endsWith('.gif') ||
+                  name.endsWith('.webp') ||
+                  fmt.contains('jpeg') ||
+                  fmt.contains('png') ||
+                  fmt.contains('gif') ||
+                  fmt.contains('webp');
+            }).toList();
+
+        if (imageFiles.isNotEmpty) {
+          final imageUrls =
+              imageFiles
+                  .map(
+                    (f) =>
+                        'https://archive.org/download/$id/${Uri.encodeComponent(f['name'] as String)}',
+                  )
+                  .toList();
+
+          await RecentProgressService.instance.touch(
+            id: id,
+            title: item['title'] ?? id,
+            thumb: archiveThumbUrl(id),
+            kind: 'image',
+          );
+
+          if (!mounted) return;
+
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ImageViewerScreen(imageUrls: imageUrls),
+            ),
+          );
+          return;
+        }
+
+        // 3. Plain text
+        final textFiles =
+            rawFiles.cast<Map<String, dynamic>>().where((f) {
+              final name = (f['name'] ?? '').toString().toLowerCase();
+              final fmt = (f['format'] ?? '').toString().toLowerCase();
+              return name.endsWith('.txt') ||
+                  name.endsWith('.md') ||
+                  name.endsWith('.log') ||
+                  name.endsWith('.csv') ||
+                  fmt.contains('text') ||
+                  fmt.contains('plain');
+            }).toList();
+
+        if (textFiles.isNotEmpty) {
+          final txt = textFiles.first;
+          final name = txt['name'] as String;
           final fileUrl =
               'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
 
@@ -827,7 +896,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             id: id,
             title: item['title'] ?? id,
             thumb: archiveThumbUrl(id),
-            kind: 'pdf',
+            kind: 'text',
             fileUrl: fileUrl,
             fileName: name,
           );
@@ -838,7 +907,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             context,
             MaterialPageRoute(
               builder:
-                  (_) => PdfViewerScreen(
+                  (_) => TextViewerScreen(
                     url: fileUrl,
                     filenameHint: name,
                     identifier: id,
@@ -849,27 +918,106 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           return;
         }
 
-        final pdfList =
-            pdfFiles
-                .map((f) => {'name': f['name'] as String})
-                .cast<Map<String, String>>()
+        // 4. Fallback: generic file list (for texts)
+        final justNames =
+            rawFiles
+                .whereType<Map>()
+                .where((f) => (f['name'] as String?)?.isNotEmpty == true)
+                .map<Map<String, String>>((f) => {'name': f['name'] as String})
                 .toList();
 
-        Navigator.push(
-          context,
+        if (justNames.isEmpty) {
+          final ok = await launchUrl(
+            Uri.parse('https://archive.org/details/$id'),
+            mode: LaunchMode.externalApplication,
+          );
+          if (!ok) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('No files found and cannot open on web.'),
+              ),
+            );
+          }
+          return;
+        }
+
+        Navigator.of(context).push(
           MaterialPageRoute(
             builder:
                 (_) => ArchiveItemScreen(
                   title: item['title'] ?? id,
                   identifier: id,
-                  files: pdfList,
+                  files: justNames,
                 ),
           ),
         );
         return;
       }
 
-      // === VIDEO DETECTION ONLY ===
+      // ──────────────────────── AUDIO DETECTION (mediatype: audio) ────────────────────────
+      if (mediatype == 'audio') {
+        final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
+        final audioFiles = <Map<String, dynamic>>[];
+
+        for (final f in rawFiles) {
+          if (f is! Map) continue;
+          final name = (f['name'] ?? '').toString();
+          if (name.isEmpty) continue;
+          final fmt = (f['format'] ?? '').toString().toLowerCase();
+          final lower = name.toLowerCase();
+
+          final isAudio =
+              fmt.contains('mp3') ||
+              fmt.contains('ogg') ||
+              fmt.contains('flac') ||
+              fmt.contains('wav') ||
+              fmt.contains('audio') ||
+              lower.endsWith('.mp3') ||
+              lower.endsWith('.ogg') ||
+              lower.endsWith('.oga') ||
+              lower.endsWith('.flac') ||
+              lower.endsWith('.wav') ||
+              lower.endsWith('.aac') ||
+              lower.endsWith('.m4a');
+
+          if (isAudio) {
+            audioFiles.add({'name': name, 'format': fmt, 'size': f['size']});
+          }
+        }
+
+        if (audioFiles.isNotEmpty) {
+          final audioList =
+              audioFiles
+                  .map<Map<String, String>>(
+                    (f) => {'name': f['name'] as String},
+                  )
+                  .toList();
+
+          await RecentProgressService.instance.touch(
+            id: id,
+            title: item['title'] ?? id,
+            thumb: archiveThumbUrl(id),
+            kind: 'audio',
+          );
+
+          if (!mounted) return;
+
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder:
+                  (_) => ArchiveItemScreen(
+                    title: item['title'] ?? id,
+                    identifier: id,
+                    files: audioList,
+                    parentThumbUrl: item['thumb'], // ← add this
+                  ),
+            ),
+          );
+          return;
+        }
+      }
+
+      // ──────────────────────── VIDEO DETECTION ────────────────────────
       final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
       final videoFiles = <Map<String, dynamic>>[];
       for (final f in rawFiles) {
@@ -906,7 +1054,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         return;
       }
 
-      // Fallback: show generic file list
+      // ──────────────────────── GENERIC FALLBACK (any other mediatype) ────────────────────────
       final justNames =
           rawFiles
               .whereType<Map>()
@@ -1080,7 +1228,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
       await ThumbOverrideService.instance.applyToItemMaps(items);
 
-      // NEW: de-duplicate by identifier
       final seen = <String>{};
       items =
           items.where((m) {
@@ -1089,8 +1236,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             seen.add(id);
             return true;
           }).toList();
-
-      return items;
 
       return items;
     } catch (_) {
@@ -1448,13 +1593,13 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     );
   }
 
-  // === VIDEO CHOOSER (unchanged) ===
   Future<void> _openVideoChooser(
     BuildContext context,
     String identifier,
     String title,
     List<Map<String, dynamic>> videoFiles,
   ) async {
+    // Build nice display + urls for each candidate file
     final options =
         videoFiles.map<Map<String, String>>((f) {
           final name = (f['name'] ?? '').toString();
@@ -1543,13 +1688,14 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                           );
                         }
 
+                        // Dialog with three choices
                         final choice = await showDialog<String>(
                           context: context,
                           builder:
                               (dCtx) => AlertDialog(
                                 title: const Text('Open video'),
                                 content: const Text(
-                                  'Choose how you’d like to open or save this video:',
+                                  'Choose how you’d like to open this video:',
                                 ),
                                 actions: [
                                   TextButton(
@@ -1557,21 +1703,28 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                                         () => Navigator.pop(dCtx, 'browser'),
                                     child: const Text('Browser'),
                                   ),
-                                  ElevatedButton(
+                                  TextButton(
                                     onPressed: () => Navigator.pop(dCtx, 'app'),
                                     child: const Text('Installed app'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed:
+                                        () => Navigator.pop(dCtx, 'inapp'),
+                                    child: const Text('In-app player'),
                                   ),
                                 ],
                               ),
                         );
                         if (choice == null) return;
 
+                        // Close the bottom sheet before navigating/launching
                         if (mounted) Navigator.pop(context);
 
                         final name = op['name'] as String;
                         final videoUrl =
                             'https://archive.org/download/$identifier/$name';
 
+                        // Save progress entry (for recents)
                         await RecentProgressService.instance.updateVideo(
                           id: identifier,
                           title: title,
@@ -1581,6 +1734,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                           fileName: name,
                         );
 
+                        // Determine MIME (for external opens)
                         String mime = 'video/*';
                         final fmt = (op['fmt'] ?? '').toString().toLowerCase();
                         final nameLower = name.toLowerCase();
@@ -1597,6 +1751,24 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                           mime = 'video/x-matroska';
                         } else if (nameLower.endsWith('.m3u8')) {
                           mime = 'application/vnd.apple.mpegurl';
+                        }
+
+                        // Branches
+                        if (choice == 'inapp') {
+                          if (!mounted) return;
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder:
+                                  (_) => VideoPlayerScreen(
+                                    url: videoUrl,
+                                    file: null,
+                                    identifier: identifier,
+                                    title: title,
+                                  ),
+                            ),
+                          );
+                          return;
                         }
 
                         if (choice == 'browser') {

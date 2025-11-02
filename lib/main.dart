@@ -2,19 +2,20 @@
 import 'package:animated_splash_screen/animated_splash_screen.dart';
 import 'package:archivereader/pinned_collections_screen.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
+import 'package:archivereader/widgets/archivist_app_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+// ← IMPORTED
 import 'collection_search_screen.dart';
-import 'collection_store.dart'; // ← ADD THIS
+import 'collection_store.dart';
 import 'favourites_screen.dart';
 import 'home_page_screen.dart';
-import 'reading_lists_screen.dart';
 import 'services/favourites_service.dart';
 
-// ---------- Backgrounds: tweak these ----------
-const _seed = Color(0xFF6D1B1B); // sleek indigo accent
+// ---------- Backgrounds ----------
+const _seed = Color(0xFF6D1B1B);
 const kLightBg = Color(0xFFFFFFFF);
 const kDarkBg = Color(0xFF0E0E12);
 
@@ -23,15 +24,12 @@ Future<void> main() async {
   await FavoritesService.instance.init();
   await RecentProgressService.instance.init();
 
-  // Immersive mode
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-
   runApp(const ArchivistApp());
 }
 
 ThemeData _buildTheme(Brightness brightness) {
   final isDark = brightness == Brightness.dark;
-
   final scheme = ColorScheme.fromSeed(
     seedColor: _seed,
     brightness: brightness,
@@ -44,7 +42,6 @@ ThemeData _buildTheme(Brightness brightness) {
     useMaterial3: true,
     colorScheme: scheme,
     scaffoldBackgroundColor: scheme.background,
-
     textTheme: TextTheme(
       displayLarge: GoogleFonts.merriweather(
         fontWeight: FontWeight.w700,
@@ -62,7 +59,6 @@ ThemeData _buildTheme(Brightness brightness) {
         letterSpacing: 0.2,
       ),
     ),
-
     appBarTheme: AppBarTheme(
       backgroundColor: scheme.surface,
       foregroundColor: scheme.onSurface,
@@ -82,7 +78,6 @@ ThemeData _buildTheme(Brightness brightness) {
             isDark ? Brightness.light : Brightness.dark,
       ),
     ),
-
     cardTheme: CardThemeData(
       elevation: 1,
       margin: const EdgeInsets.all(8),
@@ -90,7 +85,6 @@ ThemeData _buildTheme(Brightness brightness) {
       clipBehavior: Clip.antiAlias,
       color: scheme.surface,
     ),
-
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -107,7 +101,6 @@ ThemeData _buildTheme(Brightness brightness) {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     ),
-
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: scheme.surface,
@@ -122,7 +115,6 @@ ThemeData _buildTheme(Brightness brightness) {
       ),
       labelStyle: GoogleFonts.inter(color: scheme.onSurfaceVariant),
     ),
-
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: scheme.surface,
       indicatorColor: scheme.primaryContainer,
@@ -140,7 +132,7 @@ class ArchivistApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return CollectionsHomeScope(
-      notifier: CollectionsHomeState()..load(), // ← WRAP ENTIRE APP
+      notifier: CollectionsHomeState()..load(),
       child: MaterialApp(
         title: 'Archivist',
         debugShowCheckedModeBanner: false,
@@ -153,45 +145,19 @@ class ArchivistApp extends StatelessWidget {
           splashIconSize: 300,
           duration: 2500,
           splashTransition: SplashTransition.fadeTransition,
-          nextScreen: RootShell(key: RootShell.rootKey), // ← PASS KEY
+          nextScreen: RootShell(key: RootShell.rootKey),
         ),
       ),
     );
   }
 }
 
-class ArchivistAppBar extends StatelessWidget implements PreferredSizeWidget {
-  const ArchivistAppBar({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return AppBar(
-      title: SizedBox(
-        height: 75,
-        child: Image.asset(
-          'assets/images/archivist_banner_logo.png',
-          fit: BoxFit.contain,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
-}
-
-/// Bottom-nav shell with independent navigation stacks per tab.
+/// Bottom-nav shell
 class RootShell extends StatefulWidget {
   static final GlobalKey<_RootShellState> rootKey =
       GlobalKey<_RootShellState>();
-
   const RootShell({super.key});
-
-  /// Public method to switch tabs from anywhere
-  static void switchToTab(int index) {
-    rootKey.currentState?._select(index);
-  }
-
+  static void switchToTab(int index) => rootKey.currentState?._select(index);
   @override
   State<RootShell> createState() => _RootShellState();
 }
@@ -211,7 +177,6 @@ class _RootShellState extends State<RootShell> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-
     final overlay = SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       systemNavigationBarColor: Colors.transparent,
@@ -227,15 +192,13 @@ class _RootShellState extends State<RootShell> {
         onPopInvoked: (didPop) {
           if (didPop) return;
           final nav = _keys[_current].currentState;
-          if (nav?.canPop() ?? false) {
-            nav!.pop();
-          }
+          if (nav?.canPop() ?? false) nav!.pop();
         },
         child: Scaffold(
-          appBar: const ArchivistAppBar(),
+          appBar: const ArchivistAppBar(), // ← FROM archivist_app_bar.dart
           body: IndexedStack(
             index: _current,
-            children: <Widget>[
+            children: [
               _TabNav(
                 navigatorKey: _keys[0],
                 builder: (_) => const HomePageScreen(),
@@ -250,18 +213,18 @@ class _RootShellState extends State<RootShell> {
               ),
               _TabNav(
                 navigatorKey: _keys[3],
-                builder: (_) => const ReadingListsScreen(),
+                builder: (_) => const PinnedCollectionsScreen(),
               ),
               _TabNav(
                 navigatorKey: _keys[4],
-                builder: (_) => const PinnedCollectionsScreen(), // ← TAB 4
+                builder: (_) => const SettingsScreen(),
               ),
             ],
           ),
           bottomNavigationBar: NavigationBar(
             selectedIndex: _current,
             onDestinationSelected: _select,
-            destinations: const <NavigationDestination>[
+            destinations: const [
               NavigationDestination(
                 icon: Icon(Icons.home_outlined),
                 label: 'Home',
@@ -272,12 +235,12 @@ class _RootShellState extends State<RootShell> {
                 label: 'Favourites',
               ),
               NavigationDestination(
-                icon: Icon(Icons.list_alt_outlined),
-                label: 'Reading',
-              ),
-              NavigationDestination(
                 icon: Icon(Icons.collections_bookmark_outlined),
                 label: 'Collections',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.settings_outlined),
+                label: 'Settings',
               ),
             ],
           ),
@@ -301,6 +264,62 @@ class _TabNav extends StatelessWidget {
             builder: (context) => builder(context),
             settings: settings,
           ),
+    );
+  }
+}
+
+// ──────────────────────────────────────
+// SETTINGS SCREEN (inline)
+// ──────────────────────────────────────
+class SettingsScreen extends StatelessWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Settings'), centerTitle: true),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          SwitchListTile(
+            secondary: Icon(isDark ? Icons.dark_mode : Icons.light_mode),
+            title: const Text('Dark Mode'),
+            value: isDark,
+            onChanged: null,
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('About'),
+            onTap:
+                () => showAboutDialog(
+                  context: context,
+                  applicationName: 'Archivist',
+                  applicationVersion: '1.0.0',
+                ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.cleaning_services),
+            title: const Text('Clear Cache'),
+            onTap: () {
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('Cache cleared')));
+            },
+          ),
+          const SizedBox(height: 32),
+          Center(
+            child: Text(
+              'Archivist v1.0.0',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: Colors.grey),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

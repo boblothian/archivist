@@ -16,6 +16,8 @@
           <string>_dlna._tcp</string>
         </array>
 
+        <key>NSMetricKitOptOut</key>
+        <true/>
 		<key>CFBundleDevelopmentRegion</key>
 		<string>$(DEVELOPMENT_LANGUAGE)</string>
 		<key>CFBundleDisplayName</key>

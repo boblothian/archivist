@@ -15,6 +15,11 @@
     <key>CFBundleName</key>
     <string>archivist</string>
 
+    <key>CFBundleShortVersionString</key>
+    <string>0.0.1</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
     <!-- ✨ New: allow checking/launching popular video player apps by scheme -->
     <key>LSApplicationQueriesSchemes</key>
     <array>

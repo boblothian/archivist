@@ -97,7 +97,7 @@ class SettingsScreen extends StatelessWidget {
                           height: 48,
                         ),
                         applicationLegalese:
-                            '© 2025 Your Name. All rights reserved.',
+                            '© 2025 Robert Lothian. All rights reserved.',
                       ),
                 ),
                 const Divider(height: 1),
@@ -127,7 +127,7 @@ class SettingsScreen extends StatelessWidget {
                   ),
                   onTap: () async {
                     final uri = Uri.parse(
-                      'https://github.com/yourusername/archivist/issues',
+                      'https://github.com/boblothian/archivist/issues',
                     );
                     if (await canLaunchUrl(uri)) {
                       await launchUrl(

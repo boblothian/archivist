@@ -71,7 +71,7 @@ flutter_native_splash:
   color: "#000000"
   image: assets/images/mdlogo.png              # pre-Android 12 & iOS
   android_gravity: center                    # Android <12 positioning
-  ios_content_mode: scaleAspectFill          # iOS can appear larger
+  ios_content_mode: scaleAspectFit          # iOS can appear larger
   android_12:
     image: assets/images/mdlogo.png       # Android 12 icon (size fixed by OS)
     color: "#000000"

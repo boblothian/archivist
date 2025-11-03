@@ -1,95 +1,155 @@
-// services/tmdb_service.dart
+// lib/services/tmdb_service.dart
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
 class TmdbService {
-  static const String _apiKey =
-      '855e122c79a37991131b7f379919494e'; // Replace with your key
-  static const String _baseUrl = 'https://api.themoviedb.org/3';
-  static const String _imageBaseUrl =
-      'https://image.tmdb.org/t/p/w300'; // w300 for thumbs
+  static const String _apiKey = '855e122c79a37991131b7f379919494e';
+  static const String _base = 'https://api.themoviedb.org/3';
+  static const String _imgBase = 'https://image.tmdb.org/t/p';
 
-  /// Search for a movie and return the first matching poster URL
-  static Future<String?> getMoviePoster({
-    required String title,
+  // In-memory cache
+  static final Map<String, TmdbResult> _cache = {};
+
+  /// Search movies / TV shows
+  static Future<List<TmdbResult>> search({
+    required String query,
     String? year,
+    String type = 'multi', // movie, tv, multi
   }) async {
-    final queryParams = <String, String>{
-      'api_key': _apiKey,
-      'query': title,
-      if (year != null && year.isNotEmpty) 'year': year,
-      'language': 'en-US', // Optional: for English results
-    };
-
-    final uri = Uri.parse(
-      '$_baseUrl/search/movie',
-    ).replace(queryParameters: queryParams);
-    try {
-      final response = await http.get(uri);
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final results = data['results'] as List<dynamic>? ?? [];
-        if (results.isNotEmpty) {
-          final firstResult = results.first as Map<String, dynamic>;
-          final posterPath = firstResult['poster_path'] as String?;
-          if (posterPath != null && posterPath.isNotEmpty) {
-            return '$_imageBaseUrl$posterPath';
-          }
-        }
-      }
-    } catch (e) {
-      // Silent fail or log error
-      print('TMDb movie search error: $e');
+    final cacheKey = '$type|$query|$year';
+    if (_cache.containsKey(cacheKey)) {
+      return [_cache[cacheKey]!];
     }
-    return null;
+
+    final url = Uri.parse(
+      '$_base/search/$type?api_key=$_apiKey&query=${Uri.encodeComponent(query)}'
+      '${year != null ? '&year=$year' : ''}',
+    );
+
+    try {
+      final resp = await http.get(url);
+      if (resp.statusCode != 200) return [];
+
+      final data = jsonDecode(resp.body);
+      final results =
+          (data['results'] as List? ?? []).cast<Map<String, dynamic>>();
+
+      final out =
+          results
+              .map(TmdbResult.fromJson)
+              .where((r) => r.posterPath != null)
+              .toList();
+
+      if (out.isNotEmpty) {
+        _cache[cacheKey] = out.first;
+      }
+      return out;
+    } catch (_) {
+      return [];
+    }
   }
 
-  /// Search for a TV show and return the first matching poster URL
-  static Future<String?> getTvPoster({
-    required String title,
-    String? year,
-  }) async {
-    final queryParams = <String, String>{
-      'api_key': _apiKey,
-      'query': title,
-      if (year != null && year.isNotEmpty) 'first_air_date_year': year,
-      'language': 'en-US',
-    };
-
-    final uri = Uri.parse(
-      '$_baseUrl/search/tv',
-    ).replace(queryParameters: queryParams);
-    try {
-      final response = await http.get(uri);
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final results = data['results'] as List<dynamic>? ?? [];
-        if (results.isNotEmpty) {
-          final firstResult = results.first as Map<String, dynamic>;
-          final posterPath = firstResult['poster_path'] as String?;
-          if (posterPath != null && posterPath.isNotEmpty) {
-            return '$_imageBaseUrl$posterPath';
-          }
-        }
-      }
-    } catch (e) {
-      print('TMDb TV search error: $e');
-    }
-    return null;
-  }
-
-  /// Combined search: Use for movies or TV based on [type]
+  /// Direct poster URL (kept for backward compatibility)
   static Future<String?> getPosterUrl({
     required String title,
+    String type = '',
     String? year,
-    required String type, // 'movie' or 'tv'
   }) async {
-    if (type == 'movie') {
-      return getMoviePoster(title: title, year: year);
-    } else if (type == 'tv') {
-      return getTvPoster(title: title, year: year);
-    }
-    return null;
+    final results = await search(
+      query: title,
+      year: year,
+      type: type.isEmpty ? 'multi' : type,
+    );
+    return results.isEmpty ? null : results.first.posterUrl;
+  }
+}
+
+/// Rich TMDb result
+class TmdbResult {
+  final String id;
+  final String title;
+  final String? originalTitle;
+  final String? overview;
+  final String? posterPath;
+  final String? backdropPath;
+  final double? voteAverage;
+  final int? voteCount;
+  final String? releaseDate; // movie
+  final String? firstAirDate; // tv
+  final List<String> genres;
+  final String mediaType; // movie or tv
+
+  // ADD THIS LINE
+  static const String _imgBase = 'https://image.tmdb.org/t/p';
+
+  TmdbResult({
+    required this.id,
+    required this.title,
+    this.originalTitle,
+    this.overview,
+    this.posterPath,
+    this.backdropPath,
+    this.voteAverage,
+    this.voteCount,
+    this.releaseDate,
+    this.firstAirDate,
+    required this.genres,
+    required this.mediaType,
+  });
+
+  String get posterUrl => '$_imgBase/w500$posterPath';
+  String get backdropUrl => '$_imgBase/w780$backdropPath';
+  String get year => (releaseDate ?? firstAirDate ?? '').split('-').first;
+
+  factory TmdbResult.fromJson(Map<String, dynamic> json) {
+    final mediaType = json['media_type']?.toString() ?? '';
+    final isMovie = mediaType == 'movie';
+    final isTv = mediaType == 'tv';
+
+    return TmdbResult(
+      id: json['id'].toString(),
+      title: (isMovie ? json['title'] : json['name'])?.toString() ?? '',
+      originalTitle:
+          json['original_title']?.toString() ??
+          json['original_name']?.toString(),
+      overview: json['overview']?.toString(),
+      posterPath: json['poster_path']?.toString(),
+      backdropPath: json['backdrop_path']?.toString(),
+      voteAverage: (json['vote_average'] as num?)?.toDouble(),
+      voteCount: json['vote_count'] as int?,
+      releaseDate: isMovie ? json['release_date']?.toString() : null,
+      firstAirDate: isTv ? json['first_air_date']?.toString() : null,
+      genres:
+          (json['genre_ids'] as List?)?.cast<int>().map(_genreName).toList() ??
+          [],
+      mediaType: mediaType,
+    );
+  }
+
+  // Simple genre map – extend as needed
+  static String _genreName(int id) {
+    const map = {
+      28: 'Action',
+      12: 'Adventure',
+      16: 'Animation',
+      35: 'Comedy',
+      80: 'Crime',
+      99: 'Documentary',
+      18: 'Drama',
+      10751: 'Family',
+      14: 'Fantasy',
+      36: 'History',
+      27: 'Horror',
+      10402: 'Music',
+      9648: 'Mystery',
+      10749: 'Romance',
+      878: 'Sci-Fi',
+      10770: 'TV Movie',
+      53: 'Thriller',
+      10752: 'War',
+      37: 'Western',
+    };
+    return map[id] ?? 'Unknown';
   }
 }

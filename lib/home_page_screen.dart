@@ -8,54 +8,26 @@ import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/favourites_service_compat.dart';
 import 'package:archivereader/services/filters.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
+import 'package:archivereader/services/thumb_override_service.dart';
 import 'package:archivereader/text_viewer_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'cbz_viewer_screen.dart';
 import 'collection_detail_screen.dart';
 import 'utils/archive_helpers.dart';
 import 'utils/external_launch.dart';
 
-// ===== Categories (Explore grid) =====
-enum Category { classic, books, magazines, comics, video, readingList }
-
-extension CategoryX on Category {
-  String get label {
-    switch (this) {
-      case Category.classic:
-        return 'Classic Literature';
-      case Category.books:
-        return 'Books';
-      case Category.magazines:
-        return 'Magazines';
-      case Category.comics:
-        return 'Comics';
-      case Category.video:
-        return 'Videos';
-      case Category.readingList:
-        return 'Reading Lists';
-    }
-  }
-
-  IconData get icon {
-    switch (this) {
-      case Category.classic:
-        return Icons.menu_book_outlined;
-      case Category.books:
-        return Icons.library_books_outlined;
-      case Category.magazines:
-        return Icons.article_outlined;
-      case Category.comics:
-        return Icons.auto_awesome_mosaic_outlined;
-      case Category.video:
-        return Icons.local_movies_outlined;
-      case Category.readingList:
-        return Icons.bookmarks_outlined;
-    }
-  }
+// ─────────────────────────────────────────────────────────────────────────────
+// Top-level helper: resolve best poster using ThumbOverrideService
+// ─────────────────────────────────────────────────────────────────────────────
+Future<String> _resolveThumb(String id, String currentThumb) async {
+  final m = <String, String>{'identifier': id, 'thumb': currentThumb};
+  await ThumbOverrideService.instance.applyToItemMaps([m]);
+  return (m['thumb']?.trim().isNotEmpty == true) ? m['thumb']! : currentThumb;
 }
 
 // ===== Capsule card used for pins & favourites =====
@@ -185,42 +157,6 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        elevation: 0.0,
-        titleSpacing: 16.0,
-        title: Row(
-          children: const <Widget>[SizedBox(width: 8.0), _BrandWordmark()],
-        ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 24.0),
-        children: <Widget>[
-          const SectionHeader(title: 'Continue reading'),
-          const SizedBox(height: 8.0),
-          _BuildContinueReading(),
-
-          const SectionHeader(title: 'Continue watching'),
-          const SizedBox(height: 8.0),
-          _BuildContinueWatching(),
-
-          const SizedBox(height: 16.0),
-
-          // Explore
-          SectionHeader(
-            title: 'Explore more',
-            actionLabel: 'See all',
-            onAction: () => _openExplore(context),
-          ),
-          const SizedBox(height: 8.0),
-          const CategoriesGrid(),
-        ],
-      ),
-    );
-  }
-
   void _openCollectionById(BuildContext context, String id) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -250,6 +186,36 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => const ExploreCollectionsScreen(onPinnedChanged: null),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        elevation: 0,
+        centerTitle: true, // ensures it's centered
+        title: const _BrandWordmark(),
+      ),
+      body: ListView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 24.0),
+        children: const <Widget>[
+          SectionHeader(title: 'Continue reading'),
+          SizedBox(height: 8.0),
+          _BuildContinueReading(),
+
+          SectionHeader(title: 'Continue watching'),
+          SizedBox(height: 8.0),
+          _BuildContinueWatching(),
+
+          SizedBox(height: 24.0),
+          FeaturedCollectionsCarousel(),
+
+          SizedBox(height: 24.0),
+          ExploreByCategory(),
+        ],
       ),
     );
   }
@@ -315,92 +281,115 @@ class _ResumeMediaCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
     return SizedBox(
       width: 140,
       height: 220,
-      child: Card(
-        shape: const RoundedRectangleBorder(),
-        elevation: 0,
-        margin: EdgeInsets.zero,
-        child: InkWell(
-          onTap: onTap,
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: CachedNetworkImage(
-                  imageUrl: thumb,
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) => Container(color: Colors.grey[300]),
-                  errorWidget:
-                      (_, __, ___) =>
-                          const Icon(Icons.play_circle_outline, size: 40),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: cs.shadow.withValues(alpha: 0.15),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Card(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: CachedNetworkImage(
+                    imageUrl: thumb,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(color: Colors.grey[300]),
+                    errorWidget:
+                        (_, __, ___) =>
+                            const Icon(Icons.play_circle_outline, size: 40),
+                  ),
                 ),
-              ),
-              Positioned.fill(
-                child: Container(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.transparent, Colors.black54],
+                Positioned.fill(
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Colors.black54],
+                      ),
                     ),
                   ),
                 ),
-              ),
-              Positioned(
-                left: 8,
-                right: 8,
-                bottom: 8,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    if (progressLabel != null) ...[
-                      const SizedBox(height: 4),
+                Positioned(
+                  left: 8,
+                  right: 8,
+                  bottom: 8,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
-                        progressLabel!,
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 11,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(height: 4),
-                      LinearProgressIndicator(
-                        value: progress,
-                        backgroundColor: Colors.white24,
-                        valueColor: const AlwaysStoppedAnimation(Colors.white),
-                      ),
+                      if (progressLabel != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          progressLabel!,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        LinearProgressIndicator(
+                          value: progress,
+                          backgroundColor: Colors.white24,
+                          valueColor: const AlwaysStoppedAnimation(
+                            Colors.white,
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-              if (onDelete != null)
-                Positioned(
-                  top: 4,
-                  right: 4,
-                  child: Material(
-                    color: Colors.black54,
-                    shape: const CircleBorder(),
-                    child: InkWell(
-                      customBorder: const CircleBorder(),
-                      onTap: onDelete,
-                      child: const Padding(
-                        padding: EdgeInsets.all(6),
-                        child: Icon(Icons.close, color: Colors.white, size: 16),
+                if (onDelete != null)
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: Material(
+                      color: Colors.black54,
+                      shape: const CircleBorder(),
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: onDelete,
+                        child: const Padding(
+                          padding: EdgeInsets.all(6),
+                          child: Icon(
+                            Icons.close,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -549,14 +538,11 @@ class _BuildContinueReading extends StatelessWidget {
                   final fileUrl = e['fileUrl'] as String?;
                   final kind = (e['kind'] as String?) ?? 'pdf';
 
-                  // ---- THUMBNAIL ----
-                  // Prefer the thumbnail saved with the file entry (most accurate)
-                  final thumb =
-                      (e['thumb'] as String?) ??
-                      'https://archive.org/services/img/$id';
+                  // ---- THUMBNAIL (initial & resolved) ----
+                  final fallback = 'https://archive.org/services/img/$id';
+                  final initialThumb = (e['thumb'] as String?) ?? fallback;
 
                   // ---- TITLE ----
-                  // Show the prettified file name, fall back to collection title
                   final displayTitle =
                       fileName != null ? _prettify(fileName) : rawTitle;
 
@@ -580,35 +566,46 @@ class _BuildContinueReading extends StatelessWidget {
                             : null;
                   }
 
-                  return _ResumeMediaCard(
-                    id: id,
-                    title: displayTitle,
-                    thumb: thumb,
-                    progress: progress,
-                    progressLabel: progressLabel,
-                    onTap: () async {
-                      if (fileUrl == null || fileName == null) {
-                        debugPrint(
-                          'ERROR: Missing fileUrl/fileName for recent entry $id',
-                        );
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Cannot resume: missing file info'),
-                          ),
-                        );
-                        return;
-                      }
-
-                      await _openResumeFile(
-                        context: context,
+                  // Resolve overrides at build-time so poster updates are reflected here
+                  return FutureBuilder<String>(
+                    future: _resolveThumb(id, initialThumb),
+                    initialData: initialThumb,
+                    builder: (context, snap) {
+                      final thumbToUse = snap.data ?? initialThumb;
+                      return _ResumeMediaCard(
                         id: id,
                         title: displayTitle,
-                        fileUrl: fileUrl,
-                        fileName: fileName,
-                        kind: kind,
+                        thumb: thumbToUse,
+                        progress: progress,
+                        progressLabel: progressLabel,
+                        onTap: () async {
+                          if (fileUrl == null || fileName == null) {
+                            debugPrint(
+                              'ERROR: Missing fileUrl/fileName for recent entry $id',
+                            );
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Cannot resume: missing file info',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+
+                          await _openResumeFile(
+                            context: context,
+                            id: id,
+                            title: displayTitle,
+                            fileUrl: fileUrl,
+                            fileName: fileName,
+                            kind: kind,
+                          );
+                        },
+                        onDelete:
+                            () => RecentProgressService.instance.remove(id),
                       );
                     },
-                    onDelete: () => RecentProgressService.instance.remove(id),
                   );
                 },
               ),
@@ -651,85 +648,95 @@ class _BuildContinueWatching extends StatelessWidget {
                   final e = recent[i];
                   final id = e['id'] as String;
                   final title = (e['title'] as String?) ?? id;
-                  final thumb =
-                      (e['thumb'] as String?) ??
-                      'https://archive.org/services/img/$id';
                   final fileUrl = e['fileUrl'] as String?;
                   final fileName = e['fileName'] as String?;
                   final percent = (e['percent'] as double?) ?? 0.0;
 
-                  return _ResumeMediaCard(
-                    id: id,
-                    title: title,
-                    thumb: thumb,
-                    progress: percent,
-                    progressLabel:
-                        percent > 0
-                            ? '${(percent * 100).toStringAsFixed(0)}% watched'
-                            : 'Tap to open',
-                    onTap: () async {
-                      if (fileUrl == null || fileName == null) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('No video file recorded.'),
-                            duration: Duration(seconds: 2),
-                          ),
-                        );
-                        return;
-                      }
+                  // ---- THUMBNAIL (initial & resolved) ----
+                  final fallback = 'https://archive.org/services/img/$id';
+                  final initialThumb = (e['thumb'] as String?) ?? fallback;
 
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Row(
-                            children: [
-                              const Icon(
-                                Icons.play_circle_outline,
-                                color: Colors.white,
+                  return FutureBuilder<String>(
+                    future: _resolveThumb(id, initialThumb),
+                    initialData: initialThumb,
+                    builder: (context, snap) {
+                      final thumbToUse = snap.data ?? initialThumb;
+
+                      return _ResumeMediaCard(
+                        id: id,
+                        title: title,
+                        thumb: thumbToUse,
+                        progress: percent,
+                        progressLabel:
+                            percent > 0
+                                ? '${(percent * 100).toStringAsFixed(0)}% watched'
+                                : 'Tap to open',
+                        onTap: () async {
+                          if (fileUrl == null || fileName == null) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('No video file recorded.'),
+                                duration: Duration(seconds: 2),
                               ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  'Opening: $fileName',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          backgroundColor: Colors.black87,
-                          behavior: SnackBarBehavior.floating,
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
+                            );
+                            return;
+                          }
 
-                      String mime = 'video/*';
-                      final ext = fileName.toLowerCase();
-                      if (ext.endsWith('.mp4') || ext.endsWith('.m4v')) {
-                        mime = 'video/mp4';
-                      } else if (ext.endsWith('.webm')) {
-                        mime = 'video/webm';
-                      } else if (ext.endsWith('.mkv')) {
-                        mime = 'video/x-matroska';
-                      } else if (ext.endsWith('.m3u8')) {
-                        mime = 'application/vnd.apple.mpegurl';
-                      }
-
-                      try {
-                        await openExternallyWithChooser(
-                          url: fileUrl,
-                          mimeType: mime,
-                          chooserTitle: 'Open with',
-                        );
-                      } catch (e) {
-                        if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Failed to open: $e')),
+                            SnackBar(
+                              content: Row(
+                                children: [
+                                  const Icon(
+                                    Icons.play_circle_outline,
+                                    color: Colors.white,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Opening: $fileName',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              backgroundColor: Colors.black87,
+                              behavior: SnackBarBehavior.floating,
+                              duration: const Duration(seconds: 2),
+                            ),
                           );
-                        }
-                      }
+
+                          String mime = 'video/*';
+                          final ext = fileName.toLowerCase();
+                          if (ext.endsWith('.mp4') || ext.endsWith('.m4v')) {
+                            mime = 'video/mp4';
+                          } else if (ext.endsWith('.webm')) {
+                            mime = 'video/webm';
+                          } else if (ext.endsWith('.mkv')) {
+                            mime = 'video/x-matroska';
+                          } else if (ext.endsWith('.m3u8')) {
+                            mime = 'application/vnd.apple.mpegurl';
+                          }
+
+                          try {
+                            await openExternallyWithChooser(
+                              url: fileUrl,
+                              mimeType: mime,
+                              chooserTitle: 'Open with',
+                            );
+                          } catch (e) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Failed to open: $e')),
+                              );
+                            }
+                          }
+                        },
+                        onDelete:
+                            () => RecentProgressService.instance.remove(id),
+                      );
                     },
-                    onDelete: () => RecentProgressService.instance.remove(id),
                   );
                 },
               ),
@@ -741,7 +748,266 @@ class _BuildContinueWatching extends StatelessWidget {
   }
 }
 
-// ===== REST OF FILE (UNCHANGED) =====
+// ===== EXTRA SECTIONS ADDED =====
+
+// Featured collections with banner tiles
+class FeaturedCollectionsCarousel extends StatelessWidget {
+  const FeaturedCollectionsCarousel({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final featured = [
+      {
+        'title': 'Classic Literature',
+        'collection': 'gutenberg',
+        'image': 'https://archive.org/services/img/gutenberg',
+      },
+      {
+        'title': 'Vintage Comics',
+        'collection': 'comics_inbox',
+        'image': 'https://archive.org/services/img/comics_inbox',
+      },
+      {
+        'title': 'Old Magazines',
+        'collection': 'magazines',
+        'image': 'https://archive.org/services/img/magazines',
+      },
+      {
+        'title': 'Film Archives',
+        'collection': 'movies',
+        'image': 'https://archive.org/services/img/movies',
+      },
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Featured Collections',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 200,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: featured.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 16),
+            itemBuilder: (context, i) {
+              final f = featured[i];
+              return _FeaturedTile(
+                title: f['title']! as String,
+                collection: f['collection']! as String,
+                imageUrl: f['image']! as String,
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+Map<String, ({String title, IconData icon, String query})> _inAppCategories = {
+  'texts': (
+    title: 'Texts',
+    icon: Icons.menu_book_rounded,
+    query: 'mediatype:texts',
+  ),
+  'movies': (
+    title: 'Videos',
+    icon: Icons.movie_rounded,
+    query: 'mediatype:movies',
+  ),
+  'audio': (
+    title: 'Audio',
+    icon: Icons.headphones_rounded,
+    query: 'mediatype:audio',
+  ),
+  'image': (
+    title: 'Images',
+    icon: Icons.image_rounded,
+    query: 'mediatype:image',
+  ),
+};
+
+class _FeaturedTile extends StatelessWidget {
+  final String title;
+  final String collection;
+  final String imageUrl;
+
+  const _FeaturedTile({
+    required this.title,
+    required this.collection,
+    required this.imageUrl,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder:
+                (_) => CollectionDetailScreen(
+                  categoryName: title,
+                  customQuery: 'collection:$collection',
+                ),
+          ),
+        );
+      },
+      child: Ink(
+        width: 260,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          image: DecorationImage(
+            image: NetworkImage(imageUrl),
+            fit: BoxFit.cover,
+            colorFilter: ColorFilter.mode(
+              Colors.black.withValues(alpha: 0.25),
+              BlendMode.darken,
+            ),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Align(
+          alignment: Alignment.bottomLeft,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Link out to Archive.org category landing pages
+class ExploreByCategory extends StatelessWidget {
+  const ExploreByCategory({super.key});
+
+  // -----------------------------------------------------------------------
+  // Open a category **inside the app** when we have a matching query.
+  // Otherwise fall back to the external browser (keeps the old behaviour).
+  // -----------------------------------------------------------------------
+  Future<void> _openCategory(BuildContext context, String key) async {
+    final entry = _inAppCategories[key];
+    if (entry != null) {
+      // ---- IN-APP -------------------------------------------------------
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder:
+              (_) => CollectionDetailScreen(
+                categoryName: entry.title,
+                customQuery: entry.query,
+              ),
+        ),
+      );
+      return;
+    }
+
+    // ---- FALLBACK (browser) -------------------------------------------
+    final url = 'https://archive.org/details/$key';
+    final uri = Uri.parse(url);
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open ${entry?.title ?? key}')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    // Build the list from the map – order is the same as the original file.
+    final List<({String key, String title, IconData icon})> categories =
+        _inAppCategories.entries
+            .map((e) => (key: e.key, title: e.value.title, icon: e.value.icon))
+            .toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Explore by Category',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 12),
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            childAspectRatio: 1.6,
+          ),
+          itemCount: categories.length,
+          itemBuilder: (context, i) {
+            final cat = categories[i];
+            return InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: () => _openCategory(context, cat.key),
+              child: Ink(
+                decoration: BoxDecoration(
+                  color: cs.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.05),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(cat.icon, size: 32, color: cs.primary),
+                      const SizedBox(height: 8),
+                      Text(
+                        cat.title,
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+// ===== REST OF FILE (supporting widgets) =====
 class _CollectionsGrid extends StatelessWidget {
   final List<String> data;
   final void Function(CollectionMeta) onTap;
@@ -824,58 +1090,6 @@ class _BrandWordmark extends StatelessWidget {
   const _BrandWordmark();
   @override
   Widget build(BuildContext context) => const Text('Home');
-}
-
-class CategoriesGrid extends StatelessWidget {
-  const CategoriesGrid({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 3,
-      childAspectRatio: 1.2,
-      children:
-          Category.values.map((c) {
-            return Card(
-              child: InkWell(
-                onTap: () {
-                  final id = switch (c) {
-                    Category.classic => 'gutenberg',
-                    Category.books => 'books',
-                    Category.magazines => 'magazines',
-                    Category.comics => 'comics_inbox',
-                    Category.video => 'movies',
-                    Category.readingList => 'readinglists',
-                  };
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder:
-                          (_) => CollectionDetailScreen(
-                            categoryName: id,
-                            customQuery: 'collection:$id',
-                          ),
-                    ),
-                  );
-                },
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(c.icon, size: 32),
-                    const SizedBox(height: 8),
-                    Text(
-                      c.label,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }).toList(),
-    );
-  }
 }
 
 class ReadingListCarousel extends StatelessWidget {

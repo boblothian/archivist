@@ -1,4 +1,3 @@
-// lib/main.dart
 import 'package:animated_splash_screen/animated_splash_screen.dart';
 import 'package:archivereader/pinned_collections_screen.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
@@ -7,16 +6,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-// ← IMPORTED
 import 'collection_search_screen.dart';
 import 'collection_store.dart';
 import 'favourites_screen.dart';
 import 'home_page_screen.dart';
 import 'services/favourites_service.dart';
+import 'services/theme_controller.dart';
+import 'settings_screen.dart';
 
 // ---------- Backgrounds ----------
-const _seed = Color(0xFF6D1B1B);
-const kLightBg = Color(0xFFFFFFFF);
+const _seed = Color(0xFF0B1644);
+const kLightBg = Color(0xFFF6F5F2);
 const kDarkBg = Color(0xFF0E0E12);
 
 Future<void> main() async {
@@ -24,8 +24,11 @@ Future<void> main() async {
   await FavoritesService.instance.init();
   await RecentProgressService.instance.init();
 
+  final themeController = ThemeController();
+  await themeController.load();
+
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-  runApp(const ArchivistApp());
+  runApp(ArchivistRoot(themeController: themeController));
 }
 
 ThemeData _buildTheme(Brightness brightness) {
@@ -38,46 +41,48 @@ ThemeData _buildTheme(Brightness brightness) {
     surface: isDark ? const Color(0xFF121217) : Colors.white,
   );
 
+  final inter = GoogleFonts.interTextTheme();
+  final merri = GoogleFonts.merriweatherTextTheme();
+
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
     scaffoldBackgroundColor: scheme.background,
-    textTheme: TextTheme(
-      displayLarge: GoogleFonts.merriweather(
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.5,
-      ),
-      headlineMedium: GoogleFonts.merriweather(fontWeight: FontWeight.w600),
-      titleLarge: GoogleFonts.inter(
-        fontWeight: FontWeight.w700,
-        letterSpacing: 0.1,
-      ),
-      bodyLarge: GoogleFonts.inter(height: 1.5, fontSize: 16),
-      bodyMedium: GoogleFonts.inter(height: 1.5, fontSize: 14),
-      labelLarge: GoogleFonts.inter(
-        fontWeight: FontWeight.w600,
-        letterSpacing: 0.2,
-      ),
+
+    // Ensure all text uses onSurface by default
+    textTheme: inter
+        .merge(merri)
+        .apply(bodyColor: scheme.onSurface, displayColor: scheme.onSurface),
+    primaryTextTheme: inter.apply(
+      bodyColor: scheme.onPrimary,
+      displayColor: scheme.onPrimary,
     ),
-    appBarTheme: AppBarTheme(
-      backgroundColor: scheme.surface,
-      foregroundColor: scheme.onSurface,
-      titleTextStyle: GoogleFonts.merriweather(
-        fontWeight: FontWeight.w700,
-        fontSize: 22,
-        color: scheme.onSurface,
-      ),
-      centerTitle: true,
+
+    iconTheme: IconThemeData(color: scheme.onSurface),
+    appBarTheme: const AppBarTheme(
+      backgroundColor: Colors.transparent, // let ArchivistAppBar decide
+      surfaceTintColor: Colors.transparent,
       elevation: 0,
       scrolledUnderElevation: 0,
-      systemOverlayStyle: SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        systemNavigationBarColor: Colors.transparent,
-        statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
-        systemNavigationBarIconBrightness:
-            isDark ? Brightness.light : Brightness.dark,
+      centerTitle: true,
+    ),
+
+    listTileTheme: ListTileThemeData(
+      iconColor: scheme.onSurfaceVariant,
+      textColor: scheme.onSurface,
+      subtitleTextStyle: inter.bodySmall?.copyWith(
+        color: scheme.onSurface.withOpacity(0.75),
       ),
     ),
+
+    chipTheme: ChipThemeData(
+      backgroundColor: scheme.surfaceVariant,
+      selectedColor: scheme.primaryContainer,
+      labelStyle: TextStyle(color: scheme.onSurface),
+      secondaryLabelStyle: TextStyle(color: scheme.onSurface),
+      iconTheme: IconThemeData(color: scheme.onSurface),
+    ),
+
     cardTheme: CardThemeData(
       elevation: 1,
       margin: const EdgeInsets.all(8),
@@ -85,8 +90,11 @@ ThemeData _buildTheme(Brightness brightness) {
       clipBehavior: Clip.antiAlias,
       color: scheme.surface,
     ),
+
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
+        foregroundColor: scheme.onPrimary,
+        backgroundColor: scheme.primary,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         textStyle: GoogleFonts.inter(
@@ -97,10 +105,12 @@ ThemeData _buildTheme(Brightness brightness) {
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
+        foregroundColor: scheme.primary,
         textStyle: GoogleFonts.inter(fontWeight: FontWeight.w600),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     ),
+
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: scheme.surface,
@@ -113,40 +123,60 @@ ThemeData _buildTheme(Brightness brightness) {
         borderRadius: BorderRadius.circular(12),
         borderSide: BorderSide(color: scheme.primary, width: 2),
       ),
-      labelStyle: GoogleFonts.inter(color: scheme.onSurfaceVariant),
+      labelStyle: TextStyle(color: scheme.onSurfaceVariant),
+      hintStyle: TextStyle(color: scheme.onSurfaceVariant),
     ),
+
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: scheme.surface,
       indicatorColor: scheme.primaryContainer,
       elevation: 0,
+      iconTheme: WidgetStateProperty.all(
+        IconThemeData(color: scheme.onSurface),
+      ),
+      // Always show labels + set color
+      labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
       labelTextStyle: WidgetStateProperty.all(
-        GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 12),
+        GoogleFonts.inter(
+          fontWeight: FontWeight.w600,
+          fontSize: 12,
+          color: scheme.onSurface,
+        ),
       ),
     ),
   );
 }
 
-class ArchivistApp extends StatelessWidget {
-  const ArchivistApp({super.key});
+class ArchivistRoot extends StatelessWidget {
+  const ArchivistRoot({super.key, required this.themeController});
+  final ThemeController themeController;
 
   @override
   Widget build(BuildContext context) {
-    return CollectionsHomeScope(
-      notifier: CollectionsHomeState()..load(),
-      child: MaterialApp(
-        title: 'Archivist',
-        debugShowCheckedModeBanner: false,
-        theme: _buildTheme(Brightness.light),
-        darkTheme: _buildTheme(Brightness.dark),
-        themeMode: ThemeMode.system,
-        home: AnimatedSplashScreen(
-          backgroundColor: kLightBg,
-          splash: 'assets/images/logo.png',
-          splashIconSize: 300,
-          duration: 2500,
-          splashTransition: SplashTransition.fadeTransition,
-          nextScreen: RootShell(key: RootShell.rootKey),
-        ),
+    return ThemeControllerProvider(
+      controller: themeController,
+      child: AnimatedBuilder(
+        animation: themeController,
+        builder: (_, __) {
+          return CollectionsHomeScope(
+            notifier: CollectionsHomeState()..load(),
+            child: MaterialApp(
+              title: 'Archivist',
+              debugShowCheckedModeBanner: false,
+              theme: _buildTheme(Brightness.light),
+              darkTheme: _buildTheme(Brightness.dark),
+              themeMode: themeController.mode,
+              home: AnimatedSplashScreen(
+                backgroundColor: kLightBg,
+                splash: 'assets/images/logo.png',
+                splashIconSize: 300,
+                duration: 2500,
+                splashTransition: SplashTransition.fadeTransition,
+                nextScreen: RootShell(key: RootShell.rootKey),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -221,28 +251,46 @@ class _RootShellState extends State<RootShell> {
               ),
             ],
           ),
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _current,
-            onDestinationSelected: _select,
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.home_outlined),
-                label: 'Home',
-              ),
-              NavigationDestination(icon: Icon(Icons.search), label: 'Search'),
-              NavigationDestination(
-                icon: Icon(Icons.favorite_outline),
-                label: 'Favourites',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.collections_bookmark_outlined),
-                label: 'Collections',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.settings_outlined),
-                label: 'Settings',
-              ),
-            ],
+          bottomNavigationBar: Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 6,
+                  offset: const Offset(0, -2),
+                ),
+              ],
+            ),
+            child: NavigationBar(
+              backgroundColor:
+                  Colors.transparent, // let our container handle the color
+              indicatorColor: Theme.of(context).colorScheme.primaryContainer,
+              selectedIndex: _current,
+              onDestinationSelected: _select,
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.home_outlined),
+                  label: 'Home',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.search),
+                  label: 'Search',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.favorite_outline),
+                  label: 'Favourites',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.collections_bookmark_outlined),
+                  label: 'Collections',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.settings_outlined),
+                  label: 'Settings',
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -264,62 +312,6 @@ class _TabNav extends StatelessWidget {
             builder: (context) => builder(context),
             settings: settings,
           ),
-    );
-  }
-}
-
-// ──────────────────────────────────────
-// SETTINGS SCREEN (inline)
-// ──────────────────────────────────────
-class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Settings'), centerTitle: true),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          SwitchListTile(
-            secondary: Icon(isDark ? Icons.dark_mode : Icons.light_mode),
-            title: const Text('Dark Mode'),
-            value: isDark,
-            onChanged: null,
-          ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.info_outline),
-            title: const Text('About'),
-            onTap:
-                () => showAboutDialog(
-                  context: context,
-                  applicationName: 'Archivist',
-                  applicationVersion: '1.0.0',
-                ),
-          ),
-          ListTile(
-            leading: const Icon(Icons.cleaning_services),
-            title: const Text('Clear Cache'),
-            onTap: () {
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('Cache cleared')));
-            },
-          ),
-          const SizedBox(height: 32),
-          Center(
-            child: Text(
-              'Archivist v1.0.0',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: Colors.grey),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

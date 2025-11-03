@@ -1,29 +1,28 @@
 // collection_detail_screen.dart
 import 'dart:convert';
-import 'dart:io' show Platform;
-import 'dart:io';
+import 'dart:math' as math;
 
-import 'package:android_intent_plus/android_intent.dart';
-import 'package:android_intent_plus/flag.dart';
+import 'package:animations/animations.dart'; // <-- NEW
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:archivereader/services/thumb_override_service.dart';
-import 'package:archivereader/services/tmdb_service.dart';
+import 'package:archivereader/services/thumbnail_service.dart';
 import 'package:archivereader/ui/capsule_theme.dart';
 import 'package:archivereader/video_player_screen.dart';
 import 'package:archivereader/widgets/capsule_thumb_card.dart';
 import 'package:archivereader/widgets/favourite_add_dialogue.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart'; // for compute()
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'archive_item_screen.dart';
-import 'image_viewer_screen.dart'; // ← NEW
+import 'image_viewer_screen.dart';
 import 'net.dart';
 import 'pdf_viewer_screen.dart';
-import 'text_viewer_screen.dart'; // ← NEW
+import 'text_viewer_screen.dart';
 import 'utils/archive_helpers.dart';
 import 'utils/external_launch.dart';
 
@@ -47,7 +46,7 @@ enum SearchScope { metadata, title }
 enum ViewMode { grid, list }
 
 const int _QUICK_PICK_LIMIT = 24;
-const int _CHILD_ROWS = 60;
+const int _CHILD_ROWS = 36; // lower for faster quick pick
 
 String _sortParam(SortMode m) {
   switch (m) {
@@ -108,13 +107,17 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   final TextEditingController _searchCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
 
+  // Single reusable HTTP client + timeout
+  static final http.Client _client = http.Client();
+  static const Duration _netTimeout = Duration(seconds: 12);
+
   final List<Map<String, String>> _items = <Map<String, String>>[];
   bool _loading = true;
   bool _loadingMore = false;
   String? _error;
 
   int _requestToken = 0;
-  static const int _rows = 120;
+  static const int _rows = 60; // smaller first-page for snappier paint
   int _page = 1;
   int _numFound = 0;
 
@@ -129,6 +132,27 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   late bool _downloadedOnly = _tryFlag(widget.filters, 'downloadedOnly', false);
 
   bool _showScrollTop = false;
+  bool _isDisposed = false;
+
+  // ---------- NEW: shared axis route helper ----------
+  Route<T> _sharedAxisRoute<T>(
+    Widget page, {
+    SharedAxisTransitionType type = SharedAxisTransitionType.scaled,
+  }) {
+    return PageRouteBuilder<T>(
+      transitionDuration: const Duration(milliseconds: 300),
+      reverseTransitionDuration: const Duration(milliseconds: 250),
+      pageBuilder: (_, __, ___) => page,
+      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        return SharedAxisTransition(
+          animation: animation,
+          secondaryAnimation: secondaryAnimation,
+          transitionType: type,
+          child: child,
+        );
+      },
+    );
+  }
 
   @override
   void initState() {
@@ -162,9 +186,18 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
   @override
   void dispose() {
+    _isDisposed = true;
+    _dismissKeyboard();
     _searchCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
+  }
+
+  void _dismissKeyboard() {
+    final focus = FocusManager.instance.primaryFocus;
+    if (focus != null && !focus.hasPrimaryFocus) {
+      focus.unfocus();
+    }
   }
 
   String _prettyFilename(String raw) {
@@ -214,25 +247,91 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     return full;
   }
 
+  // Parse JSON off the UI thread
+  Future<Map<String, dynamic>> _decodeJson(String body) async {
+    return compute((String s) => jsonDecode(s) as Map<String, dynamic>, body);
+  }
+
+  // Background smart-thumb upgrader (bounded concurrency) respecting user overrides
+  Future<void> _unblockSmartThumbs(
+    List<Map<String, String>> batch, {
+    required int currentToken,
+  }) async {
+    const int kMaxConcurrent = 6;
+
+    // Helper: run one item
+    Future<void> _process(Map<String, String> m) async {
+      try {
+        if (!mounted || _isDisposed || currentToken != _requestToken) return;
+
+        final id = m['identifier']!;
+        final mediatype = m['mediatype'] ?? '';
+        final title = m['title'] ?? id;
+        final year = m['year'] ?? '';
+
+        // If thumb is already NOT the deterministic placeholder (e.g., user override applied),
+        // skip generating a smart thumb.
+        final currentThumb = (m['thumb'] ?? '').trim();
+        final placeholder = archiveThumbUrl(id);
+        if (currentThumb.isNotEmpty && currentThumb != placeholder) {
+          return; // already overridden or upgraded
+        }
+
+        final smart = await ThumbnailService().getSmartThumb(
+          id: id,
+          mediatype: mediatype,
+          title: title,
+          year: year,
+        );
+
+        if (!mounted || _isDisposed || currentToken != _requestToken) return;
+        if (smart.isEmpty || smart == m['thumb']) return;
+
+        m['thumb'] = smart;
+
+        final idx = _items.indexWhere((e) => e['identifier'] == id);
+        if (idx != -1 && mounted && !_isDisposed) {
+          setState(() {
+            _items[idx] = Map<String, String>.from(_items[idx])
+              ..['thumb'] = smart;
+          });
+        }
+      } catch (_) {
+        // ignore per-item failures
+      }
+    }
+
+    // Process in chunks to bound concurrency
+    for (int i = 0; i < batch.length; i += kMaxConcurrent) {
+      if (!mounted || _isDisposed || currentToken != _requestToken) return;
+
+      final end = math.min(i + kMaxConcurrent, batch.length);
+      final slice = batch.sublist(i, end);
+      await Future.wait(slice.map(_process));
+    }
+  }
+
   Future<void> _fetch({bool reset = false}) async {
     if (reset) {
       _page = 1;
       _numFound = 0;
       _items.clear();
       _error = null;
-      setState(() => _loading = true);
+      if (mounted) setState(() => _loading = true);
     } else {
-      setState(() => _loadingMore = true);
+      if (mounted) setState(() => _loadingMore = true);
     }
 
     if ((widget.collectionName == null ||
             widget.collectionName!.trim().isEmpty) &&
         (widget.customQuery == null || widget.customQuery!.trim().isEmpty)) {
-      setState(() {
-        _loading = false;
-        _loadingMore = false;
-        _error = 'No collection or custom query provided.';
-      });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadingMore = false;
+          _error = 'No collection or custom query provided.';
+        });
+      }
       return;
     }
 
@@ -256,19 +355,24 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         'rows=$_rows&page=$_page&output=json';
 
     try {
-      final resp = await http.get(Uri.parse(url), headers: _HEADERS);
-      if (!mounted || token != _requestToken) return;
+      final resp = await _client
+          .get(Uri.parse(url), headers: _HEADERS)
+          .timeout(_netTimeout);
+
+      if (!mounted || _isDisposed || token != _requestToken) return;
 
       if (resp.statusCode != 200) {
-        setState(() {
-          _loading = false;
-          _loadingMore = false;
-          _error = 'Search failed (${resp.statusCode}).';
-        });
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _loadingMore = false;
+            _error = 'Search failed (${resp.statusCode}).';
+          });
+        }
         return;
       }
 
-      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      final data = await _decodeJson(resp.body);
       final response = (data['response'] as Map<String, dynamic>?) ?? const {};
       final List docs = (response['docs'] as List?) ?? const [];
       _numFound =
@@ -283,23 +387,29 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         return v.toString();
       }
 
-      List<Map<String, String>> batch =
-          docs.map<Map<String, String>>((doc) {
-            final id = (doc['identifier'] ?? '').toString();
-            final title = flat(doc['title']).trim();
-            final year = flat(doc['year']);
-            return {
-              'identifier': id,
-              'title': title.isEmpty ? id : title,
-              'thumb': archiveThumbUrl(id),
-              'mediatype': flat(doc['mediatype']),
-              'description': flat(doc['description']),
-              'creator': flat(doc['creator']),
-              'subject': flat(doc['subject']),
-              'year': year,
-            };
-          }).toList();
+      // Fast batch (placeholder thumbs)
+      List<Map<String, String>> batch = [];
+      for (final doc in docs) {
+        final id = (doc['identifier'] ?? '').toString();
+        final rawTitle = flat(doc['title']).trim();
+        final title = rawTitle.isEmpty ? id : rawTitle;
+        final year = flat(doc['year']);
+        final mediatype = flat(doc['mediatype']);
+        final thumb = archiveThumbUrl(id);
 
+        batch.add({
+          'identifier': id,
+          'title': title,
+          'thumb': thumb,
+          'mediatype': mediatype,
+          'description': flat(doc['description']),
+          'creator': flat(doc['creator']),
+          'subject': flat(doc['subject']),
+          'year': year,
+        });
+      }
+
+      // Filters
       if (_sfwOnly) {
         final filtered = batch.where(_SfwFilter.isClean).toList();
         if (filtered.isNotEmpty || _searchCtrl.text.trim().isNotEmpty) {
@@ -312,29 +422,40 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         batch = batch.where((m) => favs.contains(m['identifier'])).toList();
       }
 
+      // Apply overrides before render
       await ThumbOverrideService.instance.applyToItemMaps(batch);
+
+      // De-dup against existing
       final existingIds = _items.map((m) => m['identifier']).toSet();
       batch =
           batch
               .where(
                 (m) =>
                     m['identifier'] != null &&
-                    !existingIds.contains(m['identifier']),
+                    !existingIds.contains(m['identifier'] ?? ''),
               )
               .toList();
 
-      setState(() {
-        _items.addAll(batch);
-        _loading = false;
-        _loadingMore = false;
-        _error = null;
-      });
+      // Render immediately
+      if (mounted && !_isDisposed) {
+        setState(() {
+          _items.addAll(batch);
+          _loading = false;
+          _loadingMore = false;
+          _error = null;
+        });
+      }
+
+      // Upgrade thumbs in background
+      _unblockSmartThumbs(batch, currentToken: token);
     } catch (_) {
-      setState(() {
-        _loading = false;
-        _loadingMore = false;
-        _error = 'Network error. Please try again.';
-      });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadingMore = false;
+          _error = 'Network error. Please try again.';
+        });
+      }
     }
   }
 
@@ -345,274 +466,22 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
   void _runSearch() => _fetch(reset: true);
 
-  // === SMART THUMBNAIL FETCHER ===
-  Future<String> _getSmartThumb(
-    String id,
-    String mediatype,
-    String title, {
-    String? year,
-  }) async {
-    final itemImage = await _fetchItemImage(id);
-    if (itemImage != null) return itemImage;
-
-    if (mediatype.toLowerCase().contains('video') || mediatype == 'movies') {
-      final poster = await TmdbService.getPosterUrl(title: title, type: '');
-      if (poster != null) return poster;
-    }
-
-    if (mediatype.toLowerCase().contains('video')) {
-      return 'https://archive.org/download/$id/${id}__thumb.jpg';
-    }
-
-    return archiveThumbUrl(id);
-  }
-
-  Future<String?> _fetchItemImage(String id) async {
-    try {
-      final resp = await http.get(
-        Uri.parse('https://archive.org/metadata/$id'),
-        headers: _HEADERS,
-      );
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body) as Map<String, dynamic>;
-        final itemImage = data['metadata']?['itemimage']?.toString();
-        if (itemImage != null && itemImage.isNotEmpty) {
-          return 'https://archive.org/services/img/$itemImage';
-        }
-      }
-    } catch (_) {}
-    return null;
-  }
-
-  Future<List<String>> _gatherPosterCandidates({
-    required String query,
-    required String id,
-    required String mediatype,
-    String? year,
-    bool allowArchive = false, // ← default: hide archive.org thumbs
-  }) async {
-    final nonArchive = <String>[];
-    final archive = <String>[]; // kept as fallback only
-
-    String cleanTitle(String s) {
-      var t = s.trim();
-      t = t.replaceAll(RegExp(r'\s+\(\d{4}\)$'), '');
-      t = t.split(':').first.trim();
-      t = t.replaceAll(RegExp(r'\bS\d{2}E\d{2}\b', caseSensitive: false), '');
-      return t.trim();
-    }
-
-    void add(String? u) {
-      if (u == null) return;
-      final s = u.trim();
-      if (s.isEmpty) return;
-      final isArchive = Uri.tryParse(s)?.host.contains('archive.org') ?? false;
-      (isArchive ? archive : nonArchive).add(s);
-    }
-
-    // — Archive candidates (we'll only show these if nothing else exists) —
-    archive.add('https://archive.org/services/img/$id');
-    archive.add('https://archive.org/download/$id/${id}__thumb.jpg');
-    archive.add(archiveThumbUrl(id));
-
-    // Try pulling itemimage + any image files on the item
-    try {
-      final resp = await http.get(
-        Uri.parse('https://archive.org/metadata/$id'),
-        headers: _HEADERS,
-      );
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body) as Map<String, dynamic>;
-        final meta = (data['metadata'] as Map?) ?? const {};
-        final files = (data['files'] as List?) ?? const [];
-
-        final itemImage = meta['itemimage']?.toString();
-        if (itemImage != null && itemImage.trim().isNotEmpty) {
-          archive.add('https://archive.org/services/img/$itemImage');
-          archive.add('https://archive.org/download/$itemImage');
-        }
-
-        final priNames = <String>[
-          'cover',
-          'poster',
-          'front',
-          'thumbnail',
-          'thumb',
-          '00',
-          '000',
-          'title',
-        ];
-        final allImageFiles = <String>[];
-        for (final f in files) {
-          if (f is! Map) continue;
-          final name = (f['name'] ?? '').toString();
-          final fmt = (f['format'] ?? '').toString().toLowerCase();
-          final lower = name.toLowerCase();
-          final looksImage =
-              lower.endsWith('.jpg') ||
-              lower.endsWith('.jpeg') ||
-              lower.endsWith('.png') ||
-              lower.endsWith('.webp') ||
-              lower.endsWith('.gif') ||
-              fmt.contains('jpeg') ||
-              fmt.contains('png') ||
-              fmt.contains('webp') ||
-              fmt.contains('gif');
-          if (looksImage && name.isNotEmpty) {
-            allImageFiles.add(name);
-          }
-        }
-
-        final pri = <String>[];
-        final sec = <String>[];
-        for (final name in allImageFiles) {
-          final lower = name.toLowerCase();
-          final hit = priNames.any((k) => lower.contains(k));
-          (hit ? pri : sec).add(name);
-        }
-
-        for (final name in [...pri, ...sec].take(10)) {
-          archive.add(
-            'https://archive.org/download/$id/${Uri.encodeComponent(name)}',
-          );
-        }
-      }
-    } catch (_) {}
-
-    // — TMDb candidates (non-archive) —
-    final titleVariants =
-        <String>{
-          query,
-          cleanTitle(query),
-        }.where((s) => s.trim().isNotEmpty).toList();
-
-    for (final type in const ['movie', 'tv']) {
-      for (final title in titleVariants) {
-        try {
-          add(await TmdbService.getPosterUrl(title: title, type: type));
-        } catch (_) {}
-        if (year != null && year.trim().isNotEmpty) {
-          try {
-            add(
-              await TmdbService.getPosterUrl(
-                title: title,
-                year: year,
-                type: type,
-              ),
-            );
-          } catch (_) {}
-        }
-      }
-    }
-
-    // Up-res common TMDb sizes to create a few distinct options
-    final upsized = <String>[];
-    for (final u in nonArchive) {
-      final up = u
-          .replaceAll('/w342/', '/w500/')
-          .replaceAll('/w500/', '/w780/')
-          .replaceAll('/w780/', '/original/');
-      if (up != u) upsized.add(up);
-    }
-    nonArchive.addAll(upsized);
-
-    // De-dupe helpers
-    List<String> dedupe(List<String> xs) {
-      final seen = <String>{};
-      final out = <String>[];
-      for (final x in xs) {
-        if (seen.add(x)) out.add(x);
-      }
-      return out;
-    }
-
-    final nonArchDeduped = dedupe(nonArchive).take(24).toList();
-
-    if (nonArchDeduped.isNotEmpty) {
-      return nonArchDeduped;
-    }
-
-    // Nothing external found — only return archive results if explicitly allowed,
-    // otherwise return a *tiny* fallback (1–2) so the UI isn't empty.
-    final archDeduped = dedupe(archive);
-    if (allowArchive) return archDeduped.take(12).toList();
-
-    // strict mode: provide 1–2 just to avoid an empty grid
-    return archDeduped.take(2).toList();
-  }
-
-  Future<String?> _choosePoster(List<String> urls, {String? title}) async {
-    if (urls.isEmpty) return null;
-    return showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (ctx) {
-        final cross = (MediaQuery.of(ctx).size.width ~/ 120).clamp(2, 5);
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                title: Text(title ?? 'Choose a thumbnail'),
-                subtitle: Text(
-                  '${urls.length} option${urls.length == 1 ? '' : 's'}',
-                ),
-              ),
-              const Divider(height: 1),
-              Flexible(
-                child: GridView.builder(
-                  padding: const EdgeInsets.all(12),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: cross,
-                    childAspectRatio: 3 / 4,
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                  ),
-                  itemCount: urls.length,
-                  itemBuilder: (_, i) {
-                    final u = urls[i];
-                    return InkWell(
-                      onTap: () => Navigator.pop(ctx, u),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: CachedNetworkImage(
-                          imageUrl: u,
-                          fit: BoxFit.cover,
-                          errorWidget:
-                              (_, __, ___) => Container(
-                                color: Theme.of(ctx).colorScheme.surfaceVariant,
-                                alignment: Alignment.center,
-                                child: const Icon(Icons.broken_image),
-                              ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   // ─────────────────────────────────────────────────────────────────────────────
-  //  LONG-PRESS MENU – TMDb thumbnail + add-to-favourites
+  //  LONG-PRESS MENU – TMDb thumbnail + add-to-favourites + enrich metadata
   // ─────────────────────────────────────────────────────────────────────────────
   Future<void> _handleLongPressItem(Map<String, String> item) async {
+    if (_isDisposed) return;
+
     HapticFeedback.mediumImpact();
+    _dismissKeyboard();
 
     final messenger = ScaffoldMessenger.maybeOf(context);
-
     final id = item['identifier']!;
     final title = item['title'] ?? id;
     final mediatype = item['mediatype'] ?? '';
     final year = item['year'] ?? '';
 
-    FavoriteItem fav = FavoriteItem(
+    final fav = FavoriteItem(
       id: id,
       title: title,
       url: 'https://archive.org/details/$id',
@@ -626,6 +495,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
     final titleCtrl = TextEditingController(text: title);
     bool isSearching = false;
+    bool enrichEnabled = false; // local toggle
 
     final result = await showDialog<DialogResult>(
       context: context,
@@ -635,195 +505,226 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             builder:
                 (context, setDialogState) => AlertDialog(
                   title: const Text('Options'),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      ListTile(
-                        leading: const Icon(Icons.favorite_border),
-                        title: const Text('Add to Favourites'),
-                        subtitle: Text('Add "$title" to a folder'),
-                        onTap:
-                            () => Navigator.pop(ctx, DialogResult.addToFolder),
-                      ),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Add to Favourites
+                        ListTile(
+                          leading: const Icon(Icons.favorite_border),
+                          title: const Text('Add to Favourites'),
+                          subtitle: Text('Add "$title" to a folder'),
+                          onTap:
+                              () =>
+                                  Navigator.pop(ctx, DialogResult.addToFolder),
+                        ),
 
-                      if (mediatype.toLowerCase().contains('video') ||
-                          mediatype == 'movies')
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const SizedBox(height: 12),
-                            const Text(
-                              'Generate Thumbnail from TMDb',
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 8),
-                            TextField(
-                              controller: titleCtrl,
-                              decoration: InputDecoration(
-                                hintText: 'Enter movie/TV title',
-                                border: const OutlineInputBorder(),
-                                suffixIcon:
-                                    isSearching
-                                        ? const Padding(
-                                          padding: EdgeInsets.all(12),
-                                          child: SizedBox(
-                                            width: 16,
-                                            height: 16,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          ),
-                                        )
-                                        : IconButton(
-                                          icon: const Icon(Icons.search),
-                                          onPressed:
-                                              isSearching
-                                                  ? null
-                                                  : () async {
-                                                    final query =
-                                                        titleCtrl.text.trim();
-                                                    if (query.isEmpty) {
-                                                      messenger?.showSnackBar(
-                                                        const SnackBar(
-                                                          content: Text(
-                                                            'Please enter a title',
-                                                          ),
-                                                          backgroundColor:
-                                                              Colors.orange,
-                                                        ),
-                                                      );
-                                                      return;
-                                                    }
+                        const Divider(height: 16),
 
-                                                    setDialogState(
-                                                      () => isSearching = true,
-                                                    );
+                        // Enrich Metadata Toggle
+                        SwitchListTile(
+                          value: enrichEnabled,
+                          onChanged: (v) async {
+                            setDialogState(() => enrichEnabled = v);
+                            if (v) {
+                              final updated = Map<String, String>.from(item);
+                              try {
+                                await ThumbnailService().enrichItemWithTmdb(
+                                  updated,
+                                );
 
-                                                    List<String> candidates =
-                                                        const [];
-                                                    try {
-                                                      candidates =
-                                                          await _gatherPosterCandidates(
-                                                            query: query,
-                                                            id: id,
-                                                            mediatype:
-                                                                mediatype,
-                                                            year:
-                                                                year.isNotEmpty
-                                                                    ? year
-                                                                    : null,
-                                                          );
-                                                    } catch (e) {
-                                                      messenger?.showSnackBar(
-                                                        SnackBar(
-                                                          content: Text(
-                                                            'Search failed: $e',
-                                                          ),
-                                                          backgroundColor:
-                                                              Colors.red,
-                                                        ),
-                                                      );
-                                                    } finally {
-                                                      if (ctx.mounted) {
-                                                        setDialogState(
-                                                          () =>
-                                                              isSearching =
-                                                                  false,
-                                                        );
-                                                      }
-                                                    }
+                                final idx = _items.indexWhere(
+                                  (i) => i['identifier'] == id,
+                                );
+                                if (idx != -1 && mounted && !_isDisposed) {
+                                  setState(() => _items[idx] = updated);
+                                }
 
-                                                    if (candidates.isEmpty) {
-                                                      messenger?.showSnackBar(
-                                                        const SnackBar(
-                                                          content: Text(
-                                                            'No thumbnails found',
-                                                          ),
-                                                          backgroundColor:
-                                                              Colors.orange,
-                                                        ),
-                                                      );
-                                                      return;
-                                                    }
+                                messenger?.showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Metadata enriched!'),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                              } catch (_) {
+                                messenger?.showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Failed to enrich metadata'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                          title: const Text('Enrich Metadata'),
+                          subtitle: const Text(
+                            'Pull title, year, description, and poster from TMDb',
+                          ),
+                        ),
 
-                                                    final chosen =
-                                                        await _choosePoster(
-                                                          candidates,
-                                                          title:
-                                                              'Pick a thumbnail for "$title"',
-                                                        );
-                                                    if (chosen == null) return;
+                        const Divider(height: 16),
 
-                                                    fav = fav.copyWith(
-                                                      thumb: chosen,
-                                                    );
-                                                    await FavoritesService
-                                                        .instance
-                                                        .updateThumbForId(
-                                                          id,
-                                                          chosen,
-                                                        );
-
-                                                    final idx = _items
-                                                        .indexWhere(
-                                                          (i) =>
-                                                              i['identifier'] ==
-                                                              id,
-                                                        );
-                                                    if (idx != -1 && mounted) {
-                                                      setState(
-                                                        () =>
-                                                            _items[idx]['thumb'] =
-                                                                chosen,
-                                                      );
-                                                    }
-
-                                                    await ThumbOverrideService
-                                                        .instance
-                                                        .set(id, chosen);
-
-                                                    messenger?.showSnackBar(
-                                                      SnackBar(
-                                                        content: const Text(
-                                                          'Thumbnail updated!',
-                                                        ),
-                                                        backgroundColor:
-                                                            Colors.green,
-                                                        action: SnackBarAction(
-                                                          label: 'View',
-                                                          onPressed:
-                                                              () => launchUrl(
-                                                                Uri.parse(
-                                                                  chosen,
-                                                                ),
-                                                              ),
-                                                        ),
-                                                      ),
-                                                    );
-
-                                                    if (ctx.mounted) {
-                                                      Navigator.pop(
-                                                        ctx,
-                                                        DialogResult
-                                                            .generateThumb,
-                                                      );
-                                                    }
-                                                  },
-                                        ),
+                        // TMDb Thumbnail Generator (Video/Movies only)
+                        if (mediatype.toLowerCase().contains('video') ||
+                            mediatype == 'movies')
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Generate Thumbnail from TMDb',
+                                style: TextStyle(fontWeight: FontWeight.bold),
                               ),
-                            ),
-                            if (year.isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Text(
-                                  'Year: $year',
-                                  style: Theme.of(context).textTheme.bodySmall,
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: titleCtrl,
+                                decoration: InputDecoration(
+                                  hintText: 'Enter movie/TV title',
+                                  border: const OutlineInputBorder(),
+                                  suffixIcon:
+                                      isSearching
+                                          ? const Padding(
+                                            padding: EdgeInsets.all(12),
+                                            child: SizedBox(
+                                              width: 16,
+                                              height: 16,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          )
+                                          : IconButton(
+                                            icon: const Icon(Icons.search),
+                                            onPressed:
+                                                isSearching
+                                                    ? null
+                                                    : () async {
+                                                      final query =
+                                                          titleCtrl.text.trim();
+                                                      if (query.isEmpty) {
+                                                        messenger?.showSnackBar(
+                                                          const SnackBar(
+                                                            content: Text(
+                                                              'Please enter a title',
+                                                            ),
+                                                            backgroundColor:
+                                                                Colors.orange,
+                                                          ),
+                                                        );
+                                                        return;
+                                                      }
+
+                                                      setDialogState(
+                                                        () =>
+                                                            isSearching = true,
+                                                      );
+
+                                                      try {
+                                                        final chosen =
+                                                            await ThumbnailService()
+                                                                .choosePosterRich(
+                                                                  ctx,
+                                                                  query,
+                                                                  year:
+                                                                      year.isNotEmpty
+                                                                          ? year
+                                                                          : null,
+                                                                  currentTitle:
+                                                                      title,
+                                                                );
+
+                                                        if (chosen == null)
+                                                          return;
+
+                                                        await FavoritesService
+                                                            .instance
+                                                            .updateThumbForId(
+                                                              id,
+                                                              chosen,
+                                                            );
+
+                                                        final idx = _items
+                                                            .indexWhere(
+                                                              (i) =>
+                                                                  i['identifier'] ==
+                                                                  id,
+                                                            );
+                                                        if (idx != -1 &&
+                                                            mounted &&
+                                                            !_isDisposed) {
+                                                          setState(
+                                                            () =>
+                                                                _items[idx]['thumb'] =
+                                                                    chosen,
+                                                          );
+                                                        }
+
+                                                        await ThumbOverrideService
+                                                            .instance
+                                                            .set(id, chosen);
+
+                                                        messenger?.showSnackBar(
+                                                          SnackBar(
+                                                            content: const Text(
+                                                              'Thumbnail updated!',
+                                                            ),
+                                                            backgroundColor:
+                                                                Colors.green,
+                                                            action: SnackBarAction(
+                                                              label: 'View',
+                                                              onPressed:
+                                                                  () => launchUrl(
+                                                                    Uri.parse(
+                                                                      chosen,
+                                                                    ),
+                                                                  ),
+                                                            ),
+                                                          ),
+                                                        );
+
+                                                        if (ctx.mounted) {
+                                                          Navigator.pop(
+                                                            ctx,
+                                                            DialogResult
+                                                                .generateThumb,
+                                                          );
+                                                        }
+                                                      } catch (e) {
+                                                        messenger?.showSnackBar(
+                                                          SnackBar(
+                                                            content: Text(
+                                                              'Search failed: $e',
+                                                            ),
+                                                            backgroundColor:
+                                                                Colors.red,
+                                                          ),
+                                                        );
+                                                      } finally {
+                                                        if (ctx.mounted) {
+                                                          setDialogState(
+                                                            () =>
+                                                                isSearching =
+                                                                    false,
+                                                          );
+                                                        }
+                                                      }
+                                                    },
+                                          ),
                                 ),
                               ),
-                          ],
-                        ),
-                    ],
+                              if (year.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Text(
+                                    'Year: $year',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ),
+                            ],
+                          ),
+                      ],
+                    ),
                   ),
                   actions: [
                     TextButton(
@@ -837,24 +738,25 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
     titleCtrl.dispose();
 
-    if (result == DialogResult.addToFolder) {
+    if (result == DialogResult.addToFolder && context.mounted && !_isDisposed) {
       final folder = await showAddToFavoritesDialog(context, item: fav);
-      if (folder != null && context.mounted) {
+      if (folder != null) {
         await svc.addToFolder(folder, fav);
       }
     }
   }
 
   Future<void> _openItem(Map<String, String> item) async {
+    if (_isDisposed) return;
     final id = item['identifier']!;
     HapticFeedback.selectionClick();
+    _dismissKeyboard();
 
     try {
-      final resp = await http.get(
-        Uri.parse('https://archive.org/metadata/$id'),
-        headers: _HEADERS,
-      );
-      if (!mounted) return;
+      final resp = await _client
+          .get(Uri.parse('https://archive.org/metadata/$id'), headers: _HEADERS)
+          .timeout(_netTimeout);
+      if (!mounted || _isDisposed) return;
 
       if (resp.statusCode != 200) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -901,18 +803,16 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               fileName: name,
             );
 
-            if (!mounted) return;
+            if (!mounted || _isDisposed) return;
 
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder:
-                    (_) => PdfViewerScreen(
-                      url: fileUrl,
-                      filenameHint: name,
-                      identifier: id,
-                      title: item['title'] ?? id,
-                    ),
+            Navigator.of(context).push(
+              _sharedAxisRoute(
+                PdfViewerScreen(
+                  url: fileUrl,
+                  filenameHint: name,
+                  identifier: id,
+                  title: item['title'] ?? id,
+                ),
               ),
             );
             return;
@@ -924,15 +824,14 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                   .cast<Map<String, String>>()
                   .toList();
 
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder:
-                  (_) => ArchiveItemScreen(
-                    title: item['title'] ?? id,
-                    identifier: id,
-                    files: pdfList,
-                  ),
+          if (!mounted || _isDisposed) return;
+          Navigator.of(context).push(
+            _sharedAxisRoute(
+              ArchiveItemScreen(
+                title: item['title'] ?? id,
+                identifier: id,
+                files: pdfList,
+              ),
             ),
           );
           return;
@@ -970,14 +869,11 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             kind: 'image',
           );
 
-          if (!mounted) return;
+          if (!mounted || _isDisposed) return;
 
-          Navigator.push(
+          Navigator.of(
             context,
-            MaterialPageRoute(
-              builder: (_) => ImageViewerScreen(imageUrls: imageUrls),
-            ),
-          );
+          ).push(_sharedAxisRoute(ImageViewerScreen(imageUrls: imageUrls)));
           return;
         }
 
@@ -1009,18 +905,16 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             fileName: name,
           );
 
-          if (!mounted) return;
+          if (!mounted || _isDisposed) return;
 
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder:
-                  (_) => TextViewerScreen(
-                    url: fileUrl,
-                    filenameHint: name,
-                    identifier: id,
-                    title: item['title'] ?? id,
-                  ),
+          Navigator.of(context).push(
+            _sharedAxisRoute(
+              TextViewerScreen(
+                url: fileUrl,
+                filenameHint: name,
+                identifier: id,
+                title: item['title'] ?? id,
+              ),
             ),
           );
           return;
@@ -1039,7 +933,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             Uri.parse('https://archive.org/details/$id'),
             mode: LaunchMode.externalApplication,
           );
-          if (!ok) {
+          if (!ok && mounted && !_isDisposed) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text('No files found and cannot open on web.'),
@@ -1049,14 +943,14 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           return;
         }
 
+        if (!mounted || _isDisposed) return;
         Navigator.of(context).push(
-          MaterialPageRoute(
-            builder:
-                (_) => ArchiveItemScreen(
-                  title: item['title'] ?? id,
-                  identifier: id,
-                  files: justNames,
-                ),
+          _sharedAxisRoute(
+            ArchiveItemScreen(
+              title: item['title'] ?? id,
+              identifier: id,
+              files: justNames,
+            ),
           ),
         );
         return;
@@ -1108,17 +1002,16 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             kind: 'audio',
           );
 
-          if (!mounted) return;
+          if (!mounted || _isDisposed) return;
 
           Navigator.of(context).push(
-            MaterialPageRoute(
-              builder:
-                  (_) => ArchiveItemScreen(
-                    title: item['title'] ?? id,
-                    identifier: id,
-                    files: audioList,
-                    parentThumbUrl: item['thumb'], // ← add this
-                  ),
+            _sharedAxisRoute(
+              ArchiveItemScreen(
+                title: item['title'] ?? id,
+                identifier: id,
+                files: audioList,
+                parentThumbUrl: item['thumb'],
+              ),
             ),
           );
           return;
@@ -1158,6 +1051,8 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       }
 
       if (videoFiles.isNotEmpty) {
+        if (!mounted || _isDisposed) return;
+        _dismissKeyboard();
         await _openVideoChooser(context, id, item['title'] ?? id, videoFiles);
         return;
       }
@@ -1175,7 +1070,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           Uri.parse('https://archive.org/details/$id'),
           mode: LaunchMode.externalApplication,
         );
-        if (!ok) {
+        if (!ok && mounted && !_isDisposed) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('No files found and cannot open on web.'),
@@ -1185,18 +1080,18 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         return;
       }
 
+      if (!mounted || _isDisposed) return;
       Navigator.of(context).push(
-        MaterialPageRoute(
-          builder:
-              (_) => ArchiveItemScreen(
-                title: item['title'] ?? id,
-                identifier: id,
-                files: justNames,
-              ),
+        _sharedAxisRoute(
+          ArchiveItemScreen(
+            title: item['title'] ?? id,
+            identifier: id,
+            files: justNames,
+          ),
         ),
       );
     } catch (_) {
-      if (!this.mounted) return;
+      if (!mounted || _isDisposed) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Failed to open item (network).')),
       );
@@ -1204,22 +1099,24 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   }
 
   Future<void> _openCollectionSmart(String collectionId, String title) async {
-    final children = await _fetchCollectionChildren(collectionId);
-    if (!mounted) return;
+    final children = await _fetchCollectionChildren(
+      collectionId,
+      enrich: false,
+    );
+    if (!mounted || _isDisposed) return;
 
     if (children.isEmpty) {
       Navigator.of(context).push(
-        MaterialPageRoute(
-          builder:
-              (_) => CollectionDetailScreen(
-                categoryName: title,
-                collectionName: collectionId,
-                filters: {
-                  'sfwOnly': _sfwOnly,
-                  'favouritesOnly': _favouritesOnly,
-                  'downloadedOnly': _downloadedOnly,
-                },
-              ),
+        _sharedAxisRoute(
+          CollectionDetailScreen(
+            categoryName: title,
+            collectionName: collectionId,
+            filters: {
+              'sfwOnly': _sfwOnly,
+              'favouritesOnly': _favouritesOnly,
+              'downloadedOnly': _downloadedOnly,
+            },
+          ),
         ),
       );
       return;
@@ -1237,17 +1134,16 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               onSeeAll: () {
                 Navigator.of(context).pop();
                 Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder:
-                        (_) => CollectionDetailScreen(
-                          categoryName: title,
-                          collectionName: collectionId,
-                          filters: {
-                            'sfwOnly': _sfwOnly,
-                            'favouritesOnly': _favouritesOnly,
-                            'downloadedOnly': _downloadedOnly,
-                          },
-                        ),
+                  _sharedAxisRoute(
+                    CollectionDetailScreen(
+                      categoryName: title,
+                      collectionName: collectionId,
+                      filters: {
+                        'sfwOnly': _sfwOnly,
+                        'favouritesOnly': _favouritesOnly,
+                        'downloadedOnly': _downloadedOnly,
+                      },
+                    ),
                   ),
                 );
               },
@@ -1260,24 +1156,24 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     }
 
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder:
-            (_) => CollectionDetailScreen(
-              categoryName: title,
-              collectionName: collectionId,
-              filters: {
-                'sfwOnly': _sfwOnly,
-                'favouritesOnly': _favouritesOnly,
-                'downloadedOnly': _downloadedOnly,
-              },
-            ),
+      _sharedAxisRoute(
+        CollectionDetailScreen(
+          categoryName: title,
+          collectionName: collectionId,
+          filters: {
+            'sfwOnly': _sfwOnly,
+            'favouritesOnly': _favouritesOnly,
+            'downloadedOnly': _downloadedOnly,
+          },
+        ),
       ),
     );
   }
 
   Future<List<Map<String, String>>> _fetchCollectionChildren(
-    String collectionId,
-  ) async {
+    String collectionId, {
+    bool enrich = false,
+  }) async {
     final q = 'collection:$collectionId';
     final flParams = <String>[
       'identifier',
@@ -1296,10 +1192,12 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         'rows=$_CHILD_ROWS&page=1&output=json';
 
     try {
-      final resp = await http.get(Uri.parse(url), headers: _HEADERS);
+      final resp = await _client
+          .get(Uri.parse(url), headers: _HEADERS)
+          .timeout(_netTimeout);
       if (resp.statusCode != 200) return const <Map<String, String>>[];
 
-      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      final data = await _decodeJson(resp.body);
       final List docs = (data['response']?['docs'] as List?) ?? const [];
 
       String flat(dynamic v) {
@@ -1438,7 +1336,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               children: [
                 Expanded(
                   child: TextField(
+                    key: const ValueKey('collection_search_field'),
                     controller: _searchCtrl,
+                    enabled: !_isDisposed,
                     onSubmitted: (_) => _runSearch(),
                     textInputAction: TextInputAction.search,
                     decoration: InputDecoration(
@@ -1546,28 +1446,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     );
   }
 
-  Future<bool> _openWithInstalledApp(Uri uri) async {
-    try {
-      if (Platform.isAndroid) {
-        final intent = AndroidIntent(
-          action: 'action_view',
-          data: uri.toString(),
-          type: 'video/*',
-          flags: <int>[Flag.FLAG_ACTIVITY_NEW_TASK],
-        );
-        await intent.launch();
-        return true;
-      } else {
-        return await launchUrl(
-          uri,
-          mode: LaunchMode.externalNonBrowserApplication,
-        );
-      }
-    } catch (_) {
-      return false;
-    }
-  }
-
   Widget _buildChips(ColorScheme cs) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -1580,14 +1458,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             selected: _sfwOnly,
             onSelected: (v) {
               setState(() => _sfwOnly = v);
-              _fetch(reset: true);
-            },
-          ),
-          FilterChip(
-            label: const Text('Favourites'),
-            selected: _favouritesOnly,
-            onSelected: (v) {
-              setState(() => _favouritesOnly = v);
               _fetch(reset: true);
             },
           ),
@@ -1644,60 +1514,69 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       );
     }
 
-    if (_viewMode == ViewMode.list) {
-      return ListView.builder(
-        controller: _scrollCtrl,
-        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-        itemCount: _items.length,
-        itemBuilder: (context, index) {
-          final it = _items[index];
-          return _ListTileCard(
-            id: it['identifier']!,
-            title: it['title']!,
-            subtitle:
-                it['creator']?.isNotEmpty == true
-                    ? it['creator']!
-                    : it['subject'] ?? '',
-            mediatype: it['mediatype'] ?? '',
-            year: it['year'],
-            thumb: it['thumb'],
-            onTap: () => _openItem(it),
-            onLongPress: () => _handleLongPressItem(it),
-          );
-        },
-      );
-    }
-
-    return LayoutBuilder(
-      builder: (context, c) {
-        final cross = adaptiveCrossAxisCount(c.maxWidth);
-        return GridView.builder(
-          controller: _scrollCtrl,
-          padding: const EdgeInsets.all(8),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: cross,
-            childAspectRatio: 0.72,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
-          ),
-          itemCount: _items.length,
-          itemBuilder: (context, index) {
-            final it = _items[index];
-            final isCollection =
-                (it['mediatype'] ?? '').toLowerCase() == 'collection';
-            return _GridCard(
-              id: it['identifier']!,
-              title: it['title']!,
-              mediatype: it['mediatype'] ?? '',
-              year: it['year'],
-              thumb: it['thumb'],
-              highlight: isCollection,
-              onTap: () => _openItem(it),
-              onLongPress: () => _handleLongPressItem(it),
+    // ---------- NEW: animate grid <-> list ----------
+    final Widget view =
+        (_viewMode == ViewMode.list)
+            ? ListView.builder(
+              key: const ValueKey('list'),
+              controller: _scrollCtrl,
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+              itemCount: _items.length,
+              itemBuilder: (context, index) {
+                final it = _items[index];
+                return _ListTileCard(
+                  id: it['identifier']!,
+                  title: it['title']!,
+                  subtitle:
+                      it['creator']?.isNotEmpty == true
+                          ? it['creator']!
+                          : it['subject'] ?? '',
+                  mediatype: it['mediatype'] ?? '',
+                  year: it['year'],
+                  thumb: it['thumb'],
+                  onTap: () => _openItem(it),
+                  onLongPress: () => _handleLongPressItem(it),
+                );
+              },
+            )
+            : LayoutBuilder(
+              key: const ValueKey('grid'),
+              builder: (context, c) {
+                final cross = adaptiveCrossAxisCount(c.maxWidth);
+                return GridView.builder(
+                  controller: _scrollCtrl,
+                  padding: const EdgeInsets.all(8),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: cross,
+                    childAspectRatio: 0.72,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                  ),
+                  itemCount: _items.length,
+                  itemBuilder: (context, index) {
+                    final it = _items[index];
+                    final isCollection =
+                        (it['mediatype'] ?? '').toLowerCase() == 'collection';
+                    return _GridCard(
+                      id: it['identifier']!,
+                      title: it['title']!,
+                      mediatype: it['mediatype'] ?? '',
+                      year: it['year'],
+                      thumb: it['thumb'],
+                      highlight: isCollection,
+                      onTap: () => _openItem(it),
+                      onLongPress: () => _handleLongPressItem(it),
+                    );
+                  },
+                );
+              },
             );
-          },
-        );
-      },
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 250),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      child: KeyedSubtree(key: ValueKey(_viewMode), child: view),
     );
   }
 
@@ -1707,7 +1586,8 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     String title,
     List<Map<String, dynamic>> videoFiles,
   ) async {
-    // Build nice display + urls for each candidate file
+    if (_isDisposed) return;
+
     final options =
         videoFiles.map<Map<String, String>>((f) {
           final name = (f['name'] ?? '').toString();
@@ -1739,51 +1619,57 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
     if (!mounted) return;
 
+    _dismissKeyboard();
+
     await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       showDragHandle: true,
       builder: (ctx) {
+        final height = MediaQuery.of(ctx).size.height * 0.85;
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                title: Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: height),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  title: Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: const Text('Choose a file and how to open it'),
                 ),
-                subtitle: const Text('Choose a file and how to open it'),
-              ),
-              const Divider(height: 1),
-              Flexible(
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: options.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (_, i) {
-                    final op = options[i];
-                    final icon =
-                        op['fmt']!.contains('mp4') ||
-                                op['fmt']!.contains('h.264')
-                            ? Icons.movie
-                            : Icons.video_file;
+                const Divider(height: 1),
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: options.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, i) {
+                      final op = options[i];
+                      final icon =
+                          op['fmt']!.contains('mp4') ||
+                                  op['fmt']!.contains('h.264')
+                              ? Icons.movie
+                              : Icons.video_file;
 
-                    return ListTile(
-                      leading: Icon(icon),
-                      title: Text(
-                        op['pretty']!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        '${(op['fmt'] ?? '').toUpperCase()}  •  ${op['res']}  •  ${op['size']}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      onTap: () async {
-                        final uri = Uri.parse(op['url']!);
+                      return ListTile(
+                        leading: Icon(icon),
+                        title: Text(
+                          op['pretty']!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          '${(op['fmt'] ?? '').toUpperCase()}  •  ${op['res']}  •  ${op['size']}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () async {
+                          if (!mounted || _isDisposed) return;
 
-                        if (context.mounted) {
+                          final uri = Uri.parse(op['url']!);
+
                           final fmtUp = (op['fmt'] ?? '').toUpperCase();
                           final size = op['size'] ?? '';
                           final pretty = op['pretty'] ?? '';
@@ -1794,109 +1680,105 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                               content: Text(' $pretty • $fmtUp • $size'),
                             ),
                           );
-                        }
 
-                        // Dialog with three choices
-                        final choice = await showDialog<String>(
-                          context: context,
-                          builder:
-                              (dCtx) => AlertDialog(
-                                title: const Text('Open video'),
-                                content: const Text(
-                                  'Choose how you’d like to open this video:',
+                          final choice = await showDialog<String>(
+                            context: context,
+                            builder:
+                                (dCtx) => AlertDialog(
+                                  title: const Text('Open video'),
+                                  content: const SingleChildScrollView(
+                                    child: Text(
+                                      'Choose how you’d like to open this video:',
+                                    ),
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed:
+                                          () => Navigator.pop(dCtx, 'browser'),
+                                      child: const Text('Browser'),
+                                    ),
+                                    TextButton(
+                                      onPressed:
+                                          () => Navigator.pop(dCtx, 'app'),
+                                      child: const Text('Installed app'),
+                                    ),
+                                    ElevatedButton(
+                                      onPressed:
+                                          () => Navigator.pop(dCtx, 'inapp'),
+                                      child: const Text('In-app player'),
+                                    ),
+                                  ],
                                 ),
-                                actions: [
-                                  TextButton(
-                                    onPressed:
-                                        () => Navigator.pop(dCtx, 'browser'),
-                                    child: const Text('Browser'),
-                                  ),
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(dCtx, 'app'),
-                                    child: const Text('Installed app'),
-                                  ),
-                                  ElevatedButton(
-                                    onPressed:
-                                        () => Navigator.pop(dCtx, 'inapp'),
-                                    child: const Text('In-app player'),
-                                  ),
-                                ],
+                          );
+                          if (choice == null) return;
+
+                          if (mounted) Navigator.pop(context); // close sheet
+
+                          final name = op['name'] as String;
+                          final videoUrl =
+                              'https://archive.org/download/$identifier/$name';
+
+                          await RecentProgressService.instance.updateVideo(
+                            id: identifier,
+                            title: title,
+                            thumb: archiveThumbUrl(identifier),
+                            percent: 0.0,
+                            fileUrl: videoUrl,
+                            fileName: name,
+                          );
+
+                          String mime = 'video/*';
+                          final fmt =
+                              (op['fmt'] ?? '').toString().toLowerCase();
+                          final nameLower = name.toLowerCase();
+                          if (fmt.contains('webm') ||
+                              nameLower.endsWith('.webm')) {
+                            mime = 'video/webm';
+                          } else if (fmt.contains('mp4') ||
+                              fmt.contains('h.264') ||
+                              nameLower.endsWith('.mp4') ||
+                              nameLower.endsWith('.m4v')) {
+                            mime = 'video/mp4';
+                          } else if (fmt.contains('matroska') ||
+                              nameLower.endsWith('.mkv')) {
+                            mime = 'video/x-matroska';
+                          } else if (nameLower.endsWith('.m3u8')) {
+                            mime = 'application/vnd.apple.mpegurl';
+                          }
+
+                          if (!mounted || _isDisposed) return;
+                          _dismissKeyboard();
+
+                          if (choice == 'inapp') {
+                            Navigator.of(context).push(
+                              _sharedAxisRoute(
+                                VideoPlayerScreen(
+                                  url: videoUrl,
+                                  file: null,
+                                  identifier: identifier,
+                                  title: title,
+                                ),
                               ),
-                        );
-                        if (choice == null) return;
-
-                        // Close the bottom sheet before navigating/launching
-                        if (mounted) Navigator.pop(context);
-
-                        final name = op['name'] as String;
-                        final videoUrl =
-                            'https://archive.org/download/$identifier/$name';
-
-                        // Save progress entry (for recents)
-                        await RecentProgressService.instance.updateVideo(
-                          id: identifier,
-                          title: title,
-                          thumb: archiveThumbUrl(identifier),
-                          percent: 0.0,
-                          fileUrl: videoUrl,
-                          fileName: name,
-                        );
-
-                        // Determine MIME (for external opens)
-                        String mime = 'video/*';
-                        final fmt = (op['fmt'] ?? '').toString().toLowerCase();
-                        final nameLower = name.toLowerCase();
-                        if (fmt.contains('webm') ||
-                            nameLower.endsWith('.webm')) {
-                          mime = 'video/webm';
-                        } else if (fmt.contains('mp4') ||
-                            fmt.contains('h.264') ||
-                            nameLower.endsWith('.mp4') ||
-                            nameLower.endsWith('.m4v')) {
-                          mime = 'video/mp4';
-                        } else if (fmt.contains('matroska') ||
-                            nameLower.endsWith('.mkv')) {
-                          mime = 'video/x-matroska';
-                        } else if (nameLower.endsWith('.m3u8')) {
-                          mime = 'application/vnd.apple.mpegurl';
-                        }
-
-                        // Branches
-                        if (choice == 'inapp') {
-                          if (!mounted) return;
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder:
-                                  (_) => VideoPlayerScreen(
-                                    url: videoUrl,
-                                    file: null,
-                                    identifier: identifier,
-                                    title: title,
-                                  ),
-                            ),
-                          );
-                          return;
-                        }
-
-                        if (choice == 'browser') {
-                          await launchUrl(
-                            uri,
-                            mode: LaunchMode.externalApplication,
-                          );
-                        } else {
-                          await openExternallyWithChooser(
-                            url: uri.toString(),
-                            mimeType: mime,
-                            chooserTitle: 'Open with',
-                          );
-                        }
-                      },
-                    );
-                  },
+                            );
+                          } else if (choice == 'browser') {
+                            await launchUrl(
+                              uri,
+                              mode: LaunchMode.externalApplication,
+                            );
+                          } else {
+                            await openExternallyWithChooser(
+                              url: uri.toString(),
+                              mimeType: mime,
+                              chooserTitle: 'Open with',
+                            );
+                          }
+                        },
+                      );
+                    },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -1904,7 +1786,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   }
 }
 
-// ---------- UI helpers ----------
+// ---------- UI helpers (unchanged, except imports) ----------
 class _CenteredSpinner extends StatelessWidget {
   final String label;
   const _CenteredSpinner({required this.label});
@@ -2269,11 +2151,10 @@ class _CollectionQuickPick extends StatelessWidget {
                     onTap: () async {
                       final id = it['identifier'] as String;
                       final title =
-                          (it['title'] as String?)?.trim().isNotEmpty == true
+                          (it['title'])?.trim().isNotEmpty == true
                               ? it['title'] as String
                               : id;
-                      final mt =
-                          (it['mediatype'] as String? ?? '').toLowerCase();
+                      final mt = (it['mediatype'] ?? '').toLowerCase();
                       final kind =
                           mt.contains('pdf')
                               ? 'pdf'

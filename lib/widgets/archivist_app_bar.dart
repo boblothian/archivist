@@ -1,7 +1,6 @@
-// lib/archivist_app_bar.dart
+// lib/widgets/archivist_app_bar.dart
 import 'package:flutter/material.dart';
 
-/// A clean, theme-aware AppBar with your logo
 class ArchivistAppBar extends StatelessWidget implements PreferredSizeWidget {
   const ArchivistAppBar({super.key});
 
@@ -10,20 +9,28 @@ class ArchivistAppBar extends StatelessWidget implements PreferredSizeWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    final logo =
+        isDark
+            ? 'assets/images/archivist_banner_logo_inverted.png'
+            : 'assets/images/archivist_banner_logo.png';
+
+    // Use custom color only in light mode
+    final backgroundColor =
+        isDark ? theme.colorScheme.surface : const Color(0xFFF6F5F2);
+
     return AppBar(
-      // Respect theme → transparent or surface
-      backgroundColor:
-          theme.appBarTheme.backgroundColor ?? theme.colorScheme.surface,
+      backgroundColor: backgroundColor,
       surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      scrolledUnderElevation: 0,
       centerTitle: true,
-      title: Image.asset(
-        'assets/images/archivist_banner_logo.png',
-        height: 75,
-        fit: BoxFit.contain,
-        // Optional: auto-tint logo for dark mode
-        // color: isDark ? Colors.white : null,
+      elevation: 0,
+      title: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 300),
+        child: Image.asset(
+          logo,
+          key: ValueKey(logo),
+          height: 56,
+          fit: BoxFit.contain,
+        ),
       ),
     );
   }

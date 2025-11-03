@@ -44,6 +44,7 @@ dependencies:
   flutter_inappwebview: ^6.0.0
   permission_handler: ^12.0.1
   media_cast_dlna: ^0.2.0
+  animations: ^2.0.11
 
 dev_dependencies:
   flutter_test:
@@ -64,6 +65,7 @@ flutter:
   assets:
     - assets/images/logo.png
     - assets/images/archivist_banner_logo.png
+    - assets/images/archivist_banner_logo_inverted.png
 
 flutter_native_splash:
   color: "#000000"

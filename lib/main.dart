@@ -21,14 +21,45 @@ const kDarkBg = Color(0xFF0E0E12);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await FavoritesService.instance.init();
-  await RecentProgressService.instance.init();
 
+  // Construct theme controller first (don’t load yet)
   final themeController = ThemeController();
-  await themeController.load();
 
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  // Launch immediately — heavy init runs after first frame
   runApp(ArchivistRoot(themeController: themeController));
+
+  // Do heavy work AFTER first frame so iOS doesn’t watchdog-kill us.
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    await _safeStartup(themeController);
+  });
+}
+
+/// Handles all delayed startup tasks safely.
+Future<void> _safeStartup(ThemeController themeController) async {
+  try {
+    await FavoritesService.instance.init().timeout(const Duration(seconds: 3));
+  } catch (_) {
+    // Optional: log error or reset if corrupted
+  }
+
+  try {
+    await RecentProgressService.instance.init().timeout(
+      const Duration(seconds: 3),
+    );
+  } catch (_) {
+    // Optional: log error
+  }
+
+  try {
+    await themeController.load().timeout(const Duration(seconds: 2));
+  } catch (_) {
+    // Optional: fallback to default theme
+  }
+
+  // Safe to apply immersive mode after UI exists
+  try {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  } catch (_) {}
 }
 
 ThemeData _buildTheme(Brightness brightness) {
@@ -48,8 +79,6 @@ ThemeData _buildTheme(Brightness brightness) {
     useMaterial3: true,
     colorScheme: scheme,
     scaffoldBackgroundColor: scheme.background,
-
-    // Ensure all text uses onSurface by default
     textTheme: inter
         .merge(merri)
         .apply(bodyColor: scheme.onSurface, displayColor: scheme.onSurface),
@@ -57,16 +86,14 @@ ThemeData _buildTheme(Brightness brightness) {
       bodyColor: scheme.onPrimary,
       displayColor: scheme.onPrimary,
     ),
-
     iconTheme: IconThemeData(color: scheme.onSurface),
     appBarTheme: const AppBarTheme(
-      backgroundColor: Colors.transparent, // let ArchivistAppBar decide
+      backgroundColor: Colors.transparent,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       scrolledUnderElevation: 0,
       centerTitle: true,
     ),
-
     listTileTheme: ListTileThemeData(
       iconColor: scheme.onSurfaceVariant,
       textColor: scheme.onSurface,
@@ -74,7 +101,6 @@ ThemeData _buildTheme(Brightness brightness) {
         color: scheme.onSurface.withOpacity(0.75),
       ),
     ),
-
     chipTheme: ChipThemeData(
       backgroundColor: scheme.surfaceVariant,
       selectedColor: scheme.primaryContainer,
@@ -82,7 +108,6 @@ ThemeData _buildTheme(Brightness brightness) {
       secondaryLabelStyle: TextStyle(color: scheme.onSurface),
       iconTheme: IconThemeData(color: scheme.onSurface),
     ),
-
     cardTheme: CardThemeData(
       elevation: 1,
       margin: const EdgeInsets.all(8),
@@ -90,7 +115,6 @@ ThemeData _buildTheme(Brightness brightness) {
       clipBehavior: Clip.antiAlias,
       color: scheme.surface,
     ),
-
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         foregroundColor: scheme.onPrimary,
@@ -110,7 +134,6 @@ ThemeData _buildTheme(Brightness brightness) {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     ),
-
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: scheme.surface,
@@ -126,7 +149,6 @@ ThemeData _buildTheme(Brightness brightness) {
       labelStyle: TextStyle(color: scheme.onSurfaceVariant),
       hintStyle: TextStyle(color: scheme.onSurfaceVariant),
     ),
-
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: scheme.surface,
       indicatorColor: scheme.primaryContainer,
@@ -134,7 +156,6 @@ ThemeData _buildTheme(Brightness brightness) {
       iconTheme: WidgetStateProperty.all(
         IconThemeData(color: scheme.onSurface),
       ),
-      // Always show labels + set color
       labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
       labelTextStyle: WidgetStateProperty.all(
         GoogleFonts.inter(
@@ -159,7 +180,7 @@ class ArchivistRoot extends StatelessWidget {
         animation: themeController,
         builder: (_, __) {
           return CollectionsHomeScope(
-            notifier: CollectionsHomeState()..load(),
+            notifier: CollectionsHomeState(), // Construct only; load later
             child: MaterialApp(
               title: 'Archivist',
               debugShowCheckedModeBanner: false,
@@ -172,7 +193,7 @@ class ArchivistRoot extends StatelessWidget {
                 splashIconSize: 300,
                 duration: 2500,
                 splashTransition: SplashTransition.fadeTransition,
-                nextScreen: RootShell(key: RootShell.rootKey),
+                nextScreen: const RootShell(),
               ),
             ),
           );
@@ -184,9 +205,9 @@ class ArchivistRoot extends StatelessWidget {
 
 /// Bottom-nav shell
 class RootShell extends StatefulWidget {
+  const RootShell({super.key});
   static final GlobalKey<_RootShellState> rootKey =
       GlobalKey<_RootShellState>();
-  const RootShell({super.key});
   static void switchToTab(int index) => rootKey.currentState?._select(index);
   @override
   State<RootShell> createState() => _RootShellState();
@@ -195,6 +216,19 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   final _keys = List.generate(5, (_) => GlobalKey<NavigatorState>());
   int _current = 0;
+  bool _ranLoad = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Run heavy home load after UI exists
+    if (!_ranLoad) {
+      _ranLoad = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        CollectionsHomeScope.of(context)?.load();
+      });
+    }
+  }
 
   void _select(int i) {
     if (_current == i) {
@@ -225,7 +259,7 @@ class _RootShellState extends State<RootShell> {
           if (nav?.canPop() ?? false) nav!.pop();
         },
         child: Scaffold(
-          appBar: const ArchivistAppBar(), // ← FROM archivist_app_bar.dart
+          appBar: const ArchivistAppBar(),
           body: IndexedStack(
             index: _current,
             children: [
@@ -263,8 +297,7 @@ class _RootShellState extends State<RootShell> {
               ],
             ),
             child: NavigationBar(
-              backgroundColor:
-                  Colors.transparent, // let our container handle the color
+              backgroundColor: Colors.transparent,
               indicatorColor: Theme.of(context).colorScheme.primaryContainer,
               selectedIndex: _current,
               onDestinationSelected: _select,

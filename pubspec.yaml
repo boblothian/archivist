@@ -69,11 +69,11 @@ flutter:
 
 flutter_native_splash:
   color: "#000000"
-  image: assets/images/mdlogo.png              # pre-Android 12 & iOS
-  android_gravity: center                    # Android <12 positioning
-  ios_content_mode: scaleAspectFit          # iOS can appear larger
+  image: assets/images/mdlogo.png
+  ios_content_mode: scaleAspectFit   # ensures it fits within screen bounds
+  android_gravity: center
   android_12:
-    image: assets/images/mdlogo.png       # Android 12 icon (size fixed by OS)
+    image: assets/images/mdlogo.png
     color: "#000000"
 
 # Single, root-level config for launcher icons (do NOT nest under `flutter:`)

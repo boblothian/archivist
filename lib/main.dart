@@ -4,6 +4,7 @@ import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:archivereader/widgets/archivist_app_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart'; // ← STEP 1
 import 'package:google_fonts/google_fonts.dart';
 
 import 'collection_search_screen.dart';
@@ -18,6 +19,14 @@ import 'settings_screen.dart';
 const _seed = Color(0xFF0B1644);
 const kLightBg = Color(0xFFF6F5F2);
 const kDarkBg = Color(0xFF0E0E12);
+
+/// STEP 1: Provide a single secure-storage instance using safe iOS accessibility.
+/// Use this from your services instead of creating FlutterSecureStorage directly.
+class SecureStorage {
+  static const instance = FlutterSecureStorage(
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,6 +46,8 @@ Future<void> main() async {
 /// Handles all delayed startup tasks safely.
 Future<void> _safeStartup(ThemeController themeController) async {
   try {
+    // If your Favorites/Recent services use secure storage,
+    // ensure they use SecureStorage.instance internally.
     await FavoritesService.instance.init().timeout(const Duration(seconds: 3));
   } catch (_) {
     // Optional: log error or reset if corrupted

@@ -18,6 +18,7 @@
 
     <key>NSMetricKitOptOut</key>
     <true/>
+
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
@@ -35,7 +36,7 @@
     <key>CFBundleVersion</key>
     <string>1</string>
 
-    <!-- ✨ Allow checking/launching popular video player apps by scheme -->
+    <!-- Allow checking/launching popular video player apps by scheme -->
     <key>LSApplicationQueriesSchemes</key>
     <array>
         <!-- VLC -->
@@ -52,9 +53,28 @@
         <string>ftps</string>
     </array>
 
-    <!-- Usual Flutter/iOS keys -->
+    <!-- Launch screen only (no main storyboard) -->
     <key>UILaunchStoryboardName</key>
     <string>LaunchScreen</string>
+
+    <!-- Flutter scene configuration (iOS 13+) -->
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key>
+        <false/>
+        <key>UISceneConfigurations</key>
+        <dict>
+            <key>UIWindowSceneSessionRoleApplication</key>
+            <array>
+                <dict>
+                    <key>UISceneConfigurationName</key>
+                    <string>Default Configuration</string>
+                    <key>UISceneDelegateClassName</key>
+                    <string>FlutterSceneDelegate</string>
+                </dict>
+            </array>
+        </dict>
+    </dict>
 
     <key>UISupportedInterfaceOrientations</key>
     <array>

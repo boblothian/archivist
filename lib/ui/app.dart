@@ -2,7 +2,7 @@
 import 'package:archivereader/collection_store.dart';
 import 'package:archivereader/theme/app_theme.dart';
 import 'package:archivereader/theme/theme_controller.dart';
-import 'package:archivereader/ui/splash/app_splash_screen.dart';
+import 'package:archivereader/ui/shell/root_shell.dart'; // <-- ADD THIS
 import 'package:flutter/material.dart';
 
 class ArchivistApp extends StatelessWidget {
@@ -23,9 +23,9 @@ class ArchivistApp extends StatelessWidget {
             theme: AppTheme.light,
             darkTheme: AppTheme.dark,
             themeMode: themeController.mode,
-            home: const AppSplashScreen(),
+            // USE ROOT SHELL → full nav bar + tabs
+            home: const RootShell(),
             builder: (context, child) {
-              // Wrap in a widget that listens to store changes
               return _CollectionStoreListener(child: child!);
             },
           );
@@ -35,7 +35,7 @@ class ArchivistApp extends StatelessWidget {
   }
 }
 
-// Hidden listener – rebuilds when store notifies
+// Listener stays exactly the same
 class _CollectionStoreListener extends StatefulWidget {
   final Widget child;
   const _CollectionStoreListener({required this.child});

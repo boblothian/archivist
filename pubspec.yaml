@@ -68,13 +68,13 @@ flutter:
     - assets/images/archivist_banner_logo_inverted.png
 
 flutter_native_splash:
-  color: "#000000"
-  image: assets/images/mdlogo.png
+  color: "#FFFFFF"
+  image: assets/images/logo.png
   ios_content_mode: scaleAspectFit   # ensures it fits within screen bounds
   android_gravity: center
   android_12:
-    image: assets/images/mdlogo.png
-    color: "#000000"
+    image: assets/images/logo_splash_a12.png
+    color: "#FFFFFF"
 
 # Single, root-level config for launcher icons (do NOT nest under `flutter:`)
 flutter_launcher_icons:
@@ -83,7 +83,7 @@ flutter_launcher_icons:
   # You can start with a single source image; add adaptive layers later if you want.
   image_path: assets/images/app_icon_1024.png
   adaptive_icon_foreground: assets/images/app_icon_fg.png
-  adaptive_icon_background: "#000000"
+  adaptive_icon_background: "#FFFFFF"
   # If you already have these files and want adaptive icons, uncomment the next two lines:
   # adaptive_icon_background: "#FFFFFF"
   # adaptive_icon_foreground: assets/icon/fg.png

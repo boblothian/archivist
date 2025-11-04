@@ -12,11 +12,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../net.dart';
+import '../utils.dart'; // For downloadWithCache
 import 'cbz_viewer_screen.dart';
 import 'image_viewer_screen.dart'; // for image galleries
-import 'net.dart';
 import 'pdf_viewer_screen.dart';
-import 'utils.dart'; // For downloadWithCache
 
 class ArchiveItemScreen extends StatefulWidget {
   final String title;

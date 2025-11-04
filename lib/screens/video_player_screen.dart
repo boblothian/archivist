@@ -8,7 +8,7 @@ import 'package:flutter_chrome_cast/flutter_chrome_cast.dart';
 import 'package:media_cast_dlna/media_cast_dlna.dart'; // NEW: DLNA
 import 'package:video_player/video_player.dart';
 
-import 'net.dart';
+import '../net.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
   final File? file;

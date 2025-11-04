@@ -1,14 +1,13 @@
 // collection_detail_screen.dart
 import 'dart:convert';
-import 'dart:math' as math;
 
 import 'package:animations/animations.dart'; // <-- NEW
+import 'package:archivereader/screens/video_player_screen.dart';
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:archivereader/services/thumb_override_service.dart';
 import 'package:archivereader/services/thumbnail_service.dart';
 import 'package:archivereader/ui/capsule_theme.dart';
-import 'package:archivereader/video_player_screen.dart';
 import 'package:archivereader/widgets/capsule_thumb_card.dart';
 import 'package:archivereader/widgets/favourite_add_dialogue.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -18,13 +17,13 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../net.dart';
+import '../utils/archive_helpers.dart';
+import '../utils/external_launch.dart';
 import 'archive_item_screen.dart';
 import 'image_viewer_screen.dart';
-import 'net.dart';
 import 'pdf_viewer_screen.dart';
 import 'text_viewer_screen.dart';
-import 'utils/archive_helpers.dart';
-import 'utils/external_launch.dart';
 
 // TOP-LEVEL ENUM — MUST BE HERE
 enum DialogResult { addToFolder, generateThumb }
@@ -253,28 +252,31 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   }
 
   // Background smart-thumb upgrader (bounded concurrency) respecting user overrides
+  /// Background smart-thumb upgrader (bounded concurrency) respecting user overrides
   Future<void> _unblockSmartThumbs(
     List<Map<String, String>> batch, {
     required int currentToken,
   }) async {
     const int kMaxConcurrent = 6;
 
-    // Helper: run one item
-    Future<void> _process(Map<String, String> m) async {
+    // Collect all changes in memory first
+    final Map<int, String> thumbUpdates = {};
+
+    // Helper: process one item
+    Future<void> _process(Map<String, String> item) async {
       try {
         if (!mounted || _isDisposed || currentToken != _requestToken) return;
 
-        final id = m['identifier']!;
-        final mediatype = m['mediatype'] ?? '';
-        final title = m['title'] ?? id;
-        final year = m['year'] ?? '';
+        final id = item['identifier']!;
+        final mediatype = item['mediatype'] ?? '';
+        final title = item['title'] ?? id;
+        final year = item['year'] ?? '';
 
-        // If thumb is already NOT the deterministic placeholder (e.g., user override applied),
-        // skip generating a smart thumb.
-        final currentThumb = (m['thumb'] ?? '').trim();
+        // Skip if already upgraded or overridden
+        final currentThumb = (item['thumb'] ?? '').trim();
         final placeholder = archiveThumbUrl(id);
         if (currentThumb.isNotEmpty && currentThumb != placeholder) {
-          return; // already overridden or upgraded
+          return;
         }
 
         final smart = await ThumbnailService().getSmartThumb(
@@ -285,29 +287,41 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         );
 
         if (!mounted || _isDisposed || currentToken != _requestToken) return;
-        if (smart.isEmpty || smart == m['thumb']) return;
+        if (smart.isEmpty || smart == currentThumb) return;
 
-        m['thumb'] = smart;
-
+        // Find index in _items
         final idx = _items.indexWhere((e) => e['identifier'] == id);
-        if (idx != -1 && mounted && !_isDisposed) {
-          setState(() {
-            _items[idx] = Map<String, String>.from(_items[idx])
-              ..['thumb'] = smart;
-          });
+        if (idx != -1) {
+          thumbUpdates[idx] = smart;
         }
       } catch (_) {
-        // ignore per-item failures
+        // Ignore per-item failures
       }
     }
 
     // Process in chunks to bound concurrency
     for (int i = 0; i < batch.length; i += kMaxConcurrent) {
-      if (!mounted || _isDisposed || currentToken != _requestToken) return;
+      if (!mounted || _isDisposed || currentToken != _requestToken) {
+        return;
+      }
 
-      final end = math.min(i + kMaxConcurrent, batch.length);
+      final end = (i + kMaxConcurrent).clamp(0, batch.length);
       final slice = batch.sublist(i, end);
+
       await Future.wait(slice.map(_process));
+    }
+
+    // === SINGLE setState UPDATE ===
+    if (thumbUpdates.isNotEmpty &&
+        mounted &&
+        !_isDisposed &&
+        currentToken == _requestToken) {
+      setState(() {
+        thumbUpdates.forEach((idx, smartThumb) {
+          _items[idx] = Map<String, String>.from(_items[idx])
+            ..['thumb'] = smartThumb;
+        });
+      });
     }
   }
 

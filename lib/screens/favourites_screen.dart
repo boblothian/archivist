@@ -8,9 +8,9 @@ import 'package:archivereader/widgets/capsule_thumb_card.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'archive_api.dart';
-import 'utils/archive_helpers.dart';
-import 'utils/external_launch.dart';
+import '../archive_api.dart';
+import '../utils/archive_helpers.dart';
+import '../utils/external_launch.dart';
 
 class FavoritesScreen extends StatelessWidget {
   final String? initialFolder;

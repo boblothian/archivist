@@ -9,7 +9,7 @@ import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'utils.dart';
+import '../utils.dart';
 
 class PdfViewerScreen extends StatefulWidget {
   final File? file;

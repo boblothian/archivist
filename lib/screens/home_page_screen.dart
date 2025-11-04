@@ -3,23 +3,23 @@ import 'dart:async';
 import 'dart:io';
 
 // Project imports
-import 'package:archivereader/pdf_viewer_screen.dart';
+import 'package:archivereader/screens/pdf_viewer_screen.dart';
+import 'package:archivereader/screens/text_viewer_screen.dart';
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/favourites_service_compat.dart';
 import 'package:archivereader/services/filters.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:archivereader/services/thumb_override_service.dart';
-import 'package:archivereader/text_viewer_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../utils/archive_helpers.dart';
+import '../utils/external_launch.dart';
 import 'cbz_viewer_screen.dart';
 import 'collection_detail_screen.dart';
-import 'utils/archive_helpers.dart';
-import 'utils/external_launch.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Top-level helper: resolve best poster using ThumbOverrideService

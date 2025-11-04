@@ -6,15 +6,41 @@ class RecentProgressService {
   RecentProgressService._();
   static final instance = RecentProgressService._();
 
-  late Box _box;
+  // Lazy-loaded box
+  Box? _box;
+  bool _isInitializing = false;
 
   // REACTIVE NOTIFIER
   final version = ValueNotifier<int>(0);
   void _notify() => version.value++;
 
+  /// Ensures the box is open — safe to call multiple times
+  Future<Box> _ensureBox() async {
+    if (_box != null && _box!.isOpen) return _box!;
+    if (_isInitializing) {
+      // Wait for ongoing init
+      await Future.doWhile(
+        () => _isInitializing,
+      ).timeout(const Duration(seconds: 5));
+      return _box!;
+    }
+
+    _isInitializing = true;
+    try {
+      _box = await Hive.openBox('recent_progress');
+      return _box!;
+    } catch (e) {
+      debugPrint('RecentProgressService: Failed to open box: $e');
+      rethrow;
+    } finally {
+      _isInitializing = false;
+    }
+  }
+
+  /// Initialize — now just a no-op (Hive.initFlutter() done in main.dart)
   Future<void> init() async {
-    _box = await Hive.openBox('recent_progress');
-    _notify();
+    // No-op: box is opened lazily on first use
+    // This allows startup to continue even if Hive isn't ready
   }
 
   /// First open — merge with existing
@@ -26,8 +52,9 @@ class RecentProgressService {
     String? fileUrl,
     String? fileName,
   }) async {
+    final box = await _ensureBox();
     final now = DateTime.now().millisecondsSinceEpoch;
-    final prev = Map<String, dynamic>.from(_box.get(id) ?? {});
+    final prev = Map<String, dynamic>.from(box.get(id) ?? {});
     prev.addAll({
       'id': id,
       'title': title,
@@ -37,7 +64,7 @@ class RecentProgressService {
       if (fileUrl != null) 'fileUrl': fileUrl,
       if (fileName != null) 'fileName': fileName,
     });
-    await _box.put(id, prev);
+    await box.put(id, prev);
     _notify();
   }
 
@@ -51,8 +78,9 @@ class RecentProgressService {
     String? fileUrl,
     String? fileName,
   }) async {
+    final box = await _ensureBox();
     final now = DateTime.now().millisecondsSinceEpoch;
-    await _box.put(id, {
+    await box.put(id, {
       'id': id,
       'title': title,
       'thumb': thumb,
@@ -68,7 +96,7 @@ class RecentProgressService {
     _notify();
   }
 
-  /// EPUB progress – FIXED: uses Hive, same key
+  /// EPUB progress
   Future<void> updateEpub({
     required String id,
     required String title,
@@ -80,8 +108,9 @@ class RecentProgressService {
     String? fileUrl,
     String? fileName,
   }) async {
+    final box = await _ensureBox();
     final now = DateTime.now().millisecondsSinceEpoch;
-    await _box.put(id, {
+    await box.put(id, {
       'id': id,
       'title': title,
       'thumb': thumb,
@@ -99,14 +128,15 @@ class RecentProgressService {
   }
 
   Future<void> remove(String id) async {
-    await _box.delete(id);
+    final box = await _ensureBox();
+    await box.delete(id);
     _notify();
   }
 
   Map<String, dynamic>? get lastViewed {
-    final values = _box.values;
-    if (values.isEmpty) return null;
-    final list = values.map((v) => Map<String, dynamic>.from(v)).toList();
+    final box = _box;
+    if (box == null || box.isEmpty) return null;
+    final list = box.values.map((v) => Map<String, dynamic>.from(v)).toList();
     list.sort(
       (a, b) => (b['lastOpenedAt'] ?? 0).compareTo(a['lastOpenedAt'] ?? 0),
     );
@@ -114,7 +144,9 @@ class RecentProgressService {
   }
 
   List<Map<String, dynamic>> recent({int limit = 10}) {
-    final list = _box.values.map((v) => Map<String, dynamic>.from(v)).toList();
+    final box = _box;
+    if (box == null || box.isEmpty) return [];
+    final list = box.values.map((v) => Map<String, dynamic>.from(v)).toList();
     list.sort(
       (a, b) => (b['lastOpenedAt'] ?? 0).compareTo(a['lastOpenedAt'] ?? 0),
     );
@@ -122,7 +154,9 @@ class RecentProgressService {
   }
 
   Map<String, dynamic>? getById(String id) {
-    final v = _box.get(id);
+    final box = _box;
+    if (box == null) return null;
+    final v = box.get(id);
     return v == null ? null : Map<String, dynamic>.from(v);
   }
 
@@ -135,8 +169,9 @@ class RecentProgressService {
     required String fileUrl,
     required String fileName,
   }) async {
+    final box = await _ensureBox();
     final now = DateTime.now().millisecondsSinceEpoch;
-    await _box.put(id, {
+    await box.put(id, {
       'id': id,
       'title': title,
       'thumb': thumb,

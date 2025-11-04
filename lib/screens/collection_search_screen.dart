@@ -1,19 +1,13 @@
-// lib/collection_search_screen.dart
+// lib/screens/collection_search_screen.dart
 import 'dart:async';
 
+import 'package:archivereader/collection_store.dart'; // ← singleton store
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
-import 'archive_api.dart';
+import '../archive_api.dart';
 import 'collection_detail_screen.dart';
-import 'collection_store.dart';
-
-/// Helper – safe access to the store
-CollectionsHomeState? collectionsHomeMaybeOf(BuildContext context) =>
-    context
-        .dependOnInheritedWidgetOfExactType<CollectionsHomeScope>()
-        ?.notifier;
 
 class CollectionSearchScreen extends StatefulWidget {
   const CollectionSearchScreen({Key? key}) : super(key: key);
@@ -99,25 +93,23 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
     );
   }
 
-  /// Pin / unpin a collection using the shared store
+  /// Pin / unpin using the singleton store
   Future<void> _togglePin(String identifier) async {
-    final store = collectionsHomeMaybeOf(context);
-    if (store == null) return; // safety – the scope should always be present
+    final store = CollectionStore(); // direct singleton access
 
-    if (store.isPinned(identifier)) {
+    if (store.pinnedIds.contains(identifier)) {
       await store.unpin(identifier);
     } else {
       await store.pin(identifier);
     }
 
-    // UI updates automatically because CollectionsHomeState is a ChangeNotifier
-    // but we also force a rebuild here to be 100% safe
+    // UI updates automatically because the store is a ChangeNotifier
     if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
-    final pins = collectionsHomeMaybeOf(context);
+    final store = CollectionStore(); // current pin state
 
     return Scaffold(
       appBar: AppBar(
@@ -193,7 +185,7 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
                         separatorBuilder: (_, __) => const SizedBox(height: 8),
                         itemBuilder: (_, i) {
                           final c = _results[i];
-                          final pinned = pins?.isPinned(c.identifier) ?? false;
+                          final pinned = store.pinnedIds.contains(c.identifier);
 
                           return _CollectionCard(
                             collection: c,

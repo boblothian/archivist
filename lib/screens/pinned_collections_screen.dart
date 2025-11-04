@@ -1,12 +1,16 @@
+// lib/screens/pinned_collections_screen.dart
+import 'package:archivereader/collection_store.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
+import 'package:archivereader/ui/shell/root_shell.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
-import 'archive_api.dart';
+import '../archive_api.dart';
 import 'collection_detail_screen.dart';
-import 'collection_store.dart';
-import 'main.dart'; // For RootShell.switchToTab
 
+/// ---------------------------------------------------------------
+/// Pinned Collections – uses the singleton CollectionStore
+/// ---------------------------------------------------------------
 class PinnedCollectionsScreen extends StatefulWidget {
   const PinnedCollectionsScreen({super.key});
 
@@ -16,68 +20,76 @@ class PinnedCollectionsScreen extends StatefulWidget {
 }
 
 class _PinnedCollectionsScreenState extends State<PinnedCollectionsScreen> {
-  CollectionsHomeState? _store; // ← Nullable now
+  // Local UI state
   List<ArchiveCollection> _collections = [];
   bool _loading = true;
   String? _error;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // ← SAFE: Context is ready, inherited widgets are available
-    final store = CollectionsHomeScope.of(context);
-    if (_store != store) {
-      _store?.removeListener(_onStoreChanged);
-      _store = store;
-      _store!.addListener(_onStoreChanged);
-      _loadPinnedCollections();
-    }
+  void initState() {
+    super.initState();
+    // Listen to the singleton store – it notifies on every change
+    CollectionStore().addListener(_onStoreChanged);
+    _loadPinnedCollections();
   }
 
   @override
   void dispose() {
-    _store?.removeListener(_onStoreChanged);
+    CollectionStore().removeListener(_onStoreChanged);
     super.dispose();
   }
 
+  // -----------------------------------------------------------------
+  // Re‑load whenever the store changes (pin/unpin)
+  // -----------------------------------------------------------------
   void _onStoreChanged() {
     if (mounted) _loadPinnedCollections();
   }
 
+  // -----------------------------------------------------------------
+  // Load the pinned identifiers → fetch each collection from Archive.org
+  // -----------------------------------------------------------------
   Future<void> _loadPinnedCollections() async {
-    if (_store == null) return;
+    final newIds = CollectionStore().pinnedIds;
 
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    // Build new list
+    final List<ArchiveCollection> loaded =
+        newIds.map((id) {
+          return ArchiveCollection(
+            identifier: id,
+            title: id,
+            thumbnailUrl: 'https://archive.org/services/img/$id',
+            downloads: 0,
+            description: '',
+          );
+        }).toList();
 
-    try {
-      final List<ArchiveCollection> loaded = [];
-      for (final id in _store!.pins) {
-        try {
-          final col = await ArchiveApi.getCollection(id);
-          loaded.add(col);
-        } catch (_) {
-          // Skip failed
-        }
-      }
-      if (mounted) {
-        setState(() {
-          _collections = loaded;
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = 'Failed to load pinned collections';
-          _loading = false;
-        });
+    // Only update UI if something changed
+    if (!mounted) return;
+
+    final hasChanged =
+        loaded.length != _collections.length ||
+        !loaded.every(
+          (c) => _collections.any((e) => e.identifier == c.identifier),
+        );
+
+    if (hasChanged) {
+      setState(() {
+        _collections = loaded;
+        _loading = false;
+        _error = null;
+      });
+    } else {
+      // No change → just stop loading
+      if (_loading) {
+        setState(() => _loading = false);
       }
     }
   }
 
+  // -----------------------------------------------------------------
+  // Open a collection (record recent progress + push detail screen)
+  // -----------------------------------------------------------------
   Future<void> _openCollection(ArchiveCollection c) async {
     await RecentProgressService.instance.touch(
       id: c.identifier,
@@ -88,7 +100,6 @@ class _PinnedCollectionsScreenState extends State<PinnedCollectionsScreen> {
     );
 
     if (!mounted) return;
-
     Navigator.of(context).push(
       MaterialPageRoute(
         builder:
@@ -100,21 +111,30 @@ class _PinnedCollectionsScreenState extends State<PinnedCollectionsScreen> {
     );
   }
 
+  // -----------------------------------------------------------------
+  // Unpin + undo snack‑bar
+  // -----------------------------------------------------------------
   Future<void> _unpinCollection(String id, int index) async {
     final removed = _collections[index];
-    setState(() {
-      _collections.removeAt(index);
-    });
+    setState(() => _collections.removeAt(index));
 
     final snack = SnackBar(
       content: Text('Unpinned "${removed.title ?? removed.identifier}"'),
-      action: SnackBarAction(label: 'Undo', onPressed: () => _store?.pin(id)),
+      action: SnackBarAction(
+        label: 'Undo',
+        onPressed: () {
+          CollectionStore().pin(id);
+        },
+      ),
     );
     ScaffoldMessenger.of(context).showSnackBar(snack);
 
-    await _store?.unpin(id);
+    await CollectionStore().unpin(id);
   }
 
+  // -----------------------------------------------------------------
+  // UI
+  // -----------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
     final isEmpty = _collections.isEmpty && !_loading && _error == null;
@@ -152,6 +172,9 @@ class _PinnedCollectionsScreenState extends State<PinnedCollectionsScreen> {
     );
   }
 
+  // -----------------------------------------------------------------
+  // Empty state
+  // -----------------------------------------------------------------
   Widget _buildEmptyState() {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
@@ -178,7 +201,7 @@ class _PinnedCollectionsScreenState extends State<PinnedCollectionsScreen> {
         ),
         const SizedBox(height: 32),
         OutlinedButton.icon(
-          onPressed: () => RootShell.switchToTab(1),
+          onPressed: () => RootShell.switchToTab(1), // Search tab
           icon: const Icon(Icons.search),
           label: const Text('Search Collections'),
         ),
@@ -186,6 +209,9 @@ class _PinnedCollectionsScreenState extends State<PinnedCollectionsScreen> {
     );
   }
 
+  // -----------------------------------------------------------------
+  // Error state
+  // -----------------------------------------------------------------
   Widget _buildErrorState() {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
@@ -211,6 +237,9 @@ class _PinnedCollectionsScreenState extends State<PinnedCollectionsScreen> {
   }
 }
 
+/// ---------------------------------------------------------------
+/// Tile for a single pinned collection
+/// ---------------------------------------------------------------
 class _PinnedCollectionTile extends StatelessWidget {
   final ArchiveCollection collection;
   final VoidCallback onTap;

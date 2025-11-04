@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart'; // ← NEW: for page resume
 
-import 'utils.dart';
+import '../utils.dart';
 
 class CbzViewerScreen extends StatefulWidget {
   final File? cbzFile;

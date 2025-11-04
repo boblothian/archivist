@@ -3,92 +3,122 @@
 <plist version="1.0">
 <dict>
 
-    <!-- Local Network permission (iOS 14+) for bonsoir/casting/DLNA -->
-    <key>NSLocalNetworkUsageDescription</key>
-    <string>This app discovers and connects to devices on your local network.</string>
+	<!-- App metadata -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>ArchiveReader</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>archivereader</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
 
-    <!-- Bonjour service types you may browse/advertise -->
-    <key>NSBonjourServices</key>
-    <array>
-        <string>_googlecast._tcp</string>
-        <string>_airplay._tcp</string>
-        <string>_http._tcp</string>
-        <string>_dlna._tcp</string>
-    </array>
+	<!-- Launch screen (Flutter) -->
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
 
-    <key>NSMetricKitOptOut</key>
-    <true/>
+	<!-- Flutter scene setup (prevents splash hang / relaunch crash) -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>FlutterSceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
 
-    <key>CFBundleDevelopmentRegion</key>
-    <string>$(DEVELOPMENT_LANGUAGE)</string>
-    <key>CFBundleDisplayName</key>
-    <string>Archivist</string>
-    <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
-    <key>CFBundleIdentifier</key>
-    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>archivist</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.0.1</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
+	<!-- Required for Flutter -->
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
 
-    <!-- Allow checking/launching popular video player apps by scheme -->
-    <key>LSApplicationQueriesSchemes</key>
-    <array>
-        <!-- VLC -->
-        <string>vlc</string>
-        <string>vlc-x-callback</string>
-        <!-- Infuse -->
-        <string>infuse</string>
-        <string>infuse-pro</string>
-        <!-- NPlayer -->
-        <string>nplayer</string>
-        <string>nplayer-http</string>
-        <!-- Generic (used by some players) -->
-        <string>ftp</string>
-        <string>ftps</string>
-    </array>
+	<!-- Supported device orientations -->
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
 
-    <!-- Launch screen only (no main storyboard) -->
-    <key>UILaunchStoryboardName</key>
-    <string>LaunchScreen</string>
+	<!-- Network permissions -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>This app discovers and connects to devices on your local network for media sharing and casting.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_googlecast._tcp</string>
+		<string>_airplay._tcp</string>
+		<string>_http._tcp</string>
+		<string>_dlna._tcp</string>
+	</array>
 
-    <!-- Flutter scene configuration (iOS 13+) -->
-    <key>UIApplicationSceneManifest</key>
-    <dict>
-        <key>UIApplicationSupportsMultipleScenes</key>
-        <false/>
-        <key>UISceneConfigurations</key>
-        <dict>
-            <key>UIWindowSceneSessionRoleApplication</key>
-            <array>
-                <dict>
-                    <key>UISceneConfigurationName</key>
-                    <string>Default Configuration</string>
-                    <key>UISceneDelegateClassName</key>
-                    <string>FlutterSceneDelegate</string>
-                </dict>
-            </array>
-        </dict>
-    </dict>
+	<!-- Permissions for web content and camera (ML Kit / InAppWebView) -->
+	<key>NSCameraUsageDescription</key>
+	<string>This app may use the camera for scanning or ML features.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app may use the microphone when needed for casting or media playback.</string>
 
-    <key>UISupportedInterfaceOrientations</key>
-    <array>
-        <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationPortraitUpsideDown</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
-        <string>UIInterfaceOrientationLandscapeRight</string>
-    </array>
+	<!-- Needed for file and download access (flutter_inappwebview, open_filex) -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app may access your photo library for saving or opening media files.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>This app needs access to your documents to save and read downloaded files.</string>
 
-    <key>CADisableMinimumFrameDurationOnPhone</key>
-    <true/>
-    <key>UIApplicationSupportsIndirectInputEvents</key>
-    <true/>
-    <key>UIStatusBarHidden</key>
-    <false/>
+	<!-- Query schemes for external apps (url_launcher / DLNA / Chromecast) -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<!-- VLC -->
+		<string>vlc</string>
+		<string>vlc-x-callback</string>
+		<!-- Infuse -->
+		<string>infuse</string>
+		<string>infuse-pro</string>
+		<!-- NPlayer -->
+		<string>nplayer</string>
+		<string>nplayer-http</string>
+		<!-- Generic -->
+		<string>ftp</string>
+		<string>ftps</string>
+		<!-- Web and custom URL schemes -->
+		<string>http</string>
+		<string>https</string>
+		<string>mailto</string>
+		<string>file</string>
+		<string>chrome</string>
+		<string>googlechrome</string>
+	</array>
+
+	<!-- Performance and rendering -->
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+
+	<!-- Hide or show status bar -->
+	<key>UIStatusBarHidden</key>
+	<false/>
+
+	<!-- Opt out of MetricKit analytics -->
+	<key>NSMetricKitOptOut</key>
+	<true/>
+
 </dict>
 </plist>

@@ -9,10 +9,10 @@ import 'ui/app.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  await Hive.initFlutter();
+
   final themeController = ThemeController();
   runApp(ArchivistApp(themeController: themeController));
-
-  await Hive.initFlutter();
 
   WidgetsBinding.instance.addPostFrameCallback((_) async {
     await _safeStartup(themeController);

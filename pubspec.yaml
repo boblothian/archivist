@@ -82,7 +82,7 @@ flutter_launcher_icons:
   ios: true
   # You can start with a single source image; add adaptive layers later if you want.
   image_path: assets/images/app_icon_1024.png
-  adaptive_icon_foreground: assets/images/app_icon_1024.png
+  adaptive_icon_foreground: assets/images/app_icon_fg.png
   adaptive_icon_background: "#000000"
   # If you already have these files and want adaptive icons, uncomment the next two lines:
   # adaptive_icon_background: "#FFFFFF"

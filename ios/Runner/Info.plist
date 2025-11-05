@@ -45,5 +45,42 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+
+	<!-- ============================================= -->
+	<!-- REQUIRED iOS CONFIGURATION (based on packages) -->
+	<!-- ============================================= -->
+
+	<!-- 1. Allow HTTP to archive.org (matches Android usesCleartextTraffic) -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>archive.org</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+
+	<!-- 2. Allow opening http/https links (required by url_launcher) -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>http</string>
+		<string>https</string>
+	</array>
+
+	<!-- 3. Local network access for Chromecast & DLNA (flutter_chrome_cast, media_cast_dlna) -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>This app discovers and connects to Chromecast and DLNA devices on your local network.</string>
+
+	<!-- 4. File access & sharing (open_filex, downloads) -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+
 </dict>
 </plist>

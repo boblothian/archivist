@@ -1,12 +1,12 @@
 // lib/screens/pinned_collections_screen.dart
 import 'package:archivereader/collection_store.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
-import 'package:archivereader/ui/shell/root_shell.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../archive_api.dart';
 import 'collection_detail_screen.dart';
+import 'collection_search_screen.dart';
 
 /// ---------------------------------------------------------------
 /// Pinned Collections – uses the singleton CollectionStore
@@ -201,7 +201,18 @@ class _PinnedCollectionsScreenState extends State<PinnedCollectionsScreen> {
         ),
         const SizedBox(height: 32),
         OutlinedButton.icon(
-          onPressed: () => RootShell.switchToTab(1), // Search tab
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder:
+                    (_) => CollectionSearchScreen(
+                      activateTrigger: ValueNotifier<bool>(
+                        true,
+                      ), // optional: auto-run empty search
+                    ),
+              ),
+            );
+          },
           icon: const Icon(Icons.search),
           label: const Text('Search Collections'),
         ),

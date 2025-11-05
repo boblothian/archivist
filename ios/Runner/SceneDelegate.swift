@@ -12,26 +12,24 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
         guard let windowScene = scene as? UIWindowScene else { return }
 
-        // Grab the **shared** engine from AppDelegate
+        // Re-use the **same** engine from AppDelegate
         let appDelegate = UIApplication.shared.delegate as! AppDelegate
         let flutterEngine = appDelegate.flutterEngine
 
-        // Create the Flutter VC with the shared engine
         let flutterViewController = FlutterViewController(engine: flutterEngine, nibName: nil, bundle: nil)
 
-        // Set up the window
         let window = UIWindow(windowScene: windowScene)
         window.rootViewController = flutterViewController
         self.window = window
         window.makeKeyAndVisible()
     }
 
-    // -------------------------------------------------
-    // Optional: forward lifecycle events to Flutter engine
-    // -------------------------------------------------
-    func sceneDidDisconnect(_ scene: UIScene) {}
-    func sceneDidBecomeActive(_ scene: UIScene) {}
-    func sceneWillResignActive(_ scene: UIScene) {}
-    func sceneWillEnterForeground(_ scene: UIScene) {}
-    func sceneDidEnterBackground(_ scene: UIScene) {}
+    // Optional: forward lifecycle to Flutter (helps with hot-reload)
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        (window?.rootViewController as? FlutterViewController)?.engine?.notifyAppIsResumed()
+    }
+
+    func sceneWillResignActive(_ scene: UIScene) {
+        (window?.rootViewController as? FlutterViewController)?.engine?.notifyAppIsInactive()
+    }
 }

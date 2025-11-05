@@ -77,10 +77,6 @@
 		<string>https</string>
 	</array>
 
-	<!-- 3. Local network access for Chromecast & DLNA (flutter_chrome_cast, media_cast_dlna) -->
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>This app discovers and connects to Chromecast and DLNA devices on your local network.</string>
-
 	<!-- 4. File access & sharing (open_filex, downloads) -->
 	<key>UIFileSharingEnabled</key>
 	<true/>

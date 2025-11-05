@@ -2,7 +2,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
-import '../archive_api.dart'; // FIXED: Correct import for fetchFilesForIdentifier
+import '../archive_api.dart';
 
 part 'favourites_service.g.dart';
 
@@ -10,26 +10,18 @@ part 'favourites_service.g.dart';
 class FavoriteItem extends HiveObject {
   @HiveField(0)
   final String id;
-
   @HiveField(1)
   final String title;
-
   @HiveField(2)
   final String? url;
-
   @HiveField(3)
   final String? thumb;
-
   @HiveField(4)
   final String? author;
-
   @HiveField(5)
   final String? mediatype;
-
   @HiveField(6)
   final List<String> formats;
-
-  // NEW: nullable list of downloadable files (safe for old data)
   @HiveField(7)
   final List<Map<String, String>>? files;
 
@@ -44,7 +36,6 @@ class FavoriteItem extends HiveObject {
     this.files,
   });
 
-  // Updated copyWith
   FavoriteItem copyWith({
     String? thumb,
     String? mediatype,
@@ -61,7 +52,6 @@ class FavoriteItem extends HiveObject {
     files: files ?? this.files,
   );
 
-  // Updated toJson
   Map<String, dynamic> toJson() => {
     'id': id,
     'title': title,
@@ -73,7 +63,6 @@ class FavoriteItem extends HiveObject {
     'files': files,
   };
 
-  // Updated fromJson
   factory FavoriteItem.fromJson(Map<String, dynamic> json) => FavoriteItem(
     id: json['id'] as String,
     title: json['title'] as String,
@@ -106,18 +95,25 @@ class FavoritesService {
   late Box _box;
 
   Future<void> init() async {
-    await Hive.initFlutter();
+    // Hive already initialised in main.dart → no redundant call
     if (!Hive.isAdapterRegistered(0)) {
       Hive.registerAdapter(FavoriteItemAdapter());
     }
 
     _box = await Hive.openBox(_boxName);
     await _migrateIfNeeded();
-    await _migrateOldFavorites(); // Auto-fix old items
+
+    // SAFE MIGRATION – never crash the app
+    try {
+      await _migrateOldFavorites();
+    } catch (e, s) {
+      debugPrint('Favorites migration failed (non-fatal): $e\n$s');
+    }
+
     _notify();
   }
 
-  // ─────────────────────── THUMBNAIL MAP ───────────────────────
+  // ------------------- THUMBNAILS -------------------
   Map<String, String> get _thumbMap {
     final raw = _box.get(_thumbsKey);
     if (raw is Map) return Map<String, String>.from(raw);
@@ -133,7 +129,6 @@ class FavoritesService {
   Future<void> updateThumbForId(String id, String newThumb) async {
     final thumbs = Map<String, String>.from(_thumbMap);
     if (thumbs[id] == newThumb) return;
-
     thumbs[id] = newThumb;
     await _saveThumbMap(thumbs);
 
@@ -152,7 +147,7 @@ class FavoritesService {
     _notify();
   }
 
-  // ─────────────────────── FOLDER DATA ───────────────────────
+  // ------------------- FOLDER DATA -------------------
   Map<String, List<FavoriteItem>> get _data {
     final dynamic raw = _box.get('folders') ?? _box.get('data');
     if (raw == null) return <String, List<FavoriteItem>>{};
@@ -188,8 +183,7 @@ class FavoritesService {
                     files:
                         (e['files'] as List?)
                             ?.map((f) => Map<String, String>.from(f as Map))
-                            .toList() ??
-                        null,
+                            .toList(),
                   ),
                 );
               }
@@ -227,7 +221,7 @@ class FavoritesService {
     }
   }
 
-  // ─────────────────────── AUTO-MIGRATE OLD FAVORITES ───────────────────────
+  // ------------------- SAFE MIGRATION -------------------
   Future<void> _migrateOldFavorites() async {
     final data = Map<String, List<FavoriteItem>>.from(_data);
     bool changed = false;
@@ -244,17 +238,16 @@ class FavoritesService {
             debugPrint('Migrated files for ${item.id}');
           } catch (e) {
             debugPrint('Failed to migrate files for ${item.id}: $e');
+            // keep entry – just no files
           }
         }
       }
     }
 
-    if (changed) {
-      await _save(data);
-    }
+    if (changed) await _save(data);
   }
 
-  // ─────────────────────── FOLDER OPERATIONS ───────────────────────
+  // ------------------- FOLDER OPS -------------------
   List<String> folders() {
     final names = _data.keys.toList();
     names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
@@ -285,7 +278,7 @@ class FavoritesService {
     if (data.remove(name) != null) await _save(data);
   }
 
-  // ─────────────────────── ITEM OPERATIONS ───────────────────────
+  // ------------------- ITEM OPS -------------------
   List<FavoriteItem> itemsIn(String folder) {
     final list = _data[folder] ?? const <FavoriteItem>[];
     return list.map((item) {
@@ -308,8 +301,6 @@ class FavoritesService {
     return res;
   }
 
-  // ─────────────────────── ADD WITH FILES (MAIN FIX) ───────────────────────
-  /// Adds a favorite and **fetches + caches files** immediately.
   Future<void> addFavoriteWithFiles({
     required String folder,
     required String id,
@@ -333,7 +324,6 @@ class FavoritesService {
       formats: formats,
     );
 
-    // Fetch files in background
     List<Map<String, String>> files = [];
     try {
       files = await ArchiveApi.fetchFilesForIdentifier(id);
@@ -363,9 +353,7 @@ class FavoritesService {
 
   Future<void> removeFromFolder(String folder, String id) async {
     final data = Map<String, List<FavoriteItem>>.from(_data);
-    final list = List<FavoriteItem>.from(
-      data[folder] ?? const <FavoriteItem>[],
-    );
+    final list = List<FavoriteItem>.from(data[folder] ?? const []);
     list.removeWhere((e) => e.id == id);
     if (list.isEmpty && folder != 'Favourites') {
       data.remove(folder);
@@ -384,7 +372,7 @@ class FavoritesService {
     return true;
   }
 
-  // ─────────────────────── PUBLIC HELPERS ───────────────────────
+  // ------------------- PUBLIC HELPERS -------------------
   List<FavoriteItem> get allItems {
     final seen = <String, FavoriteItem>{};
     for (final items in _data.values) {
@@ -422,9 +410,7 @@ class FavoritesService {
     bool removed = false;
     final folderNames = List<String>.from(data.keys);
     for (final folder in folderNames) {
-      final list = List<FavoriteItem>.from(
-        data[folder] ?? const <FavoriteItem>[],
-      );
+      final list = List<FavoriteItem>.from(data[folder] ?? const []);
       final before = list.length;
       list.removeWhere((e) => e.id == id);
       if (list.length < before) {

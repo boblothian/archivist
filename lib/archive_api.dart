@@ -7,9 +7,6 @@ import 'package:http/http.dart' as http;
 class ArchiveApi {
   static const String _host = 'archive.org';
 
-  // =================================================================
-  // SEARCH COLLECTIONS
-  // =================================================================
   static Future<List<ArchiveCollection>> searchCollections(
     String query, {
     int rows = 50,
@@ -60,14 +57,10 @@ class ArchiveApi {
       },
     );
 
-    print('Search URL: $uri');
+    debugPrint('Search URL: $uri');
     return _fetchAndParse(uri);
   }
 
-  // =================================================================
-  // FETCH SINGLE COLLECTION BY ID
-  // =================================================================
-  /// Fetches a single collection's metadata using archive.org/metadata
   static Future<ArchiveCollection> getCollection(String identifier) async {
     if (identifier.trim().isEmpty) {
       throw ArgumentError('Identifier cannot be empty');
@@ -75,7 +68,6 @@ class ArchiveApi {
 
     final id = identifier.trim();
     final uri = Uri.https(_host, '/metadata/$id');
-
     final resp = await http.get(uri, headers: _headers);
 
     if (resp.statusCode != 200) {
@@ -101,10 +93,6 @@ class ArchiveApi {
     }
   }
 
-  // =================================================================
-  // GENERIC METADATA FETCH
-  // =================================================================
-  /// Generic metadata fetch – works for **any** identifier (item or collection)
   static Future<Map<String, dynamic>> getMetadata(String identifier) async {
     if (identifier.trim().isEmpty) {
       throw ArgumentError('Identifier cannot be empty');
@@ -112,7 +100,6 @@ class ArchiveApi {
 
     final id = identifier.trim();
     final uri = Uri.https(_host, '/metadata/$id');
-
     final resp = await http.get(uri, headers: _headers);
     if (resp.statusCode != 200) {
       throw Exception('Failed to load metadata for "$id": ${resp.statusCode}');
@@ -121,20 +108,16 @@ class ArchiveApi {
     return jsonDecode(resp.body) as Map<String, dynamic>;
   }
 
-  /// Returns true if the identifier points to a *collection*
   static Future<bool> isCollection(String identifier) async {
     try {
       final meta = await getMetadata(identifier);
       final mediatype = _flat(meta['metadata']?['mediatype']) ?? '';
       return mediatype.toLowerCase() == 'collection';
     } catch (_) {
-      return false; // assume item on error
+      return false;
     }
   }
 
-  // =================================================================
-  // FETCH DOWNLOADABLE FILES FOR AN ITEM
-  // =================================================================
   static Future<List<Map<String, String>>> fetchFilesForIdentifier(
     String id,
   ) async {
@@ -144,7 +127,6 @@ class ArchiveApi {
     debugPrint('fetchFilesForIdentifier → metadata/$identifier');
 
     try {
-      // Use the stable Metadata API
       final meta = await getMetadata(identifier);
       final files = (meta['files'] as List?) ?? const [];
 
@@ -179,13 +161,10 @@ class ArchiveApi {
     }
   }
 
-  // =================================================================
-  // SHARED PARSING LOGIC
-  // =================================================================
   static Future<List<ArchiveCollection>> _fetchAndParse(Uri uri) async {
     final resp = await http.get(uri, headers: _headers);
     if (resp.statusCode != 200) {
-      print('HTTP ${resp.statusCode}: ${resp.body}');
+      debugPrint('HTTP ${resp.statusCode}: ${resp.body}');
       return [];
     }
 
@@ -198,7 +177,6 @@ class ArchiveApi {
               .map((d) {
                 final m = d as Map<String, dynamic>;
                 final identifier = (m['identifier'] ?? '') as String;
-
                 final thumbnail =
                     identifier.isNotEmpty
                         ? 'https://archive.org/services/img/$identifier'
@@ -215,17 +193,15 @@ class ArchiveApi {
               .where((c) => c.identifier.isNotEmpty)
               .toList();
 
-      print('Found ${results.length} collections');
+      debugPrint('Found ${results.length} collections'); // ← now debugPrint
       return results;
     } catch (e) {
-      print('JSON error: $e');
+      debugPrint('JSON error: $e');
       return [];
     }
   }
 
-  // =================================================================
-  // HELPERS
-  // =================================================================
+  // ------------------- HELPERS -------------------
   static int _asInt(dynamic v) {
     if (v is int) return v;
     if (v is String) return int.tryParse(v) ?? 0;
@@ -299,9 +275,6 @@ class ArchiveApi {
   };
 }
 
-// =================================================================
-// MODEL (outside the class)
-// =================================================================
 class ArchiveCollection {
   final String identifier;
   final String title;

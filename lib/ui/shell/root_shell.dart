@@ -40,6 +40,9 @@ class RootShellState extends State<RootShell> {
   int _current = 0;
   bool _ranStartupLoad = false;
 
+  // Shared trigger for the Search tab
+  late final ValueNotifier<bool> _searchActivateTrigger = ValueNotifier(false);
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -67,7 +70,20 @@ class RootShellState extends State<RootShell> {
           CollectionStore().loadLocal('/storage/emulated/0/Collections');
         });
       }
+
+      // Search tab (index 1) → trigger initial empty search
+      if (index == 1) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _searchActivateTrigger.value = true;
+        });
+      }
     }
+  }
+
+  @override
+  void dispose() {
+    _searchActivateTrigger.dispose();
+    super.dispose();
   }
 
   @override
@@ -94,10 +110,16 @@ class RootShellState extends State<RootShell> {
               navigatorKey: _keys[0],
               builder: (_) => const HomePageScreen(),
             ),
-            // Search
+            // Search – built lazily with trigger
             TabNav(
               navigatorKey: _keys[1],
-              builder: (_) => const CollectionSearchScreen(),
+              builder:
+                  (_) =>
+                      _current == 1
+                          ? CollectionSearchScreen(
+                            activateTrigger: _searchActivateTrigger,
+                          )
+                          : const SizedBox.shrink(),
             ),
             // Favourites
             TabNav(

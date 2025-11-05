@@ -9,6 +9,7 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Requires ThemeControllerProvider above in the tree (wrap MaterialApp or use builder:)
     final controller = ThemeControllerProvider.of(context);
     final theme = Theme.of(context);
 

@@ -10,7 +10,12 @@ import '../archive_api.dart';
 import 'collection_detail_screen.dart';
 
 class CollectionSearchScreen extends StatefulWidget {
-  const CollectionSearchScreen({Key? key}) : super(key: key);
+  /// Pass a notifier that flips to true the first time this tab/screen is shown.
+  /// If null, the screen won't auto-run the empty search at all (only on user input).
+  final ValueNotifier<bool>? activateTrigger;
+
+  const CollectionSearchScreen({Key? key, this.activateTrigger})
+    : super(key: key);
 
   @override
   State<CollectionSearchScreen> createState() => _CollectionSearchScreenState();
@@ -26,11 +31,23 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
   String? _error;
   List<ArchiveCollection> _results = const [];
 
+  bool _initialSearchDone = false; // ← ensures we only auto-run once
+
   @override
   void initState() {
     super.initState();
     _controller.addListener(_onChanged);
-    _runSearch('');
+
+    // ← DO NOT run a search on init. This avoids startup network calls on iOS.
+    // If a RootShell provides an activateTrigger, lazy-run once after the screen is actually shown.
+    widget.activateTrigger?.addListener(_maybeRunInitialSearch);
+    // If the trigger is already true by the time we build (e.g., direct navigation), handle it.
+    if (widget.activateTrigger?.value == true) {
+      // Schedule post-frame to avoid kicking work during build.
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _maybeRunInitialSearch(),
+      );
+    }
   }
 
   @override
@@ -39,7 +56,19 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
     _controller.removeListener(_onChanged);
     _controller.dispose();
     _focus.dispose();
+    widget.activateTrigger?.removeListener(_maybeRunInitialSearch);
     super.dispose();
+  }
+
+  void _maybeRunInitialSearch() {
+    if (_initialSearchDone) return;
+    if (widget.activateTrigger?.value == true) {
+      _initialSearchDone = true;
+      // Run after this frame so we don’t contend with tab transition animations.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _runSearch('');
+      });
+    }
   }
 
   void _onChanged() {
@@ -47,6 +76,7 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
     _debounce = Timer(const Duration(milliseconds: 350), () {
       final q = _controller.text.trim();
       if (q == _query) return;
+      // Only run when user actually changes text; this is user-driven and safe.
       _runSearch(q);
     });
   }
@@ -137,7 +167,8 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
               controller: _controller,
               focusNode: _focus,
               textInputAction: TextInputAction.search,
-              onSubmitted: _runSearch,
+              onSubmitted:
+                  _runSearch, // user-driven; fine to trigger immediately
               decoration: InputDecoration(
                 hintText:
                     'Search metadata. Try: subject:cartoons  creator:prelinger  language:eng  year:1950..1960',

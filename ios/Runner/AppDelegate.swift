@@ -1,37 +1,13 @@
-import UIKit
 import Flutter
+import UIKit
 
-@available(iOS 13.0, *)
-class SceneDelegate: UIResponder, UIWindowSceneDelegate {
-
-    var window: UIWindow?
-
-    func scene(_ scene: UIScene,
-               willConnectTo session: UISceneSession,
-               options connectionOptions: UIScene.ConnectionOptions) {
-
-        guard let windowScene = scene as? UIWindowScene else { return }
-
-        // Grab the **shared** engine from AppDelegate
-        let appDelegate = UIApplication.shared.delegate as! AppDelegate
-        let flutterEngine = appDelegate.flutterEngine
-
-        // Create the Flutter VC with the shared engine
-        let flutterViewController = FlutterViewController(engine: flutterEngine, nibName: nil, bundle: nil)
-
-        // Set up the window
-        let window = UIWindow(windowScene: windowScene)
-        window.rootViewController = flutterViewController
-        self.window = window
-        window.makeKeyAndVisible()
-    }
-
-    // -------------------------------------------------
-    // Optional: forward lifecycle events to Flutter engine
-    // -------------------------------------------------
-    func sceneDidDisconnect(_ scene: UIScene) {}
-    func sceneDidBecomeActive(_ scene: UIScene) {}
-    func sceneWillResignActive(_ scene: UIScene) {}
-    func sceneWillEnterForeground(_ scene: UIScene) {}
-    func sceneDidEnterBackground(_ scene: UIScene) {}
+@main
+@objc class AppDelegate: FlutterAppDelegate {
+  override func application(
+    _ application: UIApplication,
+    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+  ) -> Bool {
+    GeneratedPluginRegistrant.register(with: self)
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
 }

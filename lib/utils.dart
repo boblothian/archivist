@@ -1,3 +1,4 @@
+// utils.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -8,7 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 /// Progress callback – receives **bytes received** and **total bytes** (total may be null).
-typedef ProgressCb = void Function(double received, int? total);
+typedef ProgressCb = void Function(int received, int? total);
 
 // ---------------------------------------------------------------------------
 // HTTP defaults
@@ -55,7 +56,7 @@ Future<File> cacheFileForUrl(String url, {String? filenameHint}) async {
 }
 
 // ---------------------------------------------------------------------------
-// PUBLIC: download with cache + progress
+// PUBLIC: download with cache + progress (for binary files like PDF, images)
 // ---------------------------------------------------------------------------
 Future<File> downloadWithCache({
   required String url,
@@ -67,13 +68,11 @@ Future<File> downloadWithCache({
   final target = await cacheFileForUrl(url, filenameHint: filenameHint);
   final stopwatch = Stopwatch()..start();
 
-  // -------------------------------------------------
   // Cache hit – return immediately
-  // -------------------------------------------------
   if (await target.exists() && (await target.length()) > 0) {
     final sizeMb = (await target.length() / 1024 / 1024).toStringAsFixed(1);
     print('CACHE HIT: ${target.path} (${sizeMb} MB)');
-    onProgress?.call(1.0, await target.length());
+    onProgress?.call(await target.length(), await target.length());
     return target;
   }
 
@@ -82,7 +81,6 @@ Future<File> downloadWithCache({
     url: url,
     dest: target,
     onProgress: (received, total) {
-      // ----- calculate percentage & speed -----
       final pct = total != null && total > 0 ? received / total : 0.0;
       final elapsedMs = stopwatch.elapsedMilliseconds;
       final speedMbPerSec =
@@ -97,8 +95,7 @@ Future<File> downloadWithCache({
         'Speed: ${speedMbPerSec.toStringAsFixed(2)} MB/s',
       );
 
-      // Pass the *raw* values to the caller (they can compute pct themselves)
-      onProgress?.call(received.toDouble(), total);
+      onProgress?.call(received, total);
     },
     timeout: timeout,
     maxRetries: maxRetries,
@@ -106,7 +103,7 @@ Future<File> downloadWithCache({
 }
 
 // ---------------------------------------------------------------------------
-// Low-level download (http package)
+// Low-level download (http package) – used by downloadWithCache
 // ---------------------------------------------------------------------------
 Future<File> downloadToFile({
   required String url,
@@ -125,34 +122,98 @@ Future<File> downloadToFile({
         throw HttpException('GET $url -> ${res.statusCode}');
       }
 
-      final total = res.contentLength; // may be null
+      final total = res.contentLength;
       var received = 0;
       final sink = dest.openWrite();
 
       await for (final chunk in res.stream) {
         sink.add(chunk);
         received += chunk.length;
-
-        // Notify caller with raw bytes
-        onProgress?.call(received.toDouble(), total);
+        onProgress?.call(received, total);
       }
 
       await sink.flush();
       await sink.close();
-      onProgress?.call(1.0, total);
+      onProgress?.call(received, total);
       return dest;
     } catch (e) {
       if (attempt == maxRetries) rethrow;
       await Future.delayed(Duration(milliseconds: 300 * (attempt + 1)));
     }
   }
-  // unreachable
   throw StateError('downloadToFile failed after retries');
 }
 
 // ---------------------------------------------------------------------------
-// Simple text fetch
+// PUBLIC: fetch text with cache + progress (NEW!)
 // ---------------------------------------------------------------------------
+Future<String> fetchTextWithCache({
+  required String url,
+  String? filenameHint,
+  ProgressCb? onProgress,
+  Duration timeout = const Duration(seconds: 30),
+  int maxRetries = 2,
+}) async {
+  final cacheFile = await cacheFileForUrl(url, filenameHint: filenameHint);
+
+  // Cache hit
+  if (await cacheFile.exists() && (await cacheFile.length()) > 0) {
+    print('TEXT CACHE HIT: ${cacheFile.path}');
+    final bytes = await cacheFile.readAsBytes();
+    onProgress?.call(bytes.length, bytes.length);
+    try {
+      return utf8.decode(bytes);
+    } catch (_) {
+      return latin1.decode(bytes);
+    }
+  }
+
+  // Download + decode
+  final client = http.Client();
+  for (int attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      final req = http.Request('GET', Uri.parse(url))
+        ..headers.addAll(kHttpHeaders);
+      final res = await client.send(req).timeout(timeout);
+
+      if (res.statusCode != 200) {
+        throw HttpException('GET $url -> ${res.statusCode}');
+      }
+
+      final total = res.contentLength;
+      var received = 0;
+      final bytes = <int>[];
+
+      await for (final chunk in res.stream) {
+        bytes.addAll(chunk);
+        received += chunk.length;
+        onProgress?.call(received, total);
+      }
+
+      // Cache for next time
+      await cacheFile.writeAsBytes(bytes, flush: true);
+      onProgress?.call(received, total);
+
+      try {
+        return utf8.decode(bytes);
+      } catch (_) {
+        return latin1.decode(bytes);
+      }
+    } catch (e) {
+      if (attempt == maxRetries) rethrow;
+      await Future.delayed(Duration(milliseconds: 300 * (attempt + 1)));
+    } finally {
+      client.close();
+    }
+  }
+
+  throw StateError('fetchTextWithCache failed after retries');
+}
+
+// ---------------------------------------------------------------------------
+// LEGACY: Simple text fetch (no progress/cache) – keep for backward compat
+// ---------------------------------------------------------------------------
+@Deprecated('Use fetchTextWithCache instead')
 Future<String> fetchText(
   String url, {
   Duration timeout = const Duration(seconds: 30),

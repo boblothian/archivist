@@ -33,7 +33,7 @@ dependencies:
   permission_handler: ^12.0.1
   media_cast_dlna: ^0.2.0
   animations: ^2.0.11
-  flutter_colorpicker: ^1.1.0
+  fade_shimmer: ^2.4.0
 
 dev_dependencies:
   flutter_test:
@@ -50,6 +50,11 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
+
+  fonts:
+    - family: OpenDyslexic
+      fonts:
+        - asset: assets/fonts/open-dyslexic.ttf
 
   assets:
     - assets/images/logo.png

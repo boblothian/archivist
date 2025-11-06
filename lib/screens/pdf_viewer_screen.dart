@@ -2,6 +2,7 @@
 import 'dart:io';
 
 import 'package:archivereader/services/recent_progress_service.dart';
+import 'package:fade_shimmer/fade_shimmer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
@@ -45,7 +46,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   @override
   void initState() {
     super.initState();
-    _enterFullscreen(); // Start in fullscreen
+    _enterFullscreen();
     _loadPdfAndResume();
   }
 
@@ -148,31 +149,71 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     Widget body;
 
     if (_loading) {
-      body = Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 12),
-            Text(
-              _progress == 0
-                  ? 'Preparing...'
-                  : '${(_progress * 100).toStringAsFixed(0)}%',
+      body = Stack(
+        fit: StackFit.expand,
+        children: [
+          // Animated Shimmer Background
+          const FadeShimmer(
+            width: double.infinity,
+            height: double.infinity,
+            highlightColor: Color(0xFF424242),
+            baseColor: Color(0xFF212121),
+            millisecondsDelay: 1500,
+          ),
+
+          // Loading Content (centered)
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  strokeWidth: 3,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  _progress == 0
+                      ? 'Preparing...'
+                      : '${(_progress * 100).toStringAsFixed(0)}%',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                if (widget.filenameHint != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    widget.filenameHint!.split('/').last,
+                    style: const TextStyle(color: Colors.white70, fontSize: 13),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       );
     } else if (_error != null) {
       body = Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline),
-            const SizedBox(height: 8),
-            Text(_error!, textAlign: TextAlign.center),
-            const SizedBox(height: 8),
+            const Icon(Icons.error_outline, color: Colors.white70, size: 48),
+            const SizedBox(height: 12),
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 16),
             FilledButton(
               onPressed: _loadPdfAndResume,
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.black,
+              ),
               child: const Text('Retry'),
             ),
           ],
@@ -270,6 +311,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     return Scaffold(
       extendBodyBehindAppBar: true,
       extendBody: true,
+      backgroundColor: Colors.black,
       body: Container(color: Colors.black, child: body),
     );
   }

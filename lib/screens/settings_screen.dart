@@ -93,8 +93,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       value: allowNsfw,
                       onChanged: (v) async {
                         await AppPreferences.instance.setAllowNsfw(v);
-                        _nsfwNotifier.value =
-                            v; // ← now updates the SAME notifier
+                        _nsfwNotifier.value = v;
                       },
                     );
                   },
@@ -118,8 +117,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap:
                       () => showAboutDialog(
                         context: context,
-                        applicationName: 'Archivist',
-                        applicationVersion: '1.0.0',
+                        applicationName: 'Archivist Reader',
+                        applicationVersion: '0.2.0',
                         applicationIcon: Image.asset(
                           'assets/images/logo.png',
                           width: 48,
@@ -173,7 +172,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           Center(
             child: Text(
-              'Archivist v1.0.0',
+              'Archivist Reader v0.2.0',
               style: GoogleFonts.inter(
                 fontSize: 13,
                 color: theme.textTheme.bodySmall?.color?.withOpacity(0.6),
@@ -185,6 +184,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // ── Theme Mode Radio Tiles ──
   Widget _themeTile(
     BuildContext ctx,
     ThemeController controller,

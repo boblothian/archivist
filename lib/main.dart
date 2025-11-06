@@ -13,20 +13,25 @@ import 'ui/app.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Create theme controller (fast) – needed before first frame
-  final themeController = ThemeController();
+  // --------------------------------------------------------------
+  // 1. Load theme controller **before** first frame
+  // --------------------------------------------------------------
+  final themeController = await ThemeController.load();
 
-  // Show UI **immediately** – no blocking work
+  // --------------------------------------------------------------
+  // 2. Show UI immediately – theme is already loaded
+  // --------------------------------------------------------------
   runApp(ArchivistApp(themeController: themeController));
 
-  // Run heavy startup in background (including storage init)
+  // --------------------------------------------------------------
+  // 3. Run the rest of startup in background
+  // --------------------------------------------------------------
   unawaited(_safeStartup(themeController));
 }
 
 /// Fire-and-forget startup
 Future<void> _safeStartup(ThemeController controller) async {
   try {
-    // ---- DEFERRED STORAGE INITIALISATION ---------------------------------
     await _initStorage();
     await Startup.initialize(controller);
   } catch (e, s) {
@@ -34,11 +39,10 @@ Future<void> _safeStartup(ThemeController controller) async {
   }
 }
 
-/// Ensures Hive has a valid directory (prevents fopen errors)
+/// Ensures Hive has a valid directory
 Future<void> _initStorage() async {
-  await Hive.initFlutter(); // Sets up Hive in docs dir
+  await Hive.initFlutter();
 
-  // Ensure app-specific folder exists (optional but safe)
   final docsDir = await getApplicationDocumentsDirectory();
   final appDir = Directory('${docsDir.path}/archivist');
   if (!await appDir.exists()) {

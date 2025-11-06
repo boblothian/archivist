@@ -1,54 +1,57 @@
+// lib/theme/theme_controller.dart
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const _kThemePref = 'app_theme_mode'; // 'system' | 'light' | 'dark'
+/// The actual controller that holds the current ThemeMode and persists it.
+class ThemeController with ChangeNotifier {
+  ThemeController._(this._mode);
 
-class ThemeController extends ChangeNotifier {
-  ThemeMode _mode = ThemeMode.system;
+  static const _kThemeModeKey = 'theme_mode';
+
+  ThemeMode _mode;
   ThemeMode get mode => _mode;
 
-  Future<void> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final s = prefs.getString(_kThemePref);
-    switch (s) {
-      case 'light':
-        _mode = ThemeMode.light;
-        break;
-      case 'dark':
-        _mode = ThemeMode.dark;
-        break;
-      default:
-        _mode = ThemeMode.system;
-    }
+  /// Change the theme and persist the choice.
+  Future<void> setMode(ThemeMode newMode) async {
+    if (newMode == _mode) return;
+    _mode = newMode;
     notifyListeners();
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kThemeModeKey, newMode.toString());
   }
 
-  Future<void> setMode(ThemeMode m) async {
-    if (m == _mode) return;
-    _mode = m;
-    notifyListeners();
+  /// Load the persisted theme (defaults to system).
+  static Future<ThemeController> load() async {
     final prefs = await SharedPreferences.getInstance();
-    final str = switch (m) {
-      ThemeMode.light => 'light',
-      ThemeMode.dark => 'dark',
-      _ => 'system',
-    };
-    await prefs.setString(_kThemePref, str);
+    final saved = prefs.getString(_kThemeModeKey);
+    final mode =
+        saved == null
+            ? ThemeMode.system
+            : ThemeMode.values.firstWhere(
+              (e) => e.toString() == saved,
+              orElse: () => ThemeMode.system,
+            );
+    return ThemeController._(mode);
   }
 }
 
-/// Simple provider so we don't need a package.
+/// InheritedWidget that makes the controller available everywhere.
 class ThemeControllerProvider extends InheritedNotifier<ThemeController> {
   const ThemeControllerProvider({
-    super.key,
     required ThemeController controller,
     required Widget child,
+    super.key,
   }) : super(notifier: controller, child: child);
 
-  static ThemeController of(BuildContext context) {
-    final p =
+  /// Convenience getter used in SettingsScreen.
+  static ThemeControllerProvider of(BuildContext context) {
+    final provider =
         context.dependOnInheritedWidgetOfExactType<ThemeControllerProvider>();
-    assert(p != null, 'ThemeControllerProvider not found in context');
-    return p!.notifier!;
+    assert(provider != null, 'No ThemeControllerProvider found in context');
+    return provider!;
   }
+
+  /// Helper to get the controller directly (the way SettingsScreen expects).
+  ThemeController get controller => notifier!;
 }

@@ -8,9 +8,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../net.dart';
 import '../utils.dart'; // For downloadWithCache
@@ -39,13 +37,11 @@ class ArchiveItemScreen extends StatefulWidget {
 }
 
 class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
-  Set<String> _favoriteFiles = {};
   final Map<String, double> _downloadProgress = {};
 
   @override
   void initState() {
     super.initState();
-    _loadFavorites();
 
     // Auto-open if single file
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -281,31 +277,6 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
     }
   }
 
-  // Favourites ---------------------------------------------------------------
-  Future<void> _loadFavorites() async {
-    final prefs = await SharedPreferences.getInstance();
-    _favoriteFiles = prefs.getStringList('reading_list')?.toSet() ?? {};
-    setState(() {});
-  }
-
-  Future<void> _toggleFavorite(String fileName, String fileUrl) async {
-    final prefs = await SharedPreferences.getInstance();
-    final appDir = await getApplicationDocumentsDirectory();
-    final file = File('${appDir.path}/$fileName');
-
-    if (_favoriteFiles.contains(fileName)) {
-      _favoriteFiles.remove(fileName);
-      if (await file.exists()) await file.delete();
-    } else {
-      _favoriteFiles.add(fileName);
-      final thumbUrl = _getThumbnailUrl(fileName);
-      _openFile(fileName, fileUrl, thumbUrl);
-    }
-
-    await prefs.setStringList('reading_list', _favoriteFiles.toList());
-    setState(() {});
-  }
-
   // Thumbnails ---------------------------------------------------------------
   String _getThumbnailUrl(String fileName) {
     final ext = p.extension(fileName).toLowerCase();
@@ -450,7 +421,6 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
           final fileUrl =
               'https://archive.org/download/${widget.identifier}/${Uri.encodeComponent(fileName)}';
           final thumbUrl = _getThumbnailUrl(fileName);
-          final isFavorited = _favoriteFiles.contains(fileName);
 
           final isPdf = ext == '.pdf';
           final isImage = isImageFile(ext);
@@ -577,17 +547,6 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
                         ),
                       ),
                   ],
-                ),
-              ),
-              Positioned(
-                top: 4,
-                right: 4,
-                child: IconButton(
-                  icon: Icon(
-                    isFavorited ? Icons.favorite : Icons.favorite_border,
-                    color: isFavorited ? Colors.red : Colors.white,
-                  ),
-                  onPressed: () => _toggleFavorite(fileName, fileUrl),
                 ),
               ),
             ],

@@ -1,36 +1,43 @@
+// lib/screens/settings_screen.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/app_preferences.dart';
 import '../theme/theme_controller.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    // Requires ThemeControllerProvider above in the tree (wrap MaterialApp or use builder:)
-    final controller = ThemeControllerProvider.of(context);
-    final theme = Theme.of(context);
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
 
-    Widget themeTile({
-      required ThemeMode mode,
-      required String title,
-      required String subtitle,
-      required IconData icon,
-    }) {
-      return RadioListTile<ThemeMode>(
-        value: mode,
-        groupValue: controller.mode,
-        onChanged: (m) => controller.setMode(m ?? ThemeMode.system),
-        title: Text(
-          title,
-          style: GoogleFonts.inter(fontWeight: FontWeight.w600),
-        ),
-        subtitle: Text(subtitle, style: GoogleFonts.inter(fontSize: 13)),
-        secondary: Icon(icon),
-      );
-    }
+class _SettingsScreenState extends State<SettingsScreen> {
+  late final ValueNotifier<bool> _nsfwNotifier;
+
+  @override
+  void initState() {
+    super.initState();
+    _nsfwNotifier = ValueNotifier<bool>(false);
+    _loadNsfwSetting();
+  }
+
+  Future<void> _loadNsfwSetting() async {
+    final allow = await AppPreferences.instance.allowNsfw;
+    if (mounted) _nsfwNotifier.value = allow;
+  }
+
+  @override
+  void dispose() {
+    _nsfwNotifier.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = ThemeControllerProvider.of(context).controller;
+    final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -51,25 +58,46 @@ class SettingsScreen extends StatelessWidget {
           Card(
             child: Column(
               children: [
-                themeTile(
-                  mode: ThemeMode.system,
-                  title: 'Use System Theme',
-                  subtitle: 'Follow device appearance',
-                  icon: Icons.phone_android,
-                ),
+                _themeTile(context, controller, ThemeMode.system),
                 const Divider(height: 1),
-                themeTile(
-                  mode: ThemeMode.light,
-                  title: 'Light Mode',
-                  subtitle: 'Always light',
-                  icon: Icons.light_mode,
-                ),
+                _themeTile(context, controller, ThemeMode.light),
                 const Divider(height: 1),
-                themeTile(
-                  mode: ThemeMode.dark,
-                  title: 'Dark Mode',
-                  subtitle: 'Always dark',
-                  icon: Icons.dark_mode,
+                _themeTile(context, controller, ThemeMode.dark),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          // ── Content Filtering ──
+          Card(
+            child: Column(
+              children: [
+                ValueListenableBuilder<bool>(
+                  valueListenable: _nsfwNotifier,
+                  builder: (_, allowNsfw, __) {
+                    return SwitchListTile(
+                      secondary: Icon(
+                        allowNsfw ? Icons.visibility : Icons.visibility_off,
+                      ),
+                      title: Text(
+                        'Allow NSFW content',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Text(
+                        allowNsfw
+                            ? 'NSFW items will be shown'
+                            : 'Only safe-for-work items are displayed',
+                        style: GoogleFonts.inter(fontSize: 13),
+                      ),
+                      value: allowNsfw,
+                      onChanged: (v) async {
+                        await AppPreferences.instance.setAllowNsfw(v);
+                        _nsfwNotifier.value =
+                            v; // ← now updates the SAME notifier
+                      },
+                    );
+                  },
                 ),
               ],
             ),
@@ -110,7 +138,6 @@ class SettingsScreen extends StatelessWidget {
                   ),
                   subtitle: const Text('Remove downloaded files & thumbnails'),
                   onTap: () async {
-                    // TODO: Add actual cache clearing
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text('Cache cleared successfully'),
@@ -144,7 +171,6 @@ class SettingsScreen extends StatelessWidget {
 
           const SizedBox(height: 32),
 
-          // ── Version Footer ──
           Center(
             child: Text(
               'Archivist v1.0.0',
@@ -156,6 +182,43 @@ class SettingsScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _themeTile(
+    BuildContext ctx,
+    ThemeController controller,
+    ThemeMode mode,
+  ) {
+    final Map<ThemeMode, ({String title, String subtitle, IconData icon})>
+    data = {
+      ThemeMode.system: (
+        title: 'Use System Theme',
+        subtitle: 'Follow device appearance',
+        icon: Icons.phone_android,
+      ),
+      ThemeMode.light: (
+        title: 'Light Mode',
+        subtitle: 'Always light',
+        icon: Icons.light_mode,
+      ),
+      ThemeMode.dark: (
+        title: 'Dark Mode',
+        subtitle: 'Always dark',
+        icon: Icons.dark_mode,
+      ),
+    };
+    final info = data[mode]!;
+    return RadioListTile<ThemeMode>(
+      value: mode,
+      groupValue: controller.mode,
+      onChanged: (m) => controller.setMode(m ?? ThemeMode.system),
+      title: Text(
+        info.title,
+        style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+      ),
+      subtitle: Text(info.subtitle, style: GoogleFonts.inter(fontSize: 13)),
+      secondary: Icon(info.icon),
     );
   }
 }

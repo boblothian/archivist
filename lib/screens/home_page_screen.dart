@@ -1191,7 +1191,6 @@ class _SimpleSearchDelegate extends SearchDelegate<void> {
               (_) => CollectionDetailScreen(
                 categoryName: 'Search',
                 customQuery: advQuery,
-                filters: filters,
               ),
         ),
       );

@@ -22,11 +22,8 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
-
-    <key>MinimumOSVersion</key>
-    <string>13.0</string>
-
-
+	<key>MinimumOSVersion</key>
+	<string>15.6</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
@@ -50,6 +47,35 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>archive.org</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>http</string>
+		<string>https</string>
+	</array>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 
+	<!-- Required: Fixes ITMS-90683 (Microphone) -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Archivereader uses the microphone to record voice notes or narrate archived texts.</string>
+
+	<!-- Recommended: Prevents future ITMS-90683 warning (Bluetooth) -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Archivereader connects to Bluetooth audio devices to play archived audiobooks and recordings.</string>
 </dict>
 </plist>

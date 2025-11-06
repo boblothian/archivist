@@ -1,3 +1,4 @@
+// lib/startup.dart
 import 'dart:async';
 
 import 'package:archivereader/services/favourites_service.dart';
@@ -6,7 +7,7 @@ import 'package:archivereader/theme/theme_controller.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 
-/// Fire-and-forget a future — prevents uncaught exceptions
+/// Fire-and-forget a future
 void _unawaited(Future<void> future) {
   future.catchError((e, s) {
     debugPrint('Background init failed: $e\n$s');
@@ -14,9 +15,9 @@ void _unawaited(Future<void> future) {
 }
 
 class Startup {
+  /// `themeController` is **already loaded** – we only trigger other services.
   static Future<void> initialize(ThemeController themeController) async {
     // === NON-BLOCKING INITIALIZATION ===
-    // We don't await these — they run in background
     _unawaited(
       FavoritesService.instance.init().timeout(
         const Duration(seconds: 3),
@@ -31,14 +32,9 @@ class Startup {
       ),
     );
 
-    _unawaited(
-      themeController.load().timeout(
-        const Duration(seconds: 2),
-        onTimeout: () => debugPrint('Theme load timed out'),
-      ),
-    );
+    // No need to call themeController.load() – it was already done in main.dart
 
-    // === UI SYSTEM SETUP (safe to do immediately) ===
+    // === UI SYSTEM SETUP ===
     try {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     } catch (e) {

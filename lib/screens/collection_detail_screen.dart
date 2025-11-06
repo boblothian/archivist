@@ -1,17 +1,19 @@
-// collection_detail_screen.dart
+// lib/screens/collection_detail_screen.dart
 import 'dart:convert';
 
-import 'package:animations/animations.dart'; // <-- NEW
+import 'package:animations/animations.dart';
 import 'package:archivereader/screens/video_player_screen.dart';
+import 'package:archivereader/services/app_preferences.dart';
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
+import 'package:archivereader/services/sfw_filter.dart' as sfw;
 import 'package:archivereader/services/thumb_override_service.dart';
 import 'package:archivereader/services/thumbnail_service.dart';
 import 'package:archivereader/ui/capsule_theme.dart';
 import 'package:archivereader/widgets/capsule_thumb_card.dart';
 import 'package:archivereader/widgets/favourite_add_dialogue.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/foundation.dart'; // for compute()
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -45,7 +47,7 @@ enum SearchScope { metadata, title }
 enum ViewMode { grid, list }
 
 const int _QUICK_PICK_LIMIT = 24;
-const int _CHILD_ROWS = 36; // lower for faster quick pick
+const int _CHILD_ROWS = 36;
 
 String _sortParam(SortMode m) {
   switch (m) {
@@ -66,36 +68,16 @@ String _sortParam(SortMode m) {
   }
 }
 
-class _SfwFilter {
-  static final List<RegExp> _bad = <RegExp>[
-    RegExp(r'\bnsfw\b', caseSensitive: false),
-    RegExp(r'\bexplicit\b', caseSensitive: false),
-    RegExp(r'\bporn\b', caseSensitive: false),
-    RegExp(r'\badult\b', caseSensitive: false),
-    RegExp(r'\bhentai\b', caseSensitive: false),
-    RegExp(r'\bxxx\b', caseSensitive: false),
-  ];
-  static bool isClean(Map<String, String> m) {
-    final hay =
-        '${m['title'] ?? ''} ${m['subject'] ?? ''} ${m['description'] ?? ''}';
-    return !_bad.any((r) => r.hasMatch(hay));
-  }
-
-  static String serverExclusionSuffix() => '';
-}
-
 class CollectionDetailScreen extends StatefulWidget {
   final String categoryName;
   final String? collectionName;
   final String? customQuery;
-  final dynamic filters;
 
   const CollectionDetailScreen({
     super.key,
     required this.categoryName,
     this.collectionName,
     this.customQuery,
-    this.filters,
   });
 
   @override
@@ -105,8 +87,8 @@ class CollectionDetailScreen extends StatefulWidget {
 class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   final TextEditingController _searchCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
+  late final ValueNotifier<bool> _sfwOnlyNotifier;
 
-  // Single reusable HTTP client + timeout
   static final http.Client _client = http.Client();
   static const Duration _netTimeout = Duration(seconds: 12);
 
@@ -116,7 +98,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   String? _error;
 
   int _requestToken = 0;
-  static const int _rows = 60; // smaller first-page for snappier paint
+  static const int _rows = 60;
   int _page = 1;
   int _numFound = 0;
 
@@ -126,14 +108,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   SearchScope _searchScope = SearchScope.metadata;
   ViewMode _viewMode = ViewMode.grid;
 
-  late bool _sfwOnly = _tryFlag(widget.filters, 'sfwOnly', false);
-  late bool _favouritesOnly = _tryFlag(widget.filters, 'favouritesOnly', false);
-  late bool _downloadedOnly = _tryFlag(widget.filters, 'downloadedOnly', false);
-
   bool _showScrollTop = false;
   bool _isDisposed = false;
 
-  // ---------- NEW: shared axis route helper ----------
   Route<T> _sharedAxisRoute<T>(
     Widget page, {
     SharedAxisTransitionType type = SharedAxisTransitionType.scaled,
@@ -156,7 +133,14 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _sfwOnlyNotifier = ValueNotifier<bool>(true);
+    _loadSfwSetting();
     _init();
+
+    _sfwOnlyNotifier.addListener(() {
+      if (mounted) _fetch(reset: true);
+    });
+
     _scrollCtrl.addListener(() {
       final show = _scrollCtrl.offset > 400;
       if (show != _showScrollTop && mounted) {
@@ -165,18 +149,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     });
   }
 
-  static bool _tryFlag(dynamic obj, String name, bool def) {
-    if (obj == null) return def;
-    try {
-      final json = (obj as dynamic).toJson();
-      final v = json[name];
-      if (v is bool) return v;
-    } catch (_) {}
-    if (obj is Map) {
-      final v = obj[name];
-      if (v is bool) return v;
-    }
-    return def;
+  Future<void> _loadSfwSetting() async {
+    final sfw = await AppPreferences.instance.sfwOnly;
+    if (mounted) _sfwOnlyNotifier.value = sfw;
   }
 
   Future<void> _init() async {
@@ -189,6 +164,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     _dismissKeyboard();
     _searchCtrl.dispose();
     _scrollCtrl.dispose();
+    _sfwOnlyNotifier.dispose();
     super.dispose();
   }
 
@@ -242,27 +218,22 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       final orClause = fields.map((f) => '$f:"$phrase"').join(' OR ');
       full = '($baseQuery) AND ($orClause)';
     }
-    if (_sfwOnly) full = '($full)${_SfwFilter.serverExclusionSuffix()}';
+    if (_sfwOnlyNotifier.value)
+      full = '($full)${sfw.SfwFilter.serverExclusionSuffix()}';
     return full;
   }
 
-  // Parse JSON off the UI thread
   Future<Map<String, dynamic>> _decodeJson(String body) async {
     return compute((String s) => jsonDecode(s) as Map<String, dynamic>, body);
   }
 
-  // Background smart-thumb upgrader (bounded concurrency) respecting user overrides
-  /// Background smart-thumb upgrader (bounded concurrency) respecting user overrides
   Future<void> _unblockSmartThumbs(
     List<Map<String, String>> batch, {
     required int currentToken,
   }) async {
     const int kMaxConcurrent = 6;
-
-    // Collect all changes in memory first
     final Map<int, String> thumbUpdates = {};
 
-    // Helper: process one item
     Future<void> _process(Map<String, String> item) async {
       try {
         if (!mounted || _isDisposed || currentToken != _requestToken) return;
@@ -272,12 +243,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         final title = item['title'] ?? id;
         final year = item['year'] ?? '';
 
-        // Skip if already upgraded or overridden
         final currentThumb = (item['thumb'] ?? '').trim();
         final placeholder = archiveThumbUrl(id);
-        if (currentThumb.isNotEmpty && currentThumb != placeholder) {
-          return;
-        }
+        if (currentThumb.isNotEmpty && currentThumb != placeholder) return;
 
         final smart = await ThumbnailService().getSmartThumb(
           id: id,
@@ -289,29 +257,18 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         if (!mounted || _isDisposed || currentToken != _requestToken) return;
         if (smart.isEmpty || smart == currentThumb) return;
 
-        // Find index in _items
         final idx = _items.indexWhere((e) => e['identifier'] == id);
-        if (idx != -1) {
-          thumbUpdates[idx] = smart;
-        }
-      } catch (_) {
-        // Ignore per-item failures
-      }
+        if (idx != -1) thumbUpdates[idx] = smart;
+      } catch (_) {}
     }
 
-    // Process in chunks to bound concurrency
     for (int i = 0; i < batch.length; i += kMaxConcurrent) {
-      if (!mounted || _isDisposed || currentToken != _requestToken) {
-        return;
-      }
-
+      if (!mounted || _isDisposed || currentToken != _requestToken) return;
       final end = (i + kMaxConcurrent).clamp(0, batch.length);
       final slice = batch.sublist(i, end);
-
       await Future.wait(slice.map(_process));
     }
 
-    // === SINGLE setState UPDATE ===
     if (thumbUpdates.isNotEmpty &&
         mounted &&
         !_isDisposed &&
@@ -401,7 +358,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         return v.toString();
       }
 
-      // Fast batch (placeholder thumbs)
       List<Map<String, String>> batch = [];
       for (final doc in docs) {
         final id = (doc['identifier'] ?? '').toString();
@@ -423,23 +379,15 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         });
       }
 
-      // Filters
-      if (_sfwOnly) {
-        final filtered = batch.where(_SfwFilter.isClean).toList();
+      if (_sfwOnlyNotifier.value) {
+        final filtered = batch.where(sfw.SfwFilter.isClean).toList();
         if (filtered.isNotEmpty || _searchCtrl.text.trim().isNotEmpty) {
           batch = filtered;
         }
       }
-      if (_favouritesOnly) {
-        final favs =
-            FavoritesService.instance.allItems.map((e) => e.id).toSet();
-        batch = batch.where((m) => favs.contains(m['identifier'])).toList();
-      }
 
-      // Apply overrides before render
       await ThumbOverrideService.instance.applyToItemMaps(batch);
 
-      // De-dup against existing
       final existingIds = _items.map((m) => m['identifier']).toSet();
       batch =
           batch
@@ -450,7 +398,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               )
               .toList();
 
-      // Render immediately
       if (mounted && !_isDisposed) {
         setState(() {
           _items.addAll(batch);
@@ -460,7 +407,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         });
       }
 
-      // Upgrade thumbs in background
       _unblockSmartThumbs(batch, currentToken: token);
     } catch (_) {
       if (mounted) {
@@ -480,9 +426,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
   void _runSearch() => _fetch(reset: true);
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  //  LONG-PRESS MENU – TMDb thumbnail + add-to-favourites + enrich metadata
-  // ─────────────────────────────────────────────────────────────────────────────
   Future<void> _handleLongPressItem(Map<String, String> item) async {
     if (_isDisposed) return;
 
@@ -509,7 +452,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
     final titleCtrl = TextEditingController(text: title);
     bool isSearching = false;
-    bool enrichEnabled = false; // local toggle
+    bool enrichEnabled = false;
 
     final result = await showDialog<DialogResult>(
       context: context,
@@ -524,7 +467,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Add to Favourites
                         ListTile(
                           leading: const Icon(Icons.favorite_border),
                           title: const Text('Add to Favourites'),
@@ -533,10 +475,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                               () =>
                                   Navigator.pop(ctx, DialogResult.addToFolder),
                         ),
-
                         const Divider(height: 16),
-
-                        // Enrich Metadata Toggle
                         SwitchListTile(
                           value: enrichEnabled,
                           onChanged: (v) async {
@@ -547,14 +486,12 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                                 await ThumbnailService().enrichItemWithTmdb(
                                   updated,
                                 );
-
                                 final idx = _items.indexWhere(
                                   (i) => i['identifier'] == id,
                                 );
                                 if (idx != -1 && mounted && !_isDisposed) {
                                   setState(() => _items[idx] = updated);
                                 }
-
                                 messenger?.showSnackBar(
                                   const SnackBar(
                                     content: Text('Metadata enriched!'),
@@ -576,10 +513,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                             'Pull title, year, description, and poster from TMDb',
                           ),
                         ),
-
                         const Divider(height: 16),
-
-                        // TMDb Thumbnail Generator (Video/Movies only)
                         if (mediatype.toLowerCase().contains('video') ||
                             mediatype == 'movies')
                           Column(
@@ -627,12 +561,10 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                                                         );
                                                         return;
                                                       }
-
                                                       setDialogState(
                                                         () =>
                                                             isSearching = true,
                                                       );
-
                                                       try {
                                                         final chosen =
                                                             await ThumbnailService()
@@ -646,17 +578,14 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                                                                   currentTitle:
                                                                       title,
                                                                 );
-
                                                         if (chosen == null)
                                                           return;
-
                                                         await FavoritesService
                                                             .instance
                                                             .updateThumbForId(
                                                               id,
                                                               chosen,
                                                             );
-
                                                         final idx = _items
                                                             .indexWhere(
                                                               (i) =>
@@ -672,11 +601,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                                                                     chosen,
                                                           );
                                                         }
-
                                                         await ThumbOverrideService
                                                             .instance
                                                             .set(id, chosen);
-
                                                         messenger?.showSnackBar(
                                                           SnackBar(
                                                             content: const Text(
@@ -695,7 +622,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                                                             ),
                                                           ),
                                                         );
-
                                                         if (ctx.mounted) {
                                                           Navigator.pop(
                                                             ctx,
@@ -789,11 +715,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         return;
       }
 
-      // ──────────────────────── TEXTS FALLBACK CHAIN ────────────────────────
       if (mediatype == 'texts') {
         final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
 
-        // 1. PDFs
         final pdfFiles =
             rawFiles.cast<Map<String, dynamic>>().where((f) {
               final name = (f['name'] ?? '').toString().toLowerCase();
@@ -851,7 +775,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           return;
         }
 
-        // 2. Images
         final imageFiles =
             rawFiles.cast<Map<String, dynamic>>().where((f) {
               final name = (f['name'] ?? '').toString().toLowerCase();
@@ -891,7 +814,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           return;
         }
 
-        // 3. Plain text
         final textFiles =
             rawFiles.cast<Map<String, dynamic>>().where((f) {
               final name = (f['name'] ?? '').toString().toLowerCase();
@@ -934,7 +856,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           return;
         }
 
-        // 4. Fallback: generic file list (for texts)
         final justNames =
             rawFiles
                 .whereType<Map>()
@@ -970,7 +891,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         return;
       }
 
-      // ──────────────────────── AUDIO DETECTION (mediatype: audio) ────────────────────────
       if (mediatype == 'audio') {
         final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
         final audioFiles = <Map<String, dynamic>>[];
@@ -1032,7 +952,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         }
       }
 
-      // ──────────────────────── VIDEO DETECTION ────────────────────────
       final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
       final videoFiles = <Map<String, dynamic>>[];
       for (final f in rawFiles) {
@@ -1071,7 +990,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         return;
       }
 
-      // ──────────────────────── GENERIC FALLBACK (any other mediatype) ────────────────────────
       final justNames =
           rawFiles
               .whereType<Map>()
@@ -1125,11 +1043,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           CollectionDetailScreen(
             categoryName: title,
             collectionName: collectionId,
-            filters: {
-              'sfwOnly': _sfwOnly,
-              'favouritesOnly': _favouritesOnly,
-              'downloadedOnly': _downloadedOnly,
-            },
           ),
         ),
       );
@@ -1152,20 +1065,13 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                     CollectionDetailScreen(
                       categoryName: title,
                       collectionName: collectionId,
-                      filters: {
-                        'sfwOnly': _sfwOnly,
-                        'favouritesOnly': _favouritesOnly,
-                        'downloadedOnly': _downloadedOnly,
-                      },
                     ),
                   ),
                 );
               },
             ),
       );
-      if (selected != null) {
-        await _openItem(selected);
-      }
+      if (selected != null) await _openItem(selected);
       return;
     }
 
@@ -1174,11 +1080,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         CollectionDetailScreen(
           categoryName: title,
           collectionName: collectionId,
-          filters: {
-            'sfwOnly': _sfwOnly,
-            'favouritesOnly': _favouritesOnly,
-            'downloadedOnly': _downloadedOnly,
-          },
         ),
       ),
     );
@@ -1239,11 +1140,8 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             };
           }).toList();
 
-      if (_sfwOnly) items = items.where(_SfwFilter.isClean).toList();
-      if (_favouritesOnly) {
-        final favs =
-            FavoritesService.instance.allItems.map((e) => e.id).toSet();
-        items = items.where((m) => favs.contains(m['identifier'])).toList();
+      if (_sfwOnlyNotifier.value) {
+        items = items.where(sfw.SfwFilter.isClean).toList();
       }
 
       await ThumbOverrideService.instance.applyToItemMaps(items);
@@ -1467,14 +1365,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         spacing: 8,
         runSpacing: -6,
         children: [
-          FilterChip(
-            label: const Text('SFW'),
-            selected: _sfwOnly,
-            onSelected: (v) {
-              setState(() => _sfwOnly = v);
-              _fetch(reset: true);
-            },
-          ),
           if (_numFound > 0)
             InputChip(label: Text('Found $_numFound'), onPressed: null),
         ],
@@ -1483,9 +1373,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   }
 
   Widget _buildBody(ColorScheme cs) {
-    if (_loading) {
-      return const _CenteredSpinner(label: 'Loading…');
-    }
+    if (_loading) return const _CenteredSpinner(label: 'Loading…');
     if (_error != null) {
       return _ErrorPane(
         message: _error!,
@@ -1528,7 +1416,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       );
     }
 
-    // ---------- NEW: animate grid <-> list ----------
     final Widget view =
         (_viewMode == ViewMode.list)
             ? ListView.builder(
@@ -1726,7 +1613,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                           );
                           if (choice == null) return;
 
-                          if (mounted) Navigator.pop(context); // close sheet
+                          if (mounted) Navigator.pop(context);
 
                           final name = op['name'] as String;
                           final videoUrl =
@@ -1800,7 +1687,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   }
 }
 
-// ---------- UI helpers (unchanged, except imports) ----------
+// UI HELPERS
 class _CenteredSpinner extends StatelessWidget {
   final String label;
   const _CenteredSpinner({required this.label});
@@ -2063,13 +1950,7 @@ class _SortTile extends StatelessWidget {
   final SortMode value;
   final SortMode current;
   final ValueChanged<SortMode> onSelect;
-  const _SortTile(
-    this.label,
-    this.value,
-    this.current,
-    this.onSelect, {
-    super.key,
-  });
+  const _SortTile(this.label, this.value, this.current, this.onSelect);
   @override
   Widget build(BuildContext context) {
     final selected = value == current;
@@ -2180,7 +2061,7 @@ class _CollectionQuickPick extends StatelessWidget {
                               ? 'audio'
                               : 'collection';
                       final thumb =
-                          (it['thumb'] as String?)?.trim().isNotEmpty == true
+                          (it['thumb'])?.trim().isNotEmpty == true
                               ? it['thumb'] as String
                               : archiveFallbackThumbUrl(id);
 

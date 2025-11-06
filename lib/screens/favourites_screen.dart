@@ -35,9 +35,8 @@ class FavoritesScreen extends StatelessWidget {
 
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Favourites'),
             bottom: PreferredSize(
-              preferredSize: const Size.fromHeight(56),
+              preferredSize: const Size.fromHeight(22),
               child: _FolderSelector(
                 folders: folders,
                 selected: selectedFolder,
@@ -416,10 +415,7 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
       return result;
     }
 
-    value
-        .toString()
-        .split(RegExp(r'[;,]'))
-        .forEach(addValue);
+    value.toString().split(RegExp(r'[;,]')).forEach(addValue);
     return result;
   }
 
@@ -490,8 +486,9 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children:
-                visible.map((v) => Chip(label: Text(v))).toList(growable: false),
+            children: visible
+                .map((v) => Chip(label: Text(v)))
+                .toList(growable: false),
           ),
         ],
       ),
@@ -536,9 +533,9 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
     if (uri == null) return;
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!ok && mounted) {
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('Could not open link')),
-      );
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(const SnackBar(content: Text('Could not open link')));
     }
   }
 
@@ -591,26 +588,31 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                 (raw['metadata'] as Map?) ?? const <String, dynamic>{},
               );
 
-              final title = _flat(meta['title']).trim().isNotEmpty
-                  ? _flat(meta['title']).trim()
-                  : widget.item.title;
+              final title =
+                  _flat(meta['title']).trim().isNotEmpty
+                      ? _flat(meta['title']).trim()
+                      : widget.item.title;
               final description = _flat(meta['description']).trim();
               final creator = _flat(meta['creator']).trim();
               final year = _flat(meta['year']).trim();
-              final mediatype = (widget.item.mediatype?.trim().isNotEmpty == true)
-                  ? widget.item.mediatype!.trim()
-                  : _flat(meta['mediatype']).trim();
+              final mediatype =
+                  (widget.item.mediatype?.trim().isNotEmpty == true)
+                      ? widget.item.mediatype!.trim()
+                      : _flat(meta['mediatype']).trim();
               final language = _flat(meta['language']).trim();
-              final runtime = _flat(meta['runtime']).trim().isNotEmpty
-                  ? _flat(meta['runtime']).trim()
-                  : _flat(meta['length']).trim();
+              final runtime =
+                  _flat(meta['runtime']).trim().isNotEmpty
+                      ? _flat(meta['runtime']).trim()
+                      : _flat(meta['length']).trim();
               final downloads = _flat(meta['downloads']).trim();
               String added = _flat(meta['publicdate']).trim();
               if (added.isEmpty) added = _flat(meta['date']).trim();
               if (added.isEmpty) added = _flat(meta['addeddate']).trim();
 
               final subjects = _asList(meta['subject']);
-              subjects.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+              subjects.sort(
+                (a, b) => a.toLowerCase().compareTo(b.toLowerCase()),
+              );
 
               final formatSet = <String>{
                 ...widget.item.formats
@@ -619,26 +621,31 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                 ..._asList(meta['format']),
               };
 
-              final cachedFormats = widget.item.files
+              final cachedFormats =
+                  widget.item.files
                       ?.map((f) => (f['fmt'] ?? f['format'] ?? '').toString())
                       .map((v) => v.trim())
                       .where((v) => v.isNotEmpty)
                       .toList() ??
                   const <String>[];
               formatSet.addAll(cachedFormats);
-              final formats = formatSet.toList()
-                ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+              final formats =
+                  formatSet.toList()..sort(
+                    (a, b) => a.toLowerCase().compareTo(b.toLowerCase()),
+                  );
 
               final collections = _asList(meta['collection'])
                 ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
               final cachedFilesCount = widget.item.files?.length ?? 0;
-              final thumb = (widget.item.thumb?.trim().isNotEmpty == true)
-                  ? widget.item.thumb!.trim()
-                  : archiveThumbUrl(widget.item.id);
-              final url = (widget.item.url?.trim().isNotEmpty == true)
-                  ? widget.item.url!.trim()
-                  : 'https://archive.org/details/${widget.item.id}';
+              final thumb =
+                  (widget.item.thumb?.trim().isNotEmpty == true)
+                      ? widget.item.thumb!.trim()
+                      : archiveThumbUrl(widget.item.id);
+              final url =
+                  (widget.item.url?.trim().isNotEmpty == true)
+                      ? widget.item.url!.trim()
+                      : 'https://archive.org/details/${widget.item.id}';
 
               final infoChips = <Widget>[];
               if (mediatype.isNotEmpty) {
@@ -665,8 +672,7 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
               final infoRows = <Widget>[
                 if (creator.isNotEmpty)
                   _buildInfoRow(theme, 'Creator', creator),
-                if (added.isNotEmpty)
-                  _buildInfoRow(theme, 'Published', added),
+                if (added.isNotEmpty) _buildInfoRow(theme, 'Published', added),
               ];
 
               if (collections.isNotEmpty) {
@@ -714,15 +720,15 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                     ),
                     description.isNotEmpty
                         ? SelectableText(
-                            description,
-                            style: theme.textTheme.bodyMedium,
-                          )
+                          description,
+                          style: theme.textTheme.bodyMedium,
+                        )
                         : Text(
-                            'No description available.',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
+                          'No description available.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
                           ),
+                        ),
                   ],
                 ),
               );
@@ -738,10 +744,11 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
               );
 
               if (cachedFilesCount > 0) {
-                final cachedList = widget.item.files!
-                    .map((f) => (f['pretty'] ?? f['name'] ?? '').toString())
-                    .where((name) => name.trim().isNotEmpty)
-                    .toList();
+                final cachedList =
+                    widget.item.files!
+                        .map((f) => (f['pretty'] ?? f['name'] ?? '').toString())
+                        .where((name) => name.trim().isNotEmpty)
+                        .toList();
                 if (cachedList.isNotEmpty) {
                   infoRows.add(const SizedBox(height: 16));
                   infoRows.add(

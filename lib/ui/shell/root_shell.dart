@@ -18,12 +18,31 @@ class RootShell extends StatefulWidget {
   const RootShell({super.key});
 
   /// Call this from anywhere to switch tabs
-  static void switchToTab(int index) {
-    _rootKey.currentState?._select(index);
+  static void switchToTab(int index, {bool resetTargetStack = false}) {
+    final state = _rootKey.currentState;
+    if (state == null) return;
+
+    // If switching to a different tab, pop current tab's stack first
+    if (state._current != index) {
+      final currentNav = state._keys[state._current].currentState;
+      currentNav?.popUntil((route) => route.isFirst);
+    }
+
+    // Optionally also reset the target tab's stack (e.g., for logo -> Home)
+    if (resetTargetStack) {
+      final targetNav = state._keys[index].currentState;
+      targetNav?.popUntil((route) => route.isFirst);
+    }
+
+    state._select(index);
   }
 
   /// Global key to access state
   static final GlobalKey<RootShellState> _rootKey = GlobalKey<RootShellState>();
+
+  /// Global key for app bar state
+  static final GlobalKey<ArchivistAppBarState> appBarKey =
+      GlobalKey<ArchivistAppBarState>();
 
   @override
   State<RootShell> createState() => RootShellState();
@@ -39,6 +58,15 @@ class RootShellState extends State<RootShell> {
   );
   int _current = 0;
   bool _ranStartupLoad = false;
+
+  // Tab titles
+  final List<String> _tabTitles = [
+    'Home',
+    'Search',
+    'Favourites',
+    'Collections',
+    'Settings',
+  ];
 
   // Shared trigger for the Search tab
   late final ValueNotifier<bool> _searchActivateTrigger = ValueNotifier(false);
@@ -63,6 +91,9 @@ class RootShellState extends State<RootShell> {
       _keys[index].currentState?.popUntil((route) => route.isFirst);
     } else {
       setState(() => _current = index);
+
+      // Set title for the tab
+      RootShell.appBarKey.currentState?.setPageDesc(_tabTitles[index]);
 
       // Collections tab (index 3) → load local files in isolate
       if (index == 3) {
@@ -101,7 +132,7 @@ class RootShellState extends State<RootShell> {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: overlay,
       child: Scaffold(
-        appBar: const ArchivistAppBar(),
+        appBar: ArchivistAppBar(key: RootShell.appBarKey),
         body: IndexedStack(
           index: _current,
           children: [
@@ -143,36 +174,49 @@ class RootShellState extends State<RootShell> {
             color: Theme.of(context).colorScheme.surface,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
+                color: Colors.black.withOpacity(0.04),
                 blurRadius: 6,
                 offset: const Offset(0, -2),
               ),
             ],
           ),
-          child: NavigationBar(
-            backgroundColor: Colors.transparent,
-            indicatorColor: Theme.of(context).colorScheme.primaryContainer,
-            selectedIndex: _current,
-            onDestinationSelected: _select,
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.home_outlined),
-                label: 'Home',
-              ),
-              NavigationDestination(icon: Icon(Icons.search), label: 'Search'),
-              NavigationDestination(
-                icon: Icon(Icons.favorite_outline),
-                label: 'Favourites',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.collections_bookmark_outlined),
-                label: 'Collections',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.settings_outlined),
-                label: 'Settings',
-              ),
-            ],
+          child: SizedBox(
+            height: 64, // Reduced from default ~80
+            child: NavigationBar(
+              backgroundColor: Colors.transparent,
+              indicatorColor: Theme.of(context).colorScheme.primaryContainer,
+              selectedIndex: _current,
+              onDestinationSelected: _select,
+              labelBehavior:
+                  NavigationDestinationLabelBehavior.onlyShowSelected,
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.home_outlined),
+                  selectedIcon: Icon(Icons.home),
+                  label: 'Home',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.search),
+                  selectedIcon: Icon(Icons.search),
+                  label: 'Search',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.favorite_outline),
+                  selectedIcon: Icon(Icons.favorite),
+                  label: 'Favourites',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.collections_bookmark_outlined),
+                  selectedIcon: Icon(Icons.collections_bookmark),
+                  label: 'Collections',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.settings_outlined),
+                  selectedIcon: Icon(Icons.settings),
+                  label: 'Settings',
+                ),
+              ],
+            ),
           ),
         ),
       ),

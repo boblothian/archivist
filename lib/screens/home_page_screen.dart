@@ -10,6 +10,7 @@ import 'package:archivereader/services/favourites_service_compat.dart';
 import 'package:archivereader/services/filters.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:archivereader/services/thumb_override_service.dart';
+import 'package:archivereader/ui/shell/root_shell.dart'; // <-- Added for app bar control
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -18,6 +19,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../utils/archive_helpers.dart';
 import '../utils/external_launch.dart';
+import '../widgets/big_section_header.dart';
 import 'cbz_viewer_screen.dart';
 import 'collection_detail_screen.dart';
 
@@ -111,6 +113,40 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
     _loadPins();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Subscribe to route observer to update title when this screen is visible
+    final modalRoute = ModalRoute.of(context);
+    if (modalRoute is PageRoute) {
+      final observer =
+          Navigator.of(
+            context,
+          ).widget.observers.whereType<RouteObserver>().firstOrNull;
+      observer?.subscribe(this, modalRoute);
+    }
+  }
+
+  @override
+  void dispose() {
+    final observer =
+        Navigator.of(
+          context,
+        ).widget.observers.whereType<RouteObserver>().firstOrNull;
+    observer?.unsubscribe(this);
+    super.dispose();
+  }
+
+  @override
+  void didPush() {
+    RootShell.appBarKey.currentState?.setPageDesc('Home');
+  }
+
+  @override
+  void didPopNext() {
+    RootShell.appBarKey.currentState?.setPageDesc('Home');
+  }
+
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -169,54 +205,27 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
     );
   }
 
-  void _openManagePins(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder:
-            (_) => ManagePinsScreen(
-              ids: _pinned,
-              onReorder: _onReorderPins,
-              onRemove: _removePin,
-            ),
-      ),
-    );
-  }
-
-  void _openExplore(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const ExploreCollectionsScreen(onPinnedChanged: null),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        elevation: 0,
-        centerTitle: true, // ensures it's centered
-        title: const _BrandWordmark(),
-      ),
-      body: ListView(
-        physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 24.0),
-        children: const <Widget>[
-          SectionHeader(title: 'Continue reading'),
-          SizedBox(height: 8.0),
-          _BuildContinueReading(),
+    return ListView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 24.0),
+      children: const <Widget>[
+        BigSectionHeader('Continue reading'),
+        SizedBox(height: 8.0),
+        _BuildContinueReading(),
 
-          SectionHeader(title: 'Continue watching'),
-          SizedBox(height: 8.0),
-          _BuildContinueWatching(),
+        SizedBox(height: 24.0),
+        BigSectionHeader('Continue watching'),
+        SizedBox(height: 8.0),
+        _BuildContinueWatching(),
 
-          SizedBox(height: 24.0),
-          FeaturedCollectionsCarousel(),
+        SizedBox(height: 24.0),
+        FeaturedCollectionsCarousel(),
 
-          SizedBox(height: 24.0),
-          ExploreByCategory(),
-        ],
-      ),
+        SizedBox(height: 24.0),
+        ExploreByCategory(),
+      ],
     );
   }
 
@@ -401,7 +410,6 @@ class _ResumeMediaCard extends StatelessWidget {
 class _BuildContinueReading extends StatelessWidget {
   const _BuildContinueReading();
 
-  // Prettify the file name the same way ArchiveItemScreen does
   String _prettify(String name) {
     name = name.replaceAll('.pdf', '');
     final match = RegExp(r'^(\d+)[_\s-]+(.*)').firstMatch(name);
@@ -422,7 +430,6 @@ class _BuildContinueReading extends StatelessWidget {
     return number.isNotEmpty ? '$number. $title' : title;
   }
 
-  // Open the exact viewer with the cached file
   Future<void> _openResumeFile({
     required BuildContext context,
     required String id,
@@ -461,7 +468,6 @@ class _BuildContinueReading extends StatelessWidget {
         ),
       );
     } else {
-      // PDF (or unknown) – use the cached file if it exists
       final tempDir = await getTemporaryDirectory();
       final localFile = File('${tempDir.path}/$fileName');
       final exists = await localFile.exists();
@@ -508,8 +514,8 @@ class _BuildContinueReading extends StatelessWidget {
                 .toList();
 
         if (recent.isEmpty) {
-          return const SizedBox(
-            height: 48,
+          return const Padding(
+            padding: EdgeInsets.only(top: 8.0),
             child: Center(
               child: Text(
                 'No recent reading',
@@ -538,15 +544,12 @@ class _BuildContinueReading extends StatelessWidget {
                   final fileUrl = e['fileUrl'] as String?;
                   final kind = (e['kind'] as String?) ?? 'pdf';
 
-                  // ---- THUMBNAIL (initial & resolved) ----
                   final fallback = 'https://archive.org/services/img/$id';
                   final initialThumb = (e['thumb'] as String?) ?? fallback;
 
-                  // ---- TITLE ----
                   final displayTitle =
                       fileName != null ? _prettify(fileName) : rawTitle;
 
-                  // ---- PROGRESS ----
                   double progress = 0.0;
                   String? progressLabel;
 
@@ -566,7 +569,6 @@ class _BuildContinueReading extends StatelessWidget {
                             : null;
                   }
 
-                  // Resolve overrides at build-time so poster updates are reflected here
                   return FutureBuilder<String>(
                     future: _resolveThumb(id, initialThumb),
                     initialData: initialThumb,
@@ -632,7 +634,17 @@ class _BuildContinueWatching extends StatelessWidget {
                 .where((e) => e['kind'] == 'video')
                 .toList();
 
-        if (recent.isEmpty) return const SizedBox.shrink();
+        if (recent.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.only(top: 8.0),
+            child: Center(
+              child: Text(
+                'No recent watching',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+          );
+        }
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -652,7 +664,6 @@ class _BuildContinueWatching extends StatelessWidget {
                   final fileName = e['fileName'] as String?;
                   final percent = (e['percent'] as double?) ?? 0.0;
 
-                  // ---- THUMBNAIL (initial & resolved) ----
                   final fallback = 'https://archive.org/services/img/$id';
                   final initialThumb = (e['thumb'] as String?) ?? fallback;
 
@@ -748,9 +759,7 @@ class _BuildContinueWatching extends StatelessWidget {
   }
 }
 
-// ===== EXTRA SECTIONS ADDED =====
-
-// Featured collections with banner tiles
+// ===== FEATURED COLLECTIONS CAROUSEL =====
 class FeaturedCollectionsCarousel extends StatelessWidget {
   const FeaturedCollectionsCarousel({super.key});
 
@@ -790,7 +799,7 @@ class FeaturedCollectionsCarousel extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         SizedBox(
-          height: 200,
+          height: 120,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -864,7 +873,7 @@ class _FeaturedTile extends StatelessWidget {
         );
       },
       child: Ink(
-        width: 260,
+        width: 200,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
           image: DecorationImage(
@@ -901,18 +910,13 @@ class _FeaturedTile extends StatelessWidget {
   }
 }
 
-// Link out to Archive.org category landing pages
+// ===== EXPLORE BY CATEGORY =====
 class ExploreByCategory extends StatelessWidget {
   const ExploreByCategory({super.key});
 
-  // -----------------------------------------------------------------------
-  // Open a category **inside the app** when we have a matching query.
-  // Otherwise fall back to the external browser (keeps the old behaviour).
-  // -----------------------------------------------------------------------
   Future<void> _openCategory(BuildContext context, String key) async {
     final entry = _inAppCategories[key];
     if (entry != null) {
-      // ---- IN-APP -------------------------------------------------------
       Navigator.of(context).push(
         MaterialPageRoute(
           builder:
@@ -925,7 +929,6 @@ class ExploreByCategory extends StatelessWidget {
       return;
     }
 
-    // ---- FALLBACK (browser) -------------------------------------------
     final url = 'https://archive.org/details/$key';
     final uri = Uri.parse(url);
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -940,7 +943,6 @@ class ExploreByCategory extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    // Build the list from the map – order is the same as the original file.
     final List<({String key, String title, IconData icon})> categories =
         _inAppCategories.entries
             .map((e) => (key: e.key, title: e.value.title, icon: e.value.icon))
@@ -963,7 +965,7 @@ class ExploreByCategory extends StatelessWidget {
             crossAxisCount: 2,
             crossAxisSpacing: 12,
             mainAxisSpacing: 12,
-            childAspectRatio: 1.6,
+            childAspectRatio: 2.0,
           ),
           itemCount: categories.length,
           itemBuilder: (context, i) {
@@ -1007,60 +1009,7 @@ class ExploreByCategory extends StatelessWidget {
   }
 }
 
-// ===== REST OF FILE (supporting widgets) =====
-class _CollectionsGrid extends StatelessWidget {
-  final List<String> data;
-  final void Function(CollectionMeta) onTap;
-  final void Function(int, int) onReorder;
-
-  const _CollectionsGrid({
-    required this.data,
-    required this.onTap,
-    required this.onReorder,
-    super.key,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (data.isEmpty) {
-      return const Center(child: Text('No pinned collections'));
-    }
-
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        childAspectRatio: 3.5,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
-      ),
-      itemCount: data.length,
-      itemBuilder: (context, i) {
-        final id = data[i];
-        final meta = CollectionMeta(
-          categoryName: id,
-          title: id
-              .split(RegExp(r'[_\-]'))
-              .map(
-                (s) => s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}',
-              )
-              .join(' '),
-          thumbnailUrl: 'https://archive.org/services/img/$id',
-          downloads: 0,
-        );
-        return CollectionCapsuleCard(
-          identifier: meta.categoryName,
-          title: meta.title,
-          thumbnailUrl: meta.thumbnailUrl,
-          downloads: meta.downloads,
-          onTap: () => onTap(meta),
-        );
-      },
-    );
-  }
-}
-
+// ===== SUPPORTING WIDGETS =====
 class SectionHeader extends StatelessWidget {
   final String title;
   final String? actionLabel;
@@ -1084,121 +1033,4 @@ class SectionHeader extends StatelessWidget {
       ],
     );
   }
-}
-
-class _BrandWordmark extends StatelessWidget {
-  const _BrandWordmark();
-  @override
-  Widget build(BuildContext context) => const Text('Home');
-}
-
-class ReadingListCarousel extends StatelessWidget {
-  const ReadingListCarousel({super.key});
-  @override
-  Widget build(BuildContext context) => const SizedBox();
-}
-
-class ExploreCollectionsScreen extends StatelessWidget {
-  final void Function(String)? onPinnedChanged;
-  const ExploreCollectionsScreen({super.key, this.onPinnedChanged});
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Explore Collections')),
-    body: const Center(child: Text('Coming soon')),
-  );
-}
-
-class ManagePinsScreen extends StatelessWidget {
-  final List<String> ids;
-  final void Function(int, int) onReorder;
-  final ValueChanged<String> onRemove;
-  const ManagePinsScreen({
-    super.key,
-    required this.ids,
-    required this.onReorder,
-    required this.onRemove,
-  });
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Manage Pinned')),
-    body: const Center(child: Text('Coming soon')),
-  );
-}
-
-class MagazinesHubScreen extends StatelessWidget {
-  final ArchiveFilters filters;
-  const MagazinesHubScreen({super.key, required this.filters});
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Magazines')),
-    body: const Center(child: Text('Coming soon')),
-  );
-}
-
-class ReadingListScreen extends StatelessWidget {
-  const ReadingListScreen({super.key});
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Reading Lists')),
-    body: const Center(child: Text('Coming soon')),
-  );
-}
-
-class CollectionMeta {
-  final String categoryName;
-  final String title;
-  final String? thumbnailUrl;
-  final int downloads;
-  CollectionMeta({
-    required this.categoryName,
-    required this.title,
-    this.thumbnailUrl,
-    required this.downloads,
-  });
-}
-
-class _SimpleSearchDelegate extends SearchDelegate<void> {
-  _SimpleSearchDelegate(this.filters);
-  final ArchiveFilters filters;
-
-  @override
-  String? get searchFieldLabel => 'Search Archive (title/subject/creator)…';
-
-  @override
-  List<Widget>? buildActions(BuildContext context) => [
-    IconButton(
-      onPressed: query.isEmpty ? null : () => query = '',
-      icon: const Icon(Icons.clear),
-    ),
-  ];
-
-  @override
-  Widget? buildLeading(BuildContext context) => IconButton(
-    onPressed: () => close(context, null),
-    icon: const Icon(Icons.arrow_back),
-  );
-
-  @override
-  Widget buildResults(BuildContext context) {
-    final q = query.trim();
-    if (q.isEmpty) return const SizedBox.shrink();
-    final advQuery =
-        '(title:"$q" OR subject:"$q" OR description:"$q" OR creator:"$q")';
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder:
-              (_) => CollectionDetailScreen(
-                categoryName: 'Search',
-                customQuery: advQuery,
-              ),
-        ),
-      );
-      close(context, null);
-    });
-    return const SizedBox.shrink();
-  }
-
-  @override
-  Widget buildSuggestions(BuildContext context) => const SizedBox.shrink();
 }

@@ -346,9 +346,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       final data = await _decodeJson(resp.body);
       final response = (data['response'] as Map<String, dynamic>?) ?? const {};
       final List docs = (response['docs'] as List?) ?? const [];
-      _numFound =
-          (response['numFound'] as int?) ??
-          (_numFound == 0 ? docs.length : _numFound);
 
       String flat(dynamic v) {
         if (v == null) return '';
@@ -718,175 +715,233 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       if (mediatype == 'texts') {
         final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
 
-        final pdfFiles =
-            rawFiles.cast<Map<String, dynamic>>().where((f) {
-              final name = (f['name'] ?? '').toString().toLowerCase();
-              final fmt = (f['format'] ?? '').toString().toLowerCase();
-              return name.endsWith('.pdf') || fmt.contains('pdf');
-            }).toList();
+        // ---- Gather supported types ----
+        final pdfFiles = <Map<String, dynamic>>[];
+        final imgFiles = <Map<String, dynamic>>[];
+        final txtFiles = <Map<String, dynamic>>[];
+        final epubFiles = <Map<String, dynamic>>[];
 
+        for (final f in rawFiles) {
+          if (f is! Map) continue;
+          final map = f.cast<String, dynamic>();
+          final name = (map['name'] ?? '').toString().toLowerCase();
+          final fmt = (map['format'] ?? '').toString().toLowerCase();
+
+          if (name.endsWith('.pdf') || fmt.contains('pdf'))
+            pdfFiles.add(map);
+          else if (name.endsWith('.jpg') ||
+              name.endsWith('.jpeg') ||
+              name.endsWith('.png') ||
+              name.endsWith('.gif') ||
+              name.endsWith('.webp') ||
+              fmt.contains('jpeg') ||
+              fmt.contains('png') ||
+              fmt.contains('gif') ||
+              fmt.contains('webp'))
+            imgFiles.add(map);
+          else if (name.endsWith('.txt') ||
+              name.endsWith('.md') ||
+              name.endsWith('.log') ||
+              name.endsWith('.csv') ||
+              fmt.contains('text') ||
+              fmt.contains('plain'))
+            txtFiles.add(map);
+          else if (name.endsWith('.epub'))
+            epubFiles.add(map);
+        }
+
+        // ---- Build UI options ----
+        final options = <String, VoidCallback>{};
+
+        // PDF
         if (pdfFiles.isNotEmpty) {
-          if (pdfFiles.length == 1) {
-            final pdf = pdfFiles.first;
-            final name = pdf['name'] as String;
-            final fileUrl =
-                'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
+          options['PDF Document${pdfFiles.length > 1 ? ' (${pdfFiles.length})' : ''}'] =
+              () async {
+                if (pdfFiles.length == 1) {
+                  final file = pdfFiles.first;
+                  final name = file['name'] as String;
+                  final url =
+                      'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
+                  await RecentProgressService.instance.touch(
+                    id: id,
+                    title: item['title'] ?? id,
+                    thumb: archiveThumbUrl(id),
+                    kind: 'pdf',
+                    fileUrl: url,
+                    fileName: name,
+                  );
+                  if (!mounted || _isDisposed) return;
+                  Navigator.of(context).push(
+                    _sharedAxisRoute(
+                      PdfViewerScreen(
+                        url: url,
+                        filenameHint: name,
+                        identifier: id,
+                        title: item['title'] ?? id,
+                      ),
+                    ),
+                  );
+                } else {
+                  final list =
+                      pdfFiles
+                          .map((f) => {'name': f['name'] as String})
+                          .cast<Map<String, String>>()
+                          .toList();
+                  Navigator.of(context).push(
+                    _sharedAxisRoute(
+                      ArchiveItemScreen(
+                        title: item['title'] ?? id,
+                        identifier: id,
+                        files: list,
+                      ),
+                    ),
+                  );
+                }
+              };
+        }
 
-            await RecentProgressService.instance.touch(
-              id: id,
-              title: item['title'] ?? id,
-              thumb: archiveThumbUrl(id),
-              kind: 'pdf',
-              fileUrl: fileUrl,
-              fileName: name,
-            );
-
-            if (!mounted || _isDisposed) return;
-
-            Navigator.of(context).push(
-              _sharedAxisRoute(
-                PdfViewerScreen(
-                  url: fileUrl,
-                  filenameHint: name,
-                  identifier: id,
+        // Images
+        if (imgFiles.isNotEmpty) {
+          options['Image Gallery${imgFiles.length > 1 ? ' (${imgFiles.length})' : ''}'] =
+              () async {
+                final urls =
+                    imgFiles
+                        .map(
+                          (f) =>
+                              'https://archive.org/download/$id/${Uri.encodeComponent(f['name'] as String)}',
+                        )
+                        .toList();
+                await RecentProgressService.instance.touch(
+                  id: id,
                   title: item['title'] ?? id,
-                ),
-              ),
+                  thumb: archiveThumbUrl(id),
+                  kind: 'image',
+                );
+                if (!mounted || _isDisposed) return;
+                Navigator.of(
+                  context,
+                ).push(_sharedAxisRoute(ImageViewerScreen(imageUrls: urls)));
+              };
+        }
+
+        // Text
+        if (txtFiles.isNotEmpty) {
+          options['Text File${txtFiles.length > 1 ? ' (${txtFiles.length})' : ''}'] =
+              () async {
+                final file = txtFiles.first;
+                final name = file['name'] as String;
+                final url =
+                    'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
+                await RecentProgressService.instance.touch(
+                  id: id,
+                  title: item['title'] ?? id,
+                  thumb: archiveThumbUrl(id),
+                  kind: 'text',
+                  fileUrl: url,
+                  fileName: name,
+                );
+                if (!mounted || _isDisposed) return;
+                Navigator.of(context).push(
+                  _sharedAxisRoute(
+                    TextViewerScreen(
+                      url: url,
+                      filenameHint: name,
+                      identifier: id,
+                      title: item['title'] ?? id,
+                    ),
+                  ),
+                );
+              };
+        }
+
+        // ---- Show UI or fallback ----
+        if (options.isEmpty) {
+          final list =
+              rawFiles
+                  .whereType<Map>()
+                  .map((f) => f.cast<String, dynamic>())
+                  .where((f) => (f['name'] as String?)?.isNotEmpty == true)
+                  .map<Map<String, String>>(
+                    (f) => {'name': f['name'] as String},
+                  )
+                  .toList();
+
+          if (list.isEmpty) {
+            final ok = await launchUrl(
+              Uri.parse('https://archive.org/details/$id'),
+              mode: LaunchMode.externalApplication,
             );
+            if (!ok && mounted && !_isDisposed) {
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('No files found')));
+            }
             return;
           }
 
-          final pdfList =
-              pdfFiles
-                  .map((f) => {'name': f['name'] as String})
-                  .cast<Map<String, String>>()
-                  .toList();
-
-          if (!mounted || _isDisposed) return;
           Navigator.of(context).push(
             _sharedAxisRoute(
               ArchiveItemScreen(
                 title: item['title'] ?? id,
                 identifier: id,
-                files: pdfList,
+                files: list,
               ),
             ),
           );
           return;
         }
 
-        final imageFiles =
-            rawFiles.cast<Map<String, dynamic>>().where((f) {
-              final name = (f['name'] ?? '').toString().toLowerCase();
-              final fmt = (f['format'] ?? '').toString().toLowerCase();
-              return name.endsWith('.jpg') ||
-                  name.endsWith('.jpeg') ||
-                  name.endsWith('.png') ||
-                  name.endsWith('.gif') ||
-                  name.endsWith('.webp') ||
-                  fmt.contains('jpeg') ||
-                  fmt.contains('png') ||
-                  fmt.contains('gif') ||
-                  fmt.contains('webp');
-            }).toList();
-
-        if (imageFiles.isNotEmpty) {
-          final imageUrls =
-              imageFiles
-                  .map(
-                    (f) =>
-                        'https://archive.org/download/$id/${Uri.encodeComponent(f['name'] as String)}',
-                  )
-                  .toList();
-
-          await RecentProgressService.instance.touch(
-            id: id,
-            title: item['title'] ?? id,
-            thumb: archiveThumbUrl(id),
-            kind: 'image',
-          );
-
-          if (!mounted || _isDisposed) return;
-
-          Navigator.of(
-            context,
-          ).push(_sharedAxisRoute(ImageViewerScreen(imageUrls: imageUrls)));
-          return;
-        }
-
-        final textFiles =
-            rawFiles.cast<Map<String, dynamic>>().where((f) {
-              final name = (f['name'] ?? '').toString().toLowerCase();
-              final fmt = (f['format'] ?? '').toString().toLowerCase();
-              return name.endsWith('.txt') ||
-                  name.endsWith('.md') ||
-                  name.endsWith('.log') ||
-                  name.endsWith('.csv') ||
-                  fmt.contains('text') ||
-                  fmt.contains('plain');
-            }).toList();
-
-        if (textFiles.isNotEmpty) {
-          final txt = textFiles.first;
-          final name = txt['name'] as String;
-          final fileUrl =
-              'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
-
-          await RecentProgressService.instance.touch(
-            id: id,
-            title: item['title'] ?? id,
-            thumb: archiveThumbUrl(id),
-            kind: 'text',
-            fileUrl: fileUrl,
-            fileName: name,
-          );
-
-          if (!mounted || _isDisposed) return;
-
-          Navigator.of(context).push(
-            _sharedAxisRoute(
-              TextViewerScreen(
-                url: fileUrl,
-                filenameHint: name,
-                identifier: id,
-                title: item['title'] ?? id,
-              ),
-            ),
-          );
-          return;
-        }
-
-        final justNames =
-            rawFiles
-                .whereType<Map>()
-                .where((f) => (f['name'] as String?)?.isNotEmpty == true)
-                .map<Map<String, String>>((f) => {'name': f['name'] as String})
-                .toList();
-
-        if (justNames.isEmpty) {
-          final ok = await launchUrl(
-            Uri.parse('https://archive.org/details/$id'),
-            mode: LaunchMode.externalApplication,
-          );
-          if (!ok && mounted && !_isDisposed) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('No files found and cannot open on web.'),
-              ),
-            );
-          }
-          return;
-        }
-
+        // Bottom sheet with icons
         if (!mounted || _isDisposed) return;
-        Navigator.of(context).push(
-          _sharedAxisRoute(
-            ArchiveItemScreen(
-              title: item['title'] ?? id,
-              identifier: id,
-              files: justNames,
-            ),
-          ),
+        _dismissKeyboard();
+
+        await showModalBottomSheet<void>(
+          context: context,
+          showDragHandle: true,
+          builder:
+              (ctx) => SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Open as...',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 12),
+                      ...options.entries.map(
+                        (e) => ListTile(
+                          leading: Icon(
+                            e.key.contains('PDF')
+                                ? Icons.picture_as_pdf
+                                : e.key.contains('Image')
+                                ? Icons.photo_library
+                                : e.key.contains('Text')
+                                ? Icons.description
+                                : e.key.contains('Comic')
+                                ? Icons.book
+                                : Icons.menu_book,
+                          ),
+                          title: Text(e.key),
+                          onTap: () {
+                            Navigator.of(ctx).pop();
+                            e.value();
+                          },
+                        ),
+                      ),
+                      const Divider(height: 24),
+                      Center(
+                        child: TextButton(
+                          onPressed: () => Navigator.of(ctx).pop(),
+                          child: const Text('Cancel'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
         );
         return;
       }
@@ -1302,7 +1357,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       ),
       body: Column(
         children: [
-          _buildChips(cs),
           Expanded(
             child: RefreshIndicator(
               onRefresh: _onRefresh,
@@ -1355,20 +1409,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                 child: const Icon(Icons.arrow_upward),
               )
               : null,
-    );
-  }
-
-  Widget _buildChips(ColorScheme cs) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: -6,
-        children: [
-          if (_numFound > 0)
-            InputChip(label: Text('Found $_numFound'), onPressed: null),
-        ],
-      ),
     );
   }
 

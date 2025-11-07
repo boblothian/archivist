@@ -194,8 +194,12 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
       if (ext == '.pdf') {
         viewer = PdfViewerScreen(
           file: cachedFile,
+          url: fileUrl, // optional, but helpful for progress metadata
+          filenameHint:
+              fileName, // <<< add this so resume is per-file, not per-identifier
           identifier: widget.identifier,
           title: widget.title,
+          thumbUrl: thumbUrl,
         );
       } else if (['.cbz', '.cbr'].contains(ext)) {
         viewer = CbzViewerScreen(

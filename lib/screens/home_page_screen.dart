@@ -216,7 +216,7 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
         _BuildContinueReading(),
 
         SizedBox(height: 24.0),
-        BigSectionHeader('Continue watching'),
+        BigSectionHeader('Recently watched'),
         SizedBox(height: 8.0),
         _BuildContinueWatching(),
 

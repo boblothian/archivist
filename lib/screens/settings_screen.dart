@@ -118,7 +118,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       () => showAboutDialog(
                         context: context,
                         applicationName: 'Archivist Reader',
-                        applicationVersion: '0.3.1',
+                        applicationVersion: '0.3.2',
                         applicationIcon: Image.asset(
                           'assets/images/logo.png',
                           width: 48,
@@ -207,7 +207,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           Center(
             child: Text(
-              'Archivist Reader v0.3.1',
+              'Archivist Reader v0.3.2',
               style: GoogleFonts.inter(
                 fontSize: 13,
                 color: theme.textTheme.bodySmall?.color?.withOpacity(0.6),

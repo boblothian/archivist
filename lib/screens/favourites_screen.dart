@@ -1,9 +1,9 @@
 // lib/screens/favourites_screen.dart
-import 'package:archivereader/services/downloads_service.dart';
+// NEW: open the full Archive Item page when tapping a favourite
+import 'package:archivereader/screens/archive_item_screen.dart';
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:archivereader/ui/capsule_theme.dart';
-import 'package:archivereader/utils/open_archive_item.dart'; // for showVideoFileChooser
 import 'package:archivereader/widgets/capsule_thumb_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,7 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../archive_api.dart';
 import '../utils/archive_helpers.dart';
-import '../utils/external_launch.dart';
+import '../utils/open_archive_item.dart';
 
 class FavoritesScreen extends StatelessWidget {
   final String? initialFolder;
@@ -49,6 +49,245 @@ class FavoritesScreen extends StatelessWidget {
                 },
               ),
             ),
+            actions: [
+              // Three-dot menu: New, Rename (except All), divider, red Delete (except All)
+              PopupMenuButton<_FolderMenu>(
+                tooltip: 'Folder options',
+                icon: const Icon(Icons.more_vert),
+                onSelected: (_FolderMenu value) async {
+                  final svc = FavoritesService.instance;
+                  final theme = Theme.of(context);
+
+                  Future<String?> _inputName({
+                    required String title,
+                    String? initial,
+                    required String confirmLabel,
+                    required bool isRename,
+                  }) async {
+                    final controller = TextEditingController(
+                      text: initial ?? '',
+                    );
+                    String? error;
+                    return showDialog<String>(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (ctx) {
+                        return StatefulBuilder(
+                          builder:
+                              (ctx, setState) => AlertDialog(
+                                title: Text(title),
+                                content: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    TextField(
+                                      controller: controller,
+                                      autofocus: true,
+                                      textInputAction: TextInputAction.done,
+                                      onSubmitted:
+                                          (_) => Navigator.of(
+                                            ctx,
+                                          ).pop(controller.text),
+                                      decoration: InputDecoration(
+                                        hintText: 'Folder name',
+                                        errorText: error,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, null),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () {
+                                      final raw = controller.text;
+                                      final name = raw.trim();
+                                      // Why: prevent bad state and duplicates.
+                                      if (name.isEmpty) {
+                                        setState(
+                                          () => error = 'Name cannot be empty',
+                                        );
+                                        return;
+                                      }
+                                      if (name.toLowerCase() == 'all') {
+                                        setState(
+                                          () => error = '"All" is reserved',
+                                        );
+                                        return;
+                                      }
+                                      if (isRename && name == selectedFolder) {
+                                        setState(
+                                          () => error = 'Name unchanged',
+                                        );
+                                        return;
+                                      }
+                                      if (svc.folderExists(name)) {
+                                        setState(
+                                          () => error = 'Folder already exists',
+                                        );
+                                        return;
+                                      }
+                                      Navigator.pop(ctx, name);
+                                    },
+                                    child: Text(confirmLabel),
+                                  ),
+                                ],
+                              ),
+                        );
+                      },
+                    );
+                  }
+
+                  if (value == _FolderMenu.newFolder) {
+                    final newName = await _inputName(
+                      title: 'New folder',
+                      confirmLabel: 'Create',
+                      isRename: false,
+                    );
+                    if (newName == null) return;
+
+                    await svc.createFolder(newName);
+
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Created folder "$newName"')),
+                    );
+                    Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(
+                        builder: (_) => FavoritesScreen(initialFolder: newName),
+                      ),
+                    );
+                    return;
+                  }
+
+                  if (value == _FolderMenu.rename) {
+                    if (selectedFolder == 'All') return;
+                    final newName = await _inputName(
+                      title: 'Rename folder',
+                      initial: selectedFolder,
+                      confirmLabel: 'Rename',
+                      isRename: true,
+                    );
+                    if (newName == null) return;
+
+                    await svc.renameFolder(selectedFolder, newName);
+
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Renamed to "$newName"')),
+                    );
+                    Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(
+                        builder: (_) => FavoritesScreen(initialFolder: newName),
+                      ),
+                    );
+                    return;
+                  }
+
+                  if (value == _FolderMenu.delete) {
+                    if (selectedFolder == 'All') return;
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder:
+                          (ctx) => AlertDialog(
+                            title: const Text('Delete folder?'),
+                            content: Text(
+                              'Delete the folder "$selectedFolder"? '
+                              'This removes the folder and the favourites inside it. '
+                              'Items in other folders remain.',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, false),
+                                child: const Text('Cancel'),
+                              ),
+                              FilledButton.icon(
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: theme.colorScheme.error,
+                                  foregroundColor: theme.colorScheme.onError,
+                                ),
+                                icon: const Icon(Icons.delete_forever),
+                                label: const Text('Delete'),
+                                onPressed: () => Navigator.pop(ctx, true),
+                              ),
+                            ],
+                          ),
+                    );
+                    if (confirmed != true) return;
+
+                    await svc.deleteFolder(selectedFolder);
+
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Deleted folder "$selectedFolder"'),
+                      ),
+                    );
+                    Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(
+                        builder:
+                            (_) => const FavoritesScreen(initialFolder: 'All'),
+                      ),
+                    );
+                  }
+                },
+                itemBuilder: (ctx) {
+                  final items = <PopupMenuEntry<_FolderMenu>>[
+                    PopupMenuItem<_FolderMenu>(
+                      value: _FolderMenu.newFolder,
+                      child: Row(
+                        children: const [
+                          Icon(Icons.create_new_folder_outlined),
+                          SizedBox(width: 12),
+                          Text('New folder'),
+                        ],
+                      ),
+                    ),
+                  ];
+                  if (selectedFolder != 'All') {
+                    items.addAll([
+                      PopupMenuItem<_FolderMenu>(
+                        value: _FolderMenu.rename,
+                        child: Row(
+                          children: const [
+                            Icon(Icons.drive_file_rename_outline),
+                            SizedBox(width: 12),
+                            Text('Rename folder'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuDivider(),
+                      PopupMenuItem<_FolderMenu>(
+                        value: _FolderMenu.delete,
+                        child: Builder(
+                          builder: (ctx) {
+                            final theme = Theme.of(ctx);
+                            return Row(
+                              children: [
+                                Icon(
+                                  Icons.delete_forever_outlined,
+                                  color: theme.colorScheme.error,
+                                ),
+                                const SizedBox(width: 12),
+                                Text(
+                                  'Delete folder',
+                                  style: TextStyle(
+                                    color: theme.colorScheme.error,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                    ]);
+                  }
+                  return items;
+                },
+              ),
+            ],
           ),
           body: _GridBody(folderName: selectedFolder, items: items),
         );
@@ -56,6 +295,8 @@ class FavoritesScreen extends StatelessWidget {
     );
   }
 }
+
+enum _FolderMenu { newFolder, rename, delete }
 
 // ── Grid Body with capsule thumbs and delete "X" ──────────────────────────────
 class _GridBody extends StatefulWidget {
@@ -124,7 +365,7 @@ class _GridBodyState extends State<_GridBody>
             final id = fav.id.trim();
             final title = fav.title.trim().isEmpty ? id : fav.title.trim();
             final thumb =
-                fav.thumb?.trim().isNotEmpty == true
+                (fav.thumb?.trim().isNotEmpty == true)
                     ? fav.thumb!.trim()
                     : archiveThumbUrl(id);
 
@@ -133,6 +374,7 @@ class _GridBodyState extends State<_GridBody>
               child: InkWell(
                 borderRadius: BorderRadius.circular(kCapsuleRadius),
                 onTap: () async {
+                  // record touch for recents
                   await RecentProgressService.instance.touch(
                     id: id,
                     title: title,
@@ -142,58 +384,84 @@ class _GridBodyState extends State<_GridBody>
 
                   if (!context.mounted) return;
 
-                  // 1. Use cached files if available
-                  final cachedFiles = fav.files;
-                  if (cachedFiles != null && cachedFiles.isNotEmpty) {
-                    await _openFileChooser(
-                      context: context,
-                      identifier: id,
-                      title: title,
-                      files: cachedFiles,
-                      thumb: thumb,
+                  // 1) use cached files if available, otherwise fetch + cache
+                  List<Map<String, String>> files =
+                      fav.files ?? const <Map<String, String>>[];
+
+                  if (files.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Loading files...')),
                     );
-                    return;
-                  }
-
-                  // 2. Fetch from network, cache, then open
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Loading files...')),
-                  );
-
-                  try {
-                    final files = await ArchiveApi.fetchFilesForIdentifier(id);
-                    if (files.isEmpty) {
+                    try {
+                      files = await ArchiveApi.fetchFilesForIdentifier(id);
+                      if (files.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('No downloadable files found'),
+                          ),
+                        );
+                        return;
+                      }
+                      // cache files back into favourites
+                      final updated = fav.copyWith(files: files);
+                      await FavoritesService.instance.addToFolder(
+                        widget.folderName,
+                        updated,
+                      );
+                    } catch (e) {
+                      if (!context.mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('No downloadable files found'),
+                        SnackBar(
+                          content: Text(
+                            'Failed to load files: ${e.toString().split('\n').first}',
+                          ),
+                          backgroundColor: Colors.red,
                         ),
                       );
                       return;
                     }
+                  }
 
-                    // Cache files
-                    final updated = fav.copyWith(files: files);
-                    await svc.addToFolder(widget.folderName, updated);
+                  if (!context.mounted) return;
 
-                    if (!context.mounted) return;
+                  // 2) If there are any videos → open the old bottom sheet chooser
+                  final videoFiles =
+                      files.where((f) {
+                        final name = (f['name'] ?? '').toLowerCase();
+                        return [
+                          'mp4',
+                          'm4v',
+                          'webm',
+                          'mkv',
+                          'm3u8',
+                          'avi',
+                          'mov',
+                        ].any(name.endsWith);
+                      }).toList();
 
-                    await _openFileChooser(
+                  if (videoFiles.isNotEmpty) {
+                    await showVideoFileChooser(
                       context: context,
                       identifier: id,
                       title: title,
-                      files: files,
-                      thumb: thumb,
+                      videoOptions: videoFiles,
+                      thumbForId: (_) => thumb,
                     );
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Failed to load files: ${e.toString().split('\n').first}',
-                        ),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
+                    return;
                   }
+
+                  // 3) Otherwise open the Archive Item screen
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder:
+                          (_) => ArchiveItemScreen(
+                            title: title,
+                            identifier: id,
+                            files: files,
+                            parentThumbUrl: thumb, // for audio thumb reuse
+                          ),
+                    ),
+                  );
                 },
                 onLongPress: () => _showMetadataSheet(fav),
                 child: Column(
@@ -814,205 +1082,5 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
         ),
       ),
     );
-  }
-}
-
-// ── File Chooser (PDF/EPUB/CBZ + Videos) ─────────────────────────────
-Future<void> _openFileChooser({
-  required BuildContext context,
-  required String identifier,
-  required String title,
-  required List<Map<String, String>> files,
-  String? thumb,
-}) async {
-  final thumbUrl = thumb ?? archiveThumbUrl(identifier);
-
-  // Detect if all files are videos → use existing video chooser
-  final videoFiles =
-      files.where((f) {
-        final name = (f['name'] ?? '').toLowerCase();
-        return [
-          'mp4',
-          'm4v',
-          'webm',
-          'mkv',
-          'm3u8',
-          'avi',
-          'mov',
-        ].any(name.endsWith);
-      }).toList();
-
-  if (videoFiles.isNotEmpty && videoFiles.length == files.length) {
-    await showVideoFileChooser(
-      context: context,
-      identifier: identifier,
-      title: title,
-      videoOptions: videoFiles,
-      thumbForId: (_) => thumbUrl,
-    );
-    return;
-  }
-
-  // Otherwise: show generic file chooser
-  await showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    showDragHandle: true,
-    builder:
-        (_) => _FileChooserSheet(
-          identifier: identifier,
-          title: title,
-          files: files,
-          thumb: thumbUrl,
-        ),
-  );
-}
-
-class _FileChooserSheet extends StatelessWidget {
-  final String identifier;
-  final String title;
-  final List<Map<String, String>> files;
-  final String thumb;
-
-  const _FileChooserSheet({
-    required this.identifier,
-    required this.title,
-    required this.files,
-    required this.thumb,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.folder_open),
-            title: Text(
-              title,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: const Text('Select a file to open or download'),
-          ),
-          const Divider(height: 1),
-          Flexible(
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: files.length,
-              itemBuilder: (_, i) {
-                final f = files[i];
-                final name = f['name'] ?? 'unknown';
-                final size = f['size'] ?? '';
-                final fmt = (f['fmt'] ?? '').toUpperCase();
-
-                return FutureBuilder<bool>(
-                  future: DownloadsService.instance.isDownloaded(identifier),
-                  builder: (c, snap) {
-                    final isDownloaded = snap.data == true;
-                    return ListTile(
-                      leading: Icon(_iconFor(name)),
-                      title: Text(
-                        name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        '$fmt • $size${isDownloaded ? '  •  Downloaded' : ''}',
-                        style: TextStyle(
-                          color: isDownloaded ? Colors.green : null,
-                          fontWeight: isDownloaded ? FontWeight.w600 : null,
-                        ),
-                      ),
-                      trailing:
-                          isDownloaded
-                              ? const Icon(
-                                Icons.check_circle,
-                                color: Colors.green,
-                              )
-                              : null,
-                      onTap: () => _openFile(context, f),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  IconData _iconFor(String name) {
-    final l = name.toLowerCase();
-    if (l.endsWith('.pdf')) return Icons.picture_as_pdf;
-    if (l.endsWith('.epub')) return Icons.book;
-    if (l.endsWith('.cbz') || l.endsWith('.cbr'))
-      return Icons.collections_bookmark;
-    if (l.contains('mp4') || l.contains('webm') || l.contains('mkv'))
-      return Icons.movie;
-    return Icons.description;
-  }
-
-  Future<void> _openFile(BuildContext ctx, Map<String, String> file) async {
-    Navigator.pop(ctx); // close sheet
-
-    final url = file['url']!;
-    final name = file['name']!;
-    final mime = _mimeFor(name);
-
-    // Update recent progress
-    await RecentProgressService.instance.touch(
-      id: identifier,
-      title: title,
-      thumb: thumb,
-      kind: 'item',
-      fileUrl: url,
-      fileName: name,
-    );
-
-    // Ask: Browser or App?
-    final choice = await showDialog<String>(
-      context: ctx,
-      builder:
-          (d) => AlertDialog(
-            title: const Text('Open file'),
-            content: Text('Open “$name” with:'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(d, 'browser'),
-                child: const Text('Browser'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(d, 'app'),
-                child: const Text('Installed app'),
-              ),
-            ],
-          ),
-    );
-
-    if (choice == null) return;
-
-    if (choice == 'browser') {
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-    } else {
-      await openExternallyWithChooser(
-        url: url,
-        mimeType: mime,
-        chooserTitle: 'Open with',
-      );
-    }
-  }
-
-  String _mimeFor(String name) {
-    final l = name.toLowerCase();
-    if (l.endsWith('.pdf')) return 'application/pdf';
-    if (l.endsWith('.epub')) return 'application/epub+zip';
-    if (l.endsWith('.cbz')) return 'application/vnd.comicbook+zip';
-    if (l.endsWith('.cbr')) return 'application/vnd.comicbook+rar';
-    if (l.contains('mp4')) return 'video/mp4';
-    if (l.contains('webm')) return 'video/webm';
-    if (l.contains('mkv')) return 'video/x-matroska';
-    return '*/*';
   }
 }

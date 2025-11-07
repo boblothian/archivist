@@ -43,6 +43,24 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
   String get _progressId => widget.identifier;
 
+  /// Unique resume key per *identifier + file*, so different PDFs don’t clash.
+  String get _resumeKey {
+    final parts = <String>['pdf_page', widget.identifier];
+
+    if (widget.filenameHint != null && widget.filenameHint!.isNotEmpty) {
+      parts.add(widget.filenameHint!);
+    } else if (widget.url != null && widget.url!.isNotEmpty) {
+      final last = Uri.tryParse(widget.url!)?.pathSegments.last;
+      parts.add(last ?? widget.url!);
+    } else if (widget.file != null) {
+      final last = widget.file!.path.split(Platform.pathSeparator).last;
+      parts.add(last);
+    }
+
+    return parts.join('_');
+    // Example: pdf_page_mars_attacks_1993_issue_01.pdf
+  }
+
   @override
   void initState() {
     super.initState();
@@ -90,7 +108,8 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       }
 
       final prefs = await SharedPreferences.getInstance();
-      final saved = prefs.getInt('pdf_page_${widget.identifier}') ?? 0;
+      // Use the *per-file* resume key. Defaults to 0 (page index 0 == page 1).
+      final saved = prefs.getInt(_resumeKey) ?? 0;
       _defaultPage = saved;
 
       ifMounted(this, () => setState(() => _loading = false));
@@ -104,7 +123,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
   Future<void> _saveResume(int page) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('pdf_page_${widget.identifier}', page);
+    await prefs.setInt(_resumeKey, page);
   }
 
   // Fullscreen top bar: back + page indicator

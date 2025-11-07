@@ -6,44 +6,47 @@ class RecentProgressService {
   RecentProgressService._();
   static final instance = RecentProgressService._();
 
-  // Lazy-loaded box
-  Box? _box;
+  Box<dynamic>? _box;
   bool _isInitializing = false;
 
-  // REACTIVE NOTIFIER
   final version = ValueNotifier<int>(0);
   void _notify() => version.value++;
 
-  /// Ensures the box is open — safe to call multiple times
-  Future<Box> _ensureBox() async {
-    if (_box != null && _box!.isOpen) return _box!;
-    if (_isInitializing) {
-      // Wait for ongoing init
-      await Future.doWhile(
-        () => _isInitializing,
-      ).timeout(const Duration(seconds: 5));
-      return _box!;
-    }
+  // --- Init lifecycle (memoized) ---
+  late final Future<void> ready = _init();
+  Future<void> init() => ready;
 
+  Future<void> _init() async {
+    if (_box != null && _box!.isOpen) return;
+    if (_isInitializing) {
+      // avoid busy spin; wait until done
+      while (_isInitializing) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      return;
+    }
     _isInitializing = true;
     try {
-      _box = await Hive.openBox('recent_progress');
-      return _box!;
+      _box =
+          Hive.isBoxOpen('recent_progress')
+              ? Hive.box<dynamic>('recent_progress')
+              : await Hive.openBox<dynamic>('recent_progress');
     } catch (e) {
-      debugPrint('RecentProgressService: Failed to open box: $e');
+      debugPrint('RecentProgressService: openBox failed: $e');
       rethrow;
     } finally {
       _isInitializing = false;
     }
+    _notify(); // <-- trigger UI rebuild after cold start
   }
 
-  /// Initialize — now just a no-op (Hive.initFlutter() done in main.dart)
-  Future<void> init() async {
-    // No-op: box is opened lazily on first use
-    // This allows startup to continue even if Hive isn't ready
+  // Keep for writers that may be called before init() has been awaited.
+  Future<Box<dynamic>> _ensureBox() async {
+    await init();
+    return _box!;
   }
 
-  /// First open — merge with existing
+  // ----------------- Writers -----------------
   Future<void> touch({
     required String id,
     required String title,
@@ -68,7 +71,6 @@ class RecentProgressService {
     _notify();
   }
 
-  /// PDF page update
   Future<void> updatePdf({
     required String id,
     required String title,
@@ -96,7 +98,6 @@ class RecentProgressService {
     _notify();
   }
 
-  /// EPUB progress
   Future<void> updateEpub({
     required String id,
     required String title,
@@ -127,40 +128,6 @@ class RecentProgressService {
     _notify();
   }
 
-  Future<void> remove(String id) async {
-    final box = await _ensureBox();
-    await box.delete(id);
-    _notify();
-  }
-
-  Map<String, dynamic>? get lastViewed {
-    final box = _box;
-    if (box == null || box.isEmpty) return null;
-    final list = box.values.map((v) => Map<String, dynamic>.from(v)).toList();
-    list.sort(
-      (a, b) => (b['lastOpenedAt'] ?? 0).compareTo(a['lastOpenedAt'] ?? 0),
-    );
-    return list.first;
-  }
-
-  List<Map<String, dynamic>> recent({int limit = 10}) {
-    final box = _box;
-    if (box == null || box.isEmpty) return [];
-    final list = box.values.map((v) => Map<String, dynamic>.from(v)).toList();
-    list.sort(
-      (a, b) => (b['lastOpenedAt'] ?? 0).compareTo(a['lastOpenedAt'] ?? 0),
-    );
-    return list.take(limit).toList();
-  }
-
-  Map<String, dynamic>? getById(String id) {
-    final box = _box;
-    if (box == null) return null;
-    final v = box.get(id);
-    return v == null ? null : Map<String, dynamic>.from(v);
-  }
-
-  /// Video progress – percent-based (0.0 … 1.0)
   Future<void> updateVideo({
     required String id,
     required String title,
@@ -183,5 +150,39 @@ class RecentProgressService {
       'lastWatchedAt': now,
     });
     _notify();
+  }
+
+  Future<void> remove(String id) async {
+    final box = await _ensureBox();
+    await box.delete(id);
+    _notify();
+  }
+
+  // ----------------- Readers -----------------
+  Map<String, dynamic>? get lastViewed {
+    final box = _box;
+    if (box == null || box.isEmpty) return null; // UI will rebuild after init()
+    final list = box.values.map((v) => Map<String, dynamic>.from(v)).toList();
+    list.sort(
+      (a, b) => (b['lastOpenedAt'] ?? 0).compareTo(a['lastOpenedAt'] ?? 0),
+    );
+    return list.first;
+  }
+
+  List<Map<String, dynamic>> recent({int limit = 10}) {
+    final box = _box;
+    if (box == null || box.isEmpty) return [];
+    final list = box.values.map((v) => Map<String, dynamic>.from(v)).toList();
+    list.sort(
+      (a, b) => (b['lastOpenedAt'] ?? 0).compareTo(a['lastOpenedAt'] ?? 0),
+    );
+    return list.take(limit).toList();
+  }
+
+  Map<String, dynamic>? getById(String id) {
+    final box = _box;
+    if (box == null) return null;
+    final v = box.get(id);
+    return v == null ? null : Map<String, dynamic>.from(v);
   }
 }

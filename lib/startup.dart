@@ -4,41 +4,54 @@ import 'dart:async';
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:archivereader/theme/theme_controller.dart';
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Fire-and-forget a future
-void _unawaited(Future<void> future) {
-  future.catchError((e, s) {
-    debugPrint('Background init failed: $e\n$s');
-  });
+/// Fire-and-forget with error logging
+void _unawaited(Future<void> f) {
+  f.catchError((e, s) => debugPrint('Background init failed: $e\n$s'));
 }
 
 class Startup {
-  /// `themeController` is **already loaded** – we only trigger other services.
-  static Future<void> initialize(ThemeController themeController) async {
-    // === NON-BLOCKING INITIALIZATION ===
-    _unawaited(
-      FavoritesService.instance.init().timeout(
-        const Duration(seconds: 3),
-        onTimeout: () => debugPrint('FavoritesService init timed out'),
-      ),
-    );
+  /// Theme is preloaded in main.dart; here we only kick off background services and UI system setup.
+  static Future<void> initialize(ThemeController _themeController) async {
+    // Defer heavy I/O until after first frame to keep first paint snappy.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _unawaited(_initFavorites());
+      _unawaited(_initRecent());
+    });
 
-    _unawaited(
-      RecentProgressService.instance.init().timeout(
-        const Duration(seconds: 3),
-        onTimeout: () => debugPrint('RecentProgressService init timed out'),
-      ),
-    );
-
-    // No need to call themeController.load() – it was already done in main.dart
-
-    // === UI SYSTEM SETUP ===
+    // UI system setup (guarded)
     try {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     } catch (e) {
       debugPrint('Failed to set immersive mode: $e');
+    }
+  }
+
+  static Future<void> _initFavorites() async {
+    try {
+      await FavoritesService.instance.init().timeout(
+        const Duration(seconds: 5),
+      );
+      debugPrint('FavoritesService: ready');
+    } on TimeoutException {
+      debugPrint('FavoritesService init timed out');
+    } catch (e, s) {
+      debugPrint('FavoritesService init error: $e\n$s');
+    }
+  }
+
+  static Future<void> _initRecent() async {
+    try {
+      await RecentProgressService.instance.init().timeout(
+        const Duration(seconds: 5),
+      );
+      debugPrint('RecentProgressService: ready');
+    } on TimeoutException {
+      debugPrint('RecentProgressService init timed out');
+    } catch (e, s) {
+      debugPrint('RecentProgressService init error: $e\n$s');
     }
   }
 }

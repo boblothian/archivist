@@ -54,7 +54,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // ── Theme Mode ──
+          // Theme Mode
           Card(
             child: Column(
               children: [
@@ -69,7 +69,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 12),
 
-          // ── Content Filtering ──
+          // Content Filtering
           Card(
             child: Column(
               children: [
@@ -104,7 +104,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 12),
 
-          // ── App Actions ──
+          // App Actions
           Card(
             child: Column(
               children: [
@@ -146,6 +146,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   },
                 ),
                 const Divider(height: 1),
+
+                // Donate
+                ListTile(
+                  leading: const Icon(Icons.volunteer_activism),
+                  title: Text(
+                    'Donate to Internet Archive',
+                    style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: const Text('Support archive.org'),
+                  onTap: () async {
+                    final uri = Uri.parse(
+                      'https://archive.org/donate?origin=iawww-TopNavDonateButton',
+                    );
+                    try {
+                      final ok = await launchUrl(
+                        uri,
+                        mode: LaunchMode.externalApplication,
+                      );
+                      if (!ok && context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Could not open the donate page'),
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Failed to open: $e')),
+                      );
+                    }
+                  },
+                ),
+
+                const Divider(height: 1),
                 ListTile(
                   leading: const Icon(Icons.bug_report),
                   title: Text(
@@ -184,7 +219,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ── Theme Mode Radio Tiles ──
+  // Theme Mode Radio Tiles
   Widget _themeTile(
     BuildContext ctx,
     ThemeController controller,

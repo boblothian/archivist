@@ -295,3 +295,30 @@ class ArchiveCollection {
     return 'ArchiveCollection(identifier: $identifier, title: $title, downloads: $downloads)';
   }
 }
+
+// ────────────────────────────────────────────────────────────────────────
+//  JSON SERIALIZATION (required for the search cache)
+// ────────────────────────────────────────────────────────────────────────
+extension ArchiveCollectionJson on ArchiveCollection {
+  /// Create an instance from the map that comes from the API (or from cache)
+  static ArchiveCollection fromJson(Map<String, dynamic> json) {
+    return ArchiveCollection(
+      identifier: json['identifier'] as String,
+      title: (json['title'] as String?) ?? '',
+      description: (json['description'] as String?) ?? '',
+      downloads: (json['downloads'] as num?)?.toInt() ?? 0,
+      thumbnailUrl: json['thumbnailUrl'] as String?,
+    );
+  }
+
+  /// Convert the object to a JSON-compatible map for caching
+  Map<String, dynamic> toJson() {
+    return {
+      'identifier': identifier,
+      'title': title,
+      'description': description,
+      'downloads': downloads,
+      'thumbnailUrl': thumbnailUrl,
+    };
+  }
+}

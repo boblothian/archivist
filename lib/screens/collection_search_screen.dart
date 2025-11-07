@@ -1,17 +1,74 @@
 // lib/screens/collection_search_screen.dart
 import 'dart:async';
+import 'dart:convert';
 
-import 'package:archivereader/collection_store.dart'; // ← singleton store
+import 'package:archivereader/collection_store.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-import '../archive_api.dart';
+import '../archive_api.dart'; // ← brings in ArchiveCollection + ArchiveCollectionJson extension
 import 'collection_detail_screen.dart';
 
+/// Simple in-memory + SharedPreferences cache for search results.
+/// Uses the ArchiveCollectionJson extension defined in archive_api.dart
+class _SearchCache {
+  static const _ttlMinutes = 30;
+  static final _memory = <String, List<ArchiveCollection>>{};
+
+  static Future<List<ArchiveCollection>?> get(String query) async {
+    query = query.trim();
+    if (_memory.containsKey(query)) {
+      return _memory[query];
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'search_cache:$query';
+    final raw = prefs.getString(key);
+    if (raw == null) return null;
+
+    final map = jsonDecode(raw) as Map<String, dynamic>;
+    final ts = map['_ts'] as int?;
+    if (ts == null ||
+        DateTime.now().millisecondsSinceEpoch - ts > _ttlMinutes * 60 * 1000) {
+      await prefs.remove(key);
+      return null;
+    }
+
+    final list =
+        (map['data'] as List)
+            .map(
+              (e) => ArchiveCollectionJson.fromJson(e as Map<String, dynamic>),
+            )
+            .toList();
+    _memory[query] = list;
+    return list;
+  }
+
+  static Future<void> set(String query, List<ArchiveCollection> results) async {
+    query = query.trim();
+    _memory[query] = results;
+
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'search_cache:$query';
+    final payload = {
+      '_ts': DateTime.now().millisecondsSinceEpoch,
+      'data':
+          results.map((c) => c.toJson()).toList(), // toJson() from extension
+    };
+    await prefs.setString(key, jsonEncode(payload));
+  }
+
+  static Future<void> clear() async {
+    _memory.clear();
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs.getKeys().where((k) => k.startsWith('search_cache:'));
+    for (final k in keys) await prefs.remove(k);
+  }
+}
+
 class CollectionSearchScreen extends StatefulWidget {
-  /// Pass a notifier that flips to true the first time this tab/screen is shown.
-  /// If null, the screen won't auto-run the empty search at all (only on user input).
   final ValueNotifier<bool>? activateTrigger;
 
   const CollectionSearchScreen({Key? key, this.activateTrigger})
@@ -24,26 +81,19 @@ class CollectionSearchScreen extends StatefulWidget {
 class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
   final _controller = TextEditingController();
   final _focus = FocusNode();
-  Timer? _debounce;
 
   String _query = '';
   bool _loading = false;
   String? _error;
   List<ArchiveCollection> _results = const [];
 
-  bool _initialSearchDone = false; // ← ensures we only auto-run once
+  bool _initialSearchDone = false;
 
   @override
   void initState() {
     super.initState();
-    _controller.addListener(_onChanged);
-
-    // ← DO NOT run a search on init. This avoids startup network calls on iOS.
-    // If a RootShell provides an activateTrigger, lazy-run once after the screen is actually shown.
     widget.activateTrigger?.addListener(_maybeRunInitialSearch);
-    // If the trigger is already true by the time we build (e.g., direct navigation), handle it.
     if (widget.activateTrigger?.value == true) {
-      // Schedule post-frame to avoid kicking work during build.
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _maybeRunInitialSearch(),
       );
@@ -52,8 +102,6 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
 
   @override
   void dispose() {
-    _debounce?.cancel();
-    _controller.removeListener(_onChanged);
     _controller.dispose();
     _focus.dispose();
     widget.activateTrigger?.removeListener(_maybeRunInitialSearch);
@@ -64,31 +112,37 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
     if (_initialSearchDone) return;
     if (widget.activateTrigger?.value == true) {
       _initialSearchDone = true;
-      // Run after this frame so we don’t contend with tab transition animations.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _runSearch('');
       });
     }
   }
 
-  void _onChanged() {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () {
-      final q = _controller.text.trim();
-      if (q == _query) return;
-      // Only run when user actually changes text; this is user-driven and safe.
-      _runSearch(q);
-    });
-  }
-
   Future<void> _runSearch(String q) async {
+    q = q.trim();
+    if (q == _query && _results.isNotEmpty) return;
+
+    final cached = await _SearchCache.get(q);
+    if (cached != null) {
+      setState(() {
+        _query = q;
+        _results = cached;
+        _loading = false;
+        _error = null;
+      });
+      return;
+    }
+
     setState(() {
       _query = q;
       _loading = true;
       _error = null;
+      _results = const [];
     });
+
     try {
       final res = await ArchiveApi.searchCollections(q);
+      await _SearchCache.set(q, res);
       setState(() => _results = res);
     } catch (e) {
       setState(() {
@@ -103,7 +157,7 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
   Future<void> _open(ArchiveCollection c) async {
     await RecentProgressService.instance.touch(
       id: c.identifier,
-      title: c.title?.isNotEmpty == true ? c.title! : c.identifier,
+      title: c.title.isNotEmpty ? c.title : c.identifier,
       thumb:
           c.thumbnailUrl ?? 'https://archive.org/services/img/${c.identifier}',
       kind: 'collection',
@@ -115,31 +169,26 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
       MaterialPageRoute(
         builder:
             (_) => CollectionDetailScreen(
-              categoryName:
-                  c.title?.isNotEmpty == true ? c.title! : c.identifier,
+              categoryName: c.title.isNotEmpty ? c.title : c.identifier,
               customQuery: 'collection:${c.identifier}',
             ),
       ),
     );
   }
 
-  /// Pin / unpin using the singleton store
   Future<void> _togglePin(String identifier) async {
-    final store = CollectionStore(); // direct singleton access
-
+    final store = CollectionStore();
     if (store.pinnedIds.contains(identifier)) {
       await store.unpin(identifier);
     } else {
       await store.pin(identifier);
     }
-
-    // UI updates automatically because the store is a ChangeNotifier
     if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
-    final store = CollectionStore(); // current pin state
+    final store = CollectionStore();
 
     return Scaffold(
       appBar: AppBar(
@@ -158,77 +207,81 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
             ),
         ],
       ),
-      body: Column(
-        children: [
-          // ── Search Field ─────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: TextField(
-              controller: _controller,
-              focusNode: _focus,
-              textInputAction: TextInputAction.search,
-              onSubmitted:
-                  _runSearch, // user-driven; fine to trigger immediately
-              decoration: InputDecoration(
-                hintText:
-                    'Search metadata. Try: subject:cartoons  creator:prelinger  language:eng  year:1950..1960',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon:
-                    _query.isNotEmpty
-                        ? IconButton(
-                          icon: const Icon(Icons.clear),
-                          tooltip: 'Clear',
-                          onPressed: () {
-                            _controller.clear();
-                            _runSearch('');
-                            _focus.requestFocus();
-                          },
-                        )
-                        : null,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: Column(
+          children: [
+            // Search Field
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: TextField(
+                controller: _controller,
+                focusNode: _focus,
+                textInputAction: TextInputAction.search,
+                onSubmitted: _runSearch,
+                decoration: InputDecoration(
+                  hintText: 'Search metadata',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon:
+                      _query.isNotEmpty
+                          ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            tooltip: 'Clear',
+                            onPressed: () {
+                              _controller.clear();
+                              _runSearch('');
+                              _focus.requestFocus();
+                            },
+                          )
+                          : null,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
               ),
             ),
-          ),
 
-          // ── Error ───────────────────────────────────────────
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+            // Error
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+
+            // Results
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: () => _runSearch(_query),
+                child:
+                    _results.isEmpty && !_loading && _error == null
+                        ? _buildEmptyState()
+                        : ListView.separated(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.all(12),
+                          itemCount: _results.length,
+                          separatorBuilder:
+                              (_, __) => const SizedBox(height: 8),
+                          itemBuilder: (_, i) {
+                            final c = _results[i];
+                            final pinned = store.pinnedIds.contains(
+                              c.identifier,
+                            );
+
+                            return _CollectionCard(
+                              collection: c,
+                              pinned: pinned,
+                              onTap: () => _open(c),
+                              onPinToggle: () => _togglePin(c.identifier),
+                            );
+                          },
+                        ),
               ),
             ),
-
-          // ── Results ────────────────────────────────────────
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: () => _runSearch(_query),
-              child:
-                  _results.isEmpty && !_loading && _error == null
-                      ? _buildEmptyState()
-                      : ListView.separated(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(12),
-                        itemCount: _results.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemBuilder: (_, i) {
-                          final c = _results[i];
-                          final pinned = store.pinnedIds.contains(c.identifier);
-
-                          return _CollectionCard(
-                            collection: c,
-                            pinned: pinned,
-                            onTap: () => _open(c),
-                            onPinToggle: () => _togglePin(c.identifier),
-                          );
-                        },
-                      ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -262,9 +315,7 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
   }
 }
 
-/// ──────────────────────────────────────────────────────────────
-///  CARD
-/// ──────────────────────────────────────────────────────────────
+// ── CARD ──────────────────────────────────────────────────────────────
 class _CollectionCard extends StatelessWidget {
   final ArchiveCollection collection;
   final bool pinned;
@@ -290,7 +341,7 @@ class _CollectionCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Thumbnail ─────────────────────────────────────
+              // Thumbnail
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: SizedBox(
@@ -328,7 +379,7 @@ class _CollectionCard extends StatelessWidget {
               ),
               const SizedBox(width: 16),
 
-              // ── Text ───────────────────────────────────────────
+              // Text
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -351,7 +402,6 @@ class _CollectionCard extends StatelessWidget {
                       ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
                     ),
                     const SizedBox(height: 8),
-                    // Optional "In progress" badge – keep if you want
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
@@ -374,7 +424,7 @@ class _CollectionCard extends StatelessWidget {
                 ),
               ),
 
-              // ── Pin Button ─────────────────────────────────────
+              // Pin Button
               if (onPinToggle != null)
                 TextButton.icon(
                   onPressed: onPinToggle,
@@ -392,9 +442,7 @@ class _CollectionCard extends StatelessWidget {
   }
 }
 
-/// ──────────────────────────────────────────────────────────────
-///  QUICK SEARCH CHIPS
-/// ──────────────────────────────────────────────────────────────
+// ── QUICK CHIPS ───────────────────────────────────────────────────────
 class _QuickChip extends StatelessWidget {
   final String q;
   const _QuickChip(this.q);

@@ -434,32 +434,51 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
     final messenger = ScaffoldMessenger.maybeOf(context);
     final id = item['identifier']!;
-    final title = item['title'] ?? id;
+    final title = (item['title'] ?? id).trim().isEmpty ? id : (item['title']!);
     final mediatype = item['mediatype'] ?? '';
     final year = item['year'] ?? '';
+    final safeThumb =
+        (item['thumb']?.trim().isNotEmpty == true)
+            ? item['thumb']!.trim()
+            : archiveThumbUrl(id); // why: FavoriteItem.thumb can be null
+
+    // ✅ Ensure service is ready before any call that touches Hive.
+    final svc = FavoritesService.instance;
+    try {
+      await svc.init();
+    } catch (e) {
+      messenger?.showSnackBar(
+        SnackBar(content: Text('Favourites init failed: $e')),
+      );
+      return;
+    }
 
     final fav = FavoriteItem(
       id: id,
       title: title,
       url: 'https://archive.org/details/$id',
-      thumb: item['thumb']!,
+      thumb: safeThumb,
     );
 
-    final svc = FavoritesService.instance;
     if (svc.folders().isEmpty) {
-      await svc.createFolder('Favourites');
+      try {
+        await svc.createFolder('Favourites');
+      } catch (e) {
+        messenger?.showSnackBar(
+          SnackBar(content: Text('Couldn’t create folder: $e')),
+        );
+      }
     }
 
     final titleCtrl = TextEditingController(text: title);
     bool isSearching = false;
     bool enrichEnabled = false;
 
-    // helper: safe pop on next frame with parent context
     void _safePop<T extends Object?>(T? result) {
       if (!mounted || _isDisposed) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || _isDisposed) return; // route might have changed
-        final nav = Navigator.of(context);
+        if (!mounted || _isDisposed) return;
+        final nav = Navigator.of(context, rootNavigator: true);
         if (nav.canPop()) nav.pop<T>(result);
       });
     }
@@ -467,12 +486,10 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     final result = await showDialog<DialogResult>(
       context: context,
       barrierDismissible: false,
-      useRootNavigator:
-          true, // anchors to root; avoids nested navigator edge-cases
+      useRootNavigator: true,
       builder: (dialogCtx) {
         return StatefulBuilder(
           builder: (dialogCtx, setDialogState) {
-            // NOTE: never call setDialogState after we decide to close the dialog
             bool dialogClosing = false;
 
             Future<void> _enrich() async {
@@ -520,9 +537,8 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
               setDialogState(() => isSearching = true);
               try {
-                // IMPORTANT: pass parent `context`, not the dialog `dialogCtx`
                 final chosen = await ThumbnailService().choosePosterRich(
-                  context,
+                  context, // parent context; avoids nested navigator issues
                   query,
                   year: year.isNotEmpty ? year : null,
                   currentTitle: title,
@@ -548,7 +564,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                   ),
                 );
 
-                // We’re done with the dialog — mark closing and pop on next frame.
                 dialogClosing = true;
                 _safePop<DialogResult>(DialogResult.generateThumb);
               } catch (e) {
@@ -559,7 +574,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                   ),
                 );
               } finally {
-                // Only mutate the dialog state if it’s still mounted and not closing.
                 if (!dialogClosing && dialogCtx.mounted) {
                   setDialogState(() => isSearching = false);
                 }
@@ -578,7 +592,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                       title: const Text('Add to Favourites'),
                       subtitle: Text('Add "$title" to a folder'),
                       onTap: () {
-                        // Pop safely with parent context
                         dialogClosing = true;
                         _safePop<DialogResult>(DialogResult.addToFolder);
                       },
@@ -637,10 +650,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () {
-                    // normal cancel
-                    _safePop<void>(null);
-                  },
+                  onPressed: () => _safePop<void>(null),
                   child: const Text('Cancel'),
                 ),
               ],
@@ -651,11 +661,21 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     );
 
     titleCtrl.dispose();
+    if (!mounted || _isDisposed) return;
 
-    if (result == DialogResult.addToFolder && mounted && !_isDisposed) {
-      final folder = await showAddToFavoritesDialog(context, item: fav);
-      if (folder != null) {
-        await svc.addToFolder(folder, fav);
+    if (result == DialogResult.addToFolder) {
+      try {
+        final folder = await showAddToFavoritesDialog(context, item: fav);
+        if (folder != null) {
+          await svc.addToFolder(folder, fav);
+          messenger?.showSnackBar(
+            SnackBar(content: Text('Added to "$folder"')),
+          );
+        }
+      } catch (e) {
+        messenger?.showSnackBar(
+          SnackBar(content: Text('Failed to add to favourites: $e')),
+        );
       }
     }
   }

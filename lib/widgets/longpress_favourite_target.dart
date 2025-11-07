@@ -1,3 +1,6 @@
+// lib/widgets/long_press_favorite_target.dart
+// Ensure init() is awaited before opening the picker.
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -21,6 +24,14 @@ class LongPressFavoriteTarget extends StatelessWidget {
     return InkWell(
       onLongPress: () async {
         HapticFeedback.mediumImpact();
+        try {
+          await FavoritesService.instance.init(); // ✅ make sure box is ready
+        } catch (e) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Favourites init failed: $e')));
+          return;
+        }
         final folder = await showAddToFavoritesDialog(context, item: item);
         if (folder != null && context.mounted) {
           onAdded?.call();

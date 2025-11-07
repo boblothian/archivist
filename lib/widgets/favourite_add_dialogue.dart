@@ -1,3 +1,4 @@
+// lib/widgets/favourite_add_dialogue.dart
 import 'package:flutter/material.dart';
 
 import '../services/favourites_service.dart';
@@ -6,6 +7,7 @@ Future<String?> _promptNewFolder(BuildContext context) async {
   final c = TextEditingController();
   return showDialog<String>(
     context: context,
+    useRootNavigator: true, // why: avoid nested navigator issues
     builder:
         (ctx) => AlertDialog(
           title: const Text('New favourites folder'),
@@ -33,16 +35,23 @@ Future<String?> _promptNewFolder(BuildContext context) async {
 Future<String?> showAddToFavoritesDialog(
   BuildContext context, {
   required FavoriteItem item,
+  bool useRootNavigator = true,
 }) async {
+  // Ensure Hive box is opened before any access.
+  await FavoritesService.instance.init();
+
   return showDialog<String>(
     context: context,
     barrierDismissible: true,
+    useRootNavigator: useRootNavigator,
     builder: (ctx) {
       String? selectedFolder;
+      final svc = FavoritesService.instance;
+
       return StatefulBuilder(
         builder: (ctx, setState) {
-          final svc = FavoritesService.instance;
           final folders = svc.folders();
+          final messenger = ScaffoldMessenger.maybeOf(context);
 
           return AlertDialog(
             title: const Text('Add to favourites'),
@@ -114,16 +123,14 @@ Future<String?> showAddToFavoritesDialog(
                         ? null
                         : () async {
                           final folder = selectedFolder!;
-                          final scaffold = ScaffoldMessenger.of(context);
-
-                          // Show loading
-                          scaffold.showSnackBar(
+                          messenger?.showSnackBar(
                             const SnackBar(
                               content: Text('Adding to favourites...'),
                             ),
                           );
 
                           try {
+                            // Service already initialized above.
                             await FavoritesService.instance
                                 .addFavoriteWithFiles(
                                   folder: folder,
@@ -136,16 +143,16 @@ Future<String?> showAddToFavoritesDialog(
                                   formats: item.formats,
                                 );
 
-                            scaffold.hideCurrentSnackBar();
-                            scaffold.showSnackBar(
+                            messenger?.hideCurrentSnackBar();
+                            messenger?.showSnackBar(
                               SnackBar(
                                 content: Text('Added to "$folder"'),
                                 backgroundColor: Colors.green,
                               ),
                             );
                           } catch (e) {
-                            scaffold.hideCurrentSnackBar();
-                            scaffold.showSnackBar(
+                            messenger?.hideCurrentSnackBar();
+                            messenger?.showSnackBar(
                               SnackBar(
                                 content: Text('Failed: $e'),
                                 backgroundColor: Colors.red,
@@ -154,7 +161,7 @@ Future<String?> showAddToFavoritesDialog(
                             return;
                           }
 
-                          // ignore: use_build_context_synchronously
+                          if (!ctx.mounted) return;
                           Navigator.pop(ctx, folder);
                         },
                 child: const Text('Add'),

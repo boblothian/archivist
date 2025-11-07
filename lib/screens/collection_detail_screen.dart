@@ -423,6 +423,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
   void _runSearch() => _fetch(reset: true);
 
+  // lib/screens/collection_detail_screen.dart
+  // Patch focused on _handleLongPressItem only. Rest of the file unchanged.
+
   Future<void> _handleLongPressItem(Map<String, String> item) async {
     if (_isDisposed) return;
 
@@ -451,231 +454,205 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     bool isSearching = false;
     bool enrichEnabled = false;
 
+    // helper: safe pop on next frame with parent context
+    void _safePop<T extends Object?>(T? result) {
+      if (!mounted || _isDisposed) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _isDisposed) return; // route might have changed
+        final nav = Navigator.of(context);
+        if (nav.canPop()) nav.pop<T>(result);
+      });
+    }
+
     final result = await showDialog<DialogResult>(
       context: context,
       barrierDismissible: false,
-      builder:
-          (ctx) => StatefulBuilder(
-            builder:
-                (context, setDialogState) => AlertDialog(
-                  title: const Text('Options'),
-                  content: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        ListTile(
-                          leading: const Icon(Icons.favorite_border),
-                          title: const Text('Add to Favourites'),
-                          subtitle: Text('Add "$title" to a folder'),
-                          onTap:
-                              () =>
-                                  Navigator.pop(ctx, DialogResult.addToFolder),
-                        ),
-                        const Divider(height: 16),
-                        SwitchListTile(
-                          value: enrichEnabled,
-                          onChanged: (v) async {
-                            setDialogState(() => enrichEnabled = v);
-                            if (v) {
-                              final updated = Map<String, String>.from(item);
-                              try {
-                                await ThumbnailService().enrichItemWithTmdb(
-                                  updated,
-                                );
-                                final idx = _items.indexWhere(
-                                  (i) => i['identifier'] == id,
-                                );
-                                if (idx != -1 && mounted && !_isDisposed) {
-                                  setState(() => _items[idx] = updated);
-                                }
-                                messenger?.showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Metadata enriched!'),
-                                    backgroundColor: Colors.green,
-                                  ),
-                                );
-                              } catch (_) {
-                                messenger?.showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Failed to enrich metadata'),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
-                              }
-                            }
-                          },
-                          title: const Text('Enrich Metadata'),
-                          subtitle: const Text(
-                            'Pull title, year, description, and poster from TMDb',
-                          ),
-                        ),
-                        const Divider(height: 16),
-                        if (mediatype.toLowerCase().contains('video') ||
-                            mediatype == 'movies')
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Generate Thumbnail from TMDb',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                              const SizedBox(height: 8),
-                              TextField(
-                                controller: titleCtrl,
-                                decoration: InputDecoration(
-                                  hintText: 'Enter movie/TV title',
-                                  border: const OutlineInputBorder(),
-                                  suffixIcon:
-                                      isSearching
-                                          ? const Padding(
-                                            padding: EdgeInsets.all(12),
-                                            child: SizedBox(
-                                              width: 16,
-                                              height: 16,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            ),
-                                          )
-                                          : IconButton(
-                                            icon: const Icon(Icons.search),
-                                            onPressed:
-                                                isSearching
-                                                    ? null
-                                                    : () async {
-                                                      final query =
-                                                          titleCtrl.text.trim();
-                                                      if (query.isEmpty) {
-                                                        messenger?.showSnackBar(
-                                                          const SnackBar(
-                                                            content: Text(
-                                                              'Please enter a title',
-                                                            ),
-                                                            backgroundColor:
-                                                                Colors.orange,
-                                                          ),
-                                                        );
-                                                        return;
-                                                      }
-                                                      setDialogState(
-                                                        () =>
-                                                            isSearching = true,
-                                                      );
-                                                      try {
-                                                        final chosen =
-                                                            await ThumbnailService()
-                                                                .choosePosterRich(
-                                                                  ctx,
-                                                                  query,
-                                                                  year:
-                                                                      year.isNotEmpty
-                                                                          ? year
-                                                                          : null,
-                                                                  currentTitle:
-                                                                      title,
-                                                                );
-                                                        if (chosen == null)
-                                                          return;
-                                                        await FavoritesService
-                                                            .instance
-                                                            .updateThumbForId(
-                                                              id,
-                                                              chosen,
-                                                            );
-                                                        final idx = _items
-                                                            .indexWhere(
-                                                              (i) =>
-                                                                  i['identifier'] ==
-                                                                  id,
-                                                            );
-                                                        if (idx != -1 &&
-                                                            mounted &&
-                                                            !_isDisposed) {
-                                                          setState(
-                                                            () =>
-                                                                _items[idx]['thumb'] =
-                                                                    chosen,
-                                                          );
-                                                        }
-                                                        await ThumbOverrideService
-                                                            .instance
-                                                            .set(id, chosen);
-                                                        messenger?.showSnackBar(
-                                                          SnackBar(
-                                                            content: const Text(
-                                                              'Thumbnail updated!',
-                                                            ),
-                                                            backgroundColor:
-                                                                Colors.green,
-                                                            action: SnackBarAction(
-                                                              label: 'View',
-                                                              onPressed:
-                                                                  () => launchUrl(
-                                                                    Uri.parse(
-                                                                      chosen,
-                                                                    ),
-                                                                  ),
-                                                            ),
-                                                          ),
-                                                        );
-                                                        if (ctx.mounted) {
-                                                          Navigator.pop(
-                                                            ctx,
-                                                            DialogResult
-                                                                .generateThumb,
-                                                          );
-                                                        }
-                                                      } catch (e) {
-                                                        messenger?.showSnackBar(
-                                                          SnackBar(
-                                                            content: Text(
-                                                              'Search failed: $e',
-                                                            ),
-                                                            backgroundColor:
-                                                                Colors.red,
-                                                          ),
-                                                        );
-                                                      } finally {
-                                                        if (ctx.mounted) {
-                                                          setDialogState(
-                                                            () =>
-                                                                isSearching =
-                                                                    false,
-                                                          );
-                                                        }
-                                                      }
-                                                    },
-                                          ),
-                                ),
-                              ),
-                              if (year.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: Text(
-                                    'Year: $year',
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
-                                  ),
-                                ),
-                            ],
-                          ),
-                      ],
+      useRootNavigator:
+          true, // anchors to root; avoids nested navigator edge-cases
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            // NOTE: never call setDialogState after we decide to close the dialog
+            bool dialogClosing = false;
+
+            Future<void> _enrich() async {
+              if (dialogClosing) return;
+              setDialogState(() => enrichEnabled = true);
+              try {
+                final updated = Map<String, String>.from(item);
+                await ThumbnailService().enrichItemWithTmdb(updated);
+                final idx = _items.indexWhere((i) => i['identifier'] == id);
+                if (idx != -1 && mounted && !_isDisposed) {
+                  setState(() => _items[idx] = updated);
+                }
+                messenger?.showSnackBar(
+                  const SnackBar(
+                    content: Text('Metadata enriched!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (_) {
+                messenger?.showSnackBar(
+                  const SnackBar(
+                    content: Text('Failed to enrich metadata'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              } finally {
+                if (!dialogClosing && dialogCtx.mounted) {
+                  setDialogState(() => enrichEnabled = false);
+                }
+              }
+            }
+
+            Future<void> _searchAndPickPoster() async {
+              if (dialogClosing) return;
+              final query = titleCtrl.text.trim();
+              if (query.isEmpty) {
+                messenger?.showSnackBar(
+                  const SnackBar(
+                    content: Text('Please enter a title'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+
+              setDialogState(() => isSearching = true);
+              try {
+                // IMPORTANT: pass parent `context`, not the dialog `dialogCtx`
+                final chosen = await ThumbnailService().choosePosterRich(
+                  context,
+                  query,
+                  year: year.isNotEmpty ? year : null,
+                  currentTitle: title,
+                );
+                if (chosen == null) return;
+
+                await FavoritesService.instance.updateThumbForId(id, chosen);
+
+                final idx = _items.indexWhere((i) => i['identifier'] == id);
+                if (idx != -1 && mounted && !_isDisposed) {
+                  setState(() => _items[idx]['thumb'] = chosen);
+                }
+                await ThumbOverrideService.instance.set(id, chosen);
+
+                messenger?.showSnackBar(
+                  SnackBar(
+                    content: const Text('Thumbnail updated!'),
+                    backgroundColor: Colors.green,
+                    action: SnackBarAction(
+                      label: 'View',
+                      onPressed: () => launchUrl(Uri.parse(chosen)),
                     ),
                   ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text('Cancel'),
+                );
+
+                // We’re done with the dialog — mark closing and pop on next frame.
+                dialogClosing = true;
+                _safePop<DialogResult>(DialogResult.generateThumb);
+              } catch (e) {
+                messenger?.showSnackBar(
+                  SnackBar(
+                    content: Text('Search failed: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              } finally {
+                // Only mutate the dialog state if it’s still mounted and not closing.
+                if (!dialogClosing && dialogCtx.mounted) {
+                  setDialogState(() => isSearching = false);
+                }
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Options'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.favorite_border),
+                      title: const Text('Add to Favourites'),
+                      subtitle: Text('Add "$title" to a folder'),
+                      onTap: () {
+                        // Pop safely with parent context
+                        dialogClosing = true;
+                        _safePop<DialogResult>(DialogResult.addToFolder);
+                      },
                     ),
+                    const Divider(height: 16),
+                    SwitchListTile(
+                      value: enrichEnabled,
+                      onChanged: (_) => _enrich(),
+                      title: const Text('Enrich Metadata'),
+                      subtitle: const Text(
+                        'Pull title, year, description, and poster from TMDb',
+                      ),
+                    ),
+                    const Divider(height: 16),
+                    if (mediatype.toLowerCase().contains('video') ||
+                        mediatype == 'movies') ...[
+                      const Text(
+                        'Generate Thumbnail from TMDb',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: titleCtrl,
+                        decoration: InputDecoration(
+                          hintText: 'Enter movie/TV title',
+                          border: const OutlineInputBorder(),
+                          suffixIcon:
+                              isSearching
+                                  ? const Padding(
+                                    padding: EdgeInsets.all(12),
+                                    child: SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                  )
+                                  : IconButton(
+                                    icon: const Icon(Icons.search),
+                                    onPressed: _searchAndPickPoster,
+                                  ),
+                        ),
+                      ),
+                      if (year.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            'Year: $year',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                    ],
                   ],
                 ),
-          ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    // normal cancel
+                    _safePop<void>(null);
+                  },
+                  child: const Text('Cancel'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
 
     titleCtrl.dispose();
 
-    if (result == DialogResult.addToFolder && context.mounted && !_isDisposed) {
+    if (result == DialogResult.addToFolder && mounted && !_isDisposed) {
       final folder = await showAddToFavoritesDialog(context, item: fav);
       if (folder != null) {
         await svc.addToFolder(folder, fav);

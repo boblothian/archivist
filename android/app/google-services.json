@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "193485926909",
+    "project_id": "archivistreader",
+    "storage_bucket": "archivistreader.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:193485926909:android:dbc2cce863ff6f4fbce994",
+        "android_client_info": {
+          "package_name": "com.robertlothian.archivist"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD59pmNBdRByVKyWcwG9tabIVFWUyX97uA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

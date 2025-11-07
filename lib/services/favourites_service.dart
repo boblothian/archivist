@@ -92,15 +92,32 @@ class FavoritesService {
   static const _boxName = 'favorites_v2';
   static const _thumbsKey = 'thumbs';
 
-  late Box _box;
+  Box<dynamic>? _box; // why: avoid late-read crash
 
-  Future<void> init() async {
-    // Hive already initialised in main.dart → no redundant call
+  // Safe access to the opened box.
+  Box<dynamic> get box {
+    final b = _box;
+    if (b == null || !b.isOpen) {
+      throw StateError(
+        'FavoritesService not initialized. Call init() and await it first.',
+      );
+    }
+    return b;
+  }
+
+  // Memoized init; safe to call many times.
+  late final Future<void> ready = _init();
+  Future<void> init() => ready;
+
+  Future<void> _init() async {
     if (!Hive.isAdapterRegistered(0)) {
       Hive.registerAdapter(FavoriteItemAdapter());
     }
+    _box =
+        Hive.isBoxOpen(_boxName)
+            ? Hive.box<dynamic>(_boxName)
+            : await Hive.openBox<dynamic>(_boxName);
 
-    _box = await Hive.openBox(_boxName);
     await _migrateIfNeeded();
 
     // SAFE MIGRATION – never crash the app
@@ -115,13 +132,13 @@ class FavoritesService {
 
   // ------------------- THUMBNAILS -------------------
   Map<String, String> get _thumbMap {
-    final raw = _box.get(_thumbsKey);
+    final raw = box.get(_thumbsKey);
     if (raw is Map) return Map<String, String>.from(raw);
     return <String, String>{};
   }
 
   Future<void> _saveThumbMap(Map<String, String> map) async {
-    await _box.put(_thumbsKey, map);
+    await box.put(_thumbsKey, map);
   }
 
   String? getThumbForId(String id) => _thumbMap[id];
@@ -147,9 +164,35 @@ class FavoritesService {
     _notify();
   }
 
+  // ---- Public thumbs API for cloud sync ----
+  Map<String, String> get thumbOverrides =>
+      Map<String, String>.unmodifiable(_thumbMap);
+
+  Future<int> mergeThumbOverrides(Map<String, String> incoming) async {
+    if (incoming.isEmpty) return 0;
+    final current = Map<String, String>.from(_thumbMap);
+    int changed = 0;
+
+    incoming.forEach((id, t) {
+      final key = id.trim();
+      final val = t.trim();
+      if (key.isEmpty || val.isEmpty) return;
+      if (current[key] != val) {
+        current[key] = val;
+        changed++;
+      }
+    });
+
+    if (changed > 0) {
+      await _saveThumbMap(current);
+      _notify();
+    }
+    return changed;
+  }
+
   // ------------------- FOLDER DATA -------------------
   Map<String, List<FavoriteItem>> get _data {
-    final dynamic raw = _box.get('folders') ?? _box.get('data');
+    final dynamic raw = box.get('folders') ?? box.get('data');
     if (raw == null) return <String, List<FavoriteItem>>{};
 
     if (raw is Map<String, List<FavoriteItem>>) return raw;
@@ -193,8 +236,8 @@ class FavoritesService {
         result[folder] = list;
       });
 
-      _box.put('folders', result);
-      if (_box.containsKey('data')) _box.delete('data');
+      box.put('folders', result);
+      if (box.containsKey('data')) box.delete('data');
       return result;
     }
 
@@ -202,22 +245,22 @@ class FavoritesService {
   }
 
   Future<void> _save(Map<String, List<FavoriteItem>> data) async {
-    await _box.put('folders', data);
+    await box.put('folders', data);
     _notify();
   }
 
   Future<void> _migrateIfNeeded() async {
-    final hasFolders = _box.containsKey('folders');
-    final hasLegacy = _box.containsKey('data');
+    final hasFolders = box.containsKey('folders');
+    final hasLegacy = box.containsKey('data');
 
     if (!hasFolders && !hasLegacy) {
-      await _box.put('folders', {'Favourites': <FavoriteItem>[]});
+      await box.put('folders', {'Favourites': <FavoriteItem>[]});
       return;
     }
 
     final normalized = _data;
     if (normalized.isEmpty) {
-      await _box.put('folders', {'Favourites': <FavoriteItem>[]});
+      await box.put('folders', {'Favourites': <FavoriteItem>[]});
     }
   }
 
@@ -238,7 +281,6 @@ class FavoritesService {
             debugPrint('Migrated files for ${item.id}');
           } catch (e) {
             debugPrint('Failed to migrate files for ${item.id}: $e');
-            // keep entry – just no files
           }
         }
       }

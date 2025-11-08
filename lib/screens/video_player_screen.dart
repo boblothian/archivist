@@ -51,6 +51,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   int _lastDurMs = 0;
   bool _popped = false;
 
+  // Track buffering/playing to control our overlay
+  bool _wasBuffering = false;
+  bool _wasPlaying = false;
+
   // ───────── Chromecast (Google Cast) ─────────
   StreamSubscription<GoogleCastSession?>? _gcSessionSub;
   StreamSubscription? _gcMediaStatusSub;
@@ -334,11 +338,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     _videoController.addListener(_onTick);
     await _videoController.initialize();
 
+    // Make sure isBuffering transitions clear reliably on some platforms
+    await _videoController.setLooping(false);
+
     // Seek to resume point if provided
     final resumeMs = widget.startPositionMs ?? 0;
     if (resumeMs > 0) {
       await _videoController.seekTo(Duration(milliseconds: resumeMs));
     }
+
+    // Initialize state for overlay control
+    _wasBuffering = _videoController.value.isBuffering;
+    _wasPlaying = _videoController.value.isPlaying;
 
     _chewieController = ChewieController(
       videoPlayerController: _videoController,
@@ -352,8 +363,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   void _onTick() {
-    _lastPosMs = _videoController.value.position.inMilliseconds;
-    _lastDurMs = _videoController.value.duration.inMilliseconds;
+    final v = _videoController.value;
+    _lastPosMs = v.position.inMilliseconds;
+    _lastDurMs = v.duration.inMilliseconds;
+
+    // Rebuild only when buffering/playing flips to avoid excessive setState.
+    if (_wasBuffering != v.isBuffering || _wasPlaying != v.isPlaying) {
+      setState(() {
+        _wasBuffering = v.isBuffering;
+        _wasPlaying = v.isPlaying;
+      });
+    }
   }
 
   // ───────────────────── UI ─────────────────────
@@ -415,13 +435,24 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 ),
               )
             else
-              Chewie(controller: _chewieController!),
+              // Add a key so Chewie can't keep stale state if media changes
+              Chewie(
+                key: ValueKey(
+                  widget.url ?? widget.file?.path ?? widget.identifier,
+                ),
+                controller: _chewieController!,
+              ),
 
             // Chromecast mini controller (shows automatically when casting)
             const Align(
               alignment: Alignment.bottomCenter,
               child: GoogleCastMiniController(),
             ),
+
+            // Our buffering overlay:
+            // Show only while the player reports buffering AND it's not currently playing.
+            if (_wasBuffering && !_wasPlaying && !isCasting && ready)
+              const Center(child: CircularProgressIndicator()),
 
             if (_lostNetwork)
               Positioned(

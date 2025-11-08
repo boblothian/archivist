@@ -1,8 +1,6 @@
+// lib/screens/archive_item_screen.dart
 import 'dart:io';
 
-// For launching Android media apps directly
-import 'package:android_intent_plus/android_intent.dart';
-import 'package:android_intent_plus/flag.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../archive_api.dart';
+import '../media/media_player_ops.dart'; // ← use in-app audio player
 import '../net.dart';
 import '../utils.dart'; // For downloadWithCache
 import 'cbz_viewer_screen.dart';
@@ -89,25 +88,6 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
     }
   }
 
-  // --- Android: open audio URL directly in installed media player ------------
-  Future<bool> _openAudioInInstalledApp(String url) async {
-    try {
-      if (Platform.isAndroid) {
-        final intent = AndroidIntent(
-          action: 'action_view', // Intent.ACTION_VIEW
-          data: url, // http(s) stream URL
-          type: 'audio/*', // force media player, not browser
-          flags: <int>[Flag.FLAG_ACTIVITY_NEW_TASK],
-        );
-        await intent.launch();
-        return true;
-      }
-      return false; // iOS/macOS: fall back below
-    } catch (_) {
-      return false;
-    }
-  }
-
   // Unified open function ------------------------------------------------------
   Future<void> _openFile(
     String fileName,
@@ -136,7 +116,7 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
     } else if (isAudioFile(ext)) {
       kind = 'audio';
 
-      // Record recents for audio before opening
+      // Record recents for audio before opening (keeps quick history entry)
       await RecentProgressService.instance.touch(
         id: widget.identifier,
         title: widget.title,
@@ -147,47 +127,16 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
         fileName: fileName,
       );
 
-      // 1) Try to stream directly in the device’s media player (Android)
-      final opened = await _openAudioInInstalledApp(fileUrl);
-      if (opened) {
-        ifMounted(this, () => _downloadProgress.remove(fileName));
-        return;
-      }
-
-      // 2) Fallback: download then open locally with OpenFilex
-      try {
-        final cachedFile = await downloadWithCache(
-          url: fileUrl,
-          filenameHint: fileName,
-          onProgress: (received, total) {
-            if (total != null && total > 0) {
-              final p = received / total;
-              ifMounted(
-                this,
-                () => setState(() => _downloadProgress[fileName] = p),
-              );
-            }
-          },
-        );
-
-        final result = await OpenFilex.open(cachedFile.path, type: 'audio/*');
-        if (result.type != ResultType.done && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('No app to play audio: ${result.message}')),
-          );
-        }
-      } catch (e) {
-        ifMounted(this, () {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Audio open error: $e')));
-        });
-      } finally {
-        ifMounted(
-          this,
-          () => setState(() => _downloadProgress.remove(fileName)),
-        );
-      }
+      // Always use in-app audio player
+      await MediaPlayerOps.playAudio(
+        context,
+        url: fileUrl,
+        identifier: widget.identifier,
+        title: widget.title,
+        // You can also pass startPositionMs if you track it elsewhere
+        thumb: widget.parentThumbUrl ?? thumbUrl,
+        fileName: fileName,
+      );
       return;
     } else {
       ifMounted(this, () {

@@ -1,4 +1,6 @@
 // lib/screens/audio_player_screen.dart
+import 'dart:async';
+
 import 'package:audio_session/audio_session.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
@@ -9,14 +11,14 @@ class ArchiveAudioPlayerScreen extends StatefulWidget {
   final String url;
   final String? title;
 
-  /// NEW: if provided, the player will seek here after load.
+  /// If provided, the player will seek here after load.
   final int? startPositionMs;
 
   const ArchiveAudioPlayerScreen({
     super.key,
     required this.url,
     this.title,
-    this.startPositionMs, // NEW
+    this.startPositionMs,
   });
 
   @override
@@ -27,6 +29,9 @@ class ArchiveAudioPlayerScreen extends StatefulWidget {
 class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
   final _player = AudioPlayer();
   bool _lostNetwork = false;
+
+  // Cancel on dispose
+  StreamSubscription<dynamic>? _connSub;
 
   // Track progress to return on pop
   int _lastPosMs = 0;
@@ -60,8 +65,16 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
 
     _player.play();
 
-    Connectivity().onConnectivityChanged.listen((status) async {
-      final connected = status != ConnectivityResult.none;
+    _connSub = Connectivity().onConnectivityChanged.listen((event) async {
+      bool connected;
+      if (event is ConnectivityResult) {
+        connected = event != ConnectivityResult.none;
+      } else if (event is List<ConnectivityResult>) {
+        connected = event.any((r) => r != ConnectivityResult.none);
+      } else {
+        connected = true;
+      }
+
       if (!connected) {
         _lostNetwork = true;
         if (_player.playing) await _player.pause();
@@ -78,6 +91,7 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
 
   @override
   void dispose() {
+    _connSub?.cancel();
     WakelockPlus.disable();
     _player.dispose();
     super.dispose();
@@ -86,6 +100,7 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
   Future<bool> _handlePopWithProgress() async {
     if (_popped) return false;
     _popped = true;
+    if (!mounted) return false;
     Navigator.of(
       context,
     ).pop(<String, int>{'positionMs': _lastPosMs, 'durationMs': _lastDurMs});

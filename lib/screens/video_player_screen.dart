@@ -1,4 +1,4 @@
-// lib/video_player_screen.dart
+// lib/screens/video_player_screen.dart
 import 'dart:async';
 import 'dart:io';
 
@@ -18,7 +18,7 @@ class VideoPlayerScreen extends StatefulWidget {
   final String identifier;
   final String title;
 
-  /// NEW: if provided, the player will seek here after init.
+  /// If provided, the player seeks here after init (milliseconds).
   final int? startPositionMs;
 
   const VideoPlayerScreen({
@@ -27,7 +27,7 @@ class VideoPlayerScreen extends StatefulWidget {
     this.url,
     required this.identifier,
     required this.title,
-    this.startPositionMs, // NEW
+    this.startPositionMs,
   }) : assert(file != null || url != null);
 
   @override
@@ -334,7 +334,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     _videoController.addListener(_onTick);
     await _videoController.initialize();
 
-    // NEW: seek to resume point if provided
+    // Seek to resume point if provided
     final resumeMs = widget.startPositionMs ?? 0;
     if (resumeMs > 0) {
       await _videoController.seekTo(Duration(milliseconds: resumeMs));
@@ -394,9 +394,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   try {
                     await GoogleCastSessionManager.instance
                         .endSessionAndStopCasting();
-                  } catch (e) {
-                    /* no-op */
-                  }
+                  } catch (_) {}
                 },
               ),
           ],
@@ -452,6 +450,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   Future<bool> _handlePopWithProgress() async {
     if (_popped) return false;
     _popped = true;
+    if (!mounted) return false;
     Navigator.of(
       context,
     ).pop(<String, int>{'positionMs': _lastPosMs, 'durationMs': _lastDurMs});
@@ -470,6 +469,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      useRootNavigator: true, // ← isolate from nested/tab navigators
       builder: (ctx) {
         return SafeArea(
           child: Padding(
@@ -534,7 +534,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                               try {
                                 await GoogleCastSessionManager.instance
                                     .startSessionWithDevice(d);
-                                if (context.mounted) Navigator.pop(context);
+                                if (ctx.mounted) Navigator.pop(ctx);
                               } catch (e) {
                                 if (!mounted) return;
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -597,8 +597,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                                     onTap: () async {
                                       try {
                                         await _castToDlna(dev);
-                                        if (context.mounted)
-                                          Navigator.pop(context);
+                                        if (ctx.mounted) Navigator.pop(ctx);
                                       } catch (e) {
                                         if (!mounted) return;
                                         ScaffoldMessenger.of(

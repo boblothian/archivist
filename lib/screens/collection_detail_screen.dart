@@ -1,4 +1,5 @@
 // lib/screens/collection_detail_screen.dart
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:animations/animations.dart';
@@ -283,6 +284,8 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   }
 
   Future<void> _fetch({bool reset = false}) async {
+    final int token = ++_requestToken;
+
     if (reset) {
       _page = 1;
       _numFound = 0;
@@ -293,10 +296,11 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       if (mounted) setState(() => _loadingMore = true);
     }
 
+    // Ensure we have a target (collection or customQuery)
     if ((widget.collectionName == null ||
             widget.collectionName!.trim().isEmpty) &&
         (widget.customQuery == null || widget.customQuery!.trim().isEmpty)) {
-      if (mounted) {
+      if (mounted && token == _requestToken) {
         setState(() {
           _loading = false;
           _loadingMore = false;
@@ -306,26 +310,25 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       return;
     }
 
-    final int token = ++_requestToken;
-    final q = _buildQuery(_searchCtrl.text.trim());
-
-    final flParams = <String>[
-      'identifier',
-      'title',
-      'mediatype',
-      'subject',
-      'creator',
-      'description',
-      'year',
-    ].map((f) => 'fl[]=$f').join('&');
-
-    final url =
-        'https://archive.org/advancedsearch.php?'
-        'q=${Uri.encodeQueryComponent(q)}&'
-        '$flParams&sort[]=${Uri.encodeQueryComponent(_sortParam(_sort))}&'
-        'rows=$_rows&page=$_page&output=json';
-
     try {
+      final q = _buildQuery(_searchCtrl.text.trim());
+
+      final flParams = <String>[
+        'identifier',
+        'title',
+        'mediatype',
+        'subject',
+        'creator',
+        'description',
+        'year',
+      ].map((f) => 'fl[]=$f').join('&');
+
+      final url =
+          'https://archive.org/advancedsearch.php?'
+          'q=${Uri.encodeQueryComponent(q)}&'
+          '$flParams&sort[]=${Uri.encodeQueryComponent(_sortParam(_sort))}&'
+          'rows=$_rows&page=$_page&output=json';
+
       final resp = await _client
           .get(Uri.parse(url), headers: _HEADERS)
           .timeout(_netTimeout);
@@ -333,19 +336,13 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       if (!mounted || _isDisposed || token != _requestToken) return;
 
       if (resp.statusCode != 200) {
-        if (mounted) {
-          setState(() {
-            _loading = false;
-            _loadingMore = false;
-            _error = 'Search failed (${resp.statusCode}).';
-          });
-        }
-        return;
+        throw Exception('Search failed (${resp.statusCode}).');
       }
 
       final data = await _decodeJson(resp.body);
       final response = (data['response'] as Map<String, dynamic>?) ?? const {};
       final List docs = (response['docs'] as List?) ?? const [];
+      _numFound = (response['numFound'] as int?) ?? _numFound;
 
       String flat(dynamic v) {
         if (v == null) return '';
@@ -385,32 +382,34 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
       await ThumbOverrideService.instance.applyToItemMaps(batch);
 
+      // de-dup identifiers across pages
       final existingIds = _items.map((m) => m['identifier']).toSet();
       batch =
-          batch
-              .where(
-                (m) =>
-                    m['identifier'] != null &&
-                    !existingIds.contains(m['identifier'] ?? ''),
-              )
-              .toList();
+          batch.where((m) {
+            final id = m['identifier'] ?? '';
+            return id.isNotEmpty && !existingIds.contains(id);
+          }).toList();
 
-      if (mounted && !_isDisposed) {
+      if (mounted && !_isDisposed && token == _requestToken) {
         setState(() {
           _items.addAll(batch);
-          _loading = false;
-          _loadingMore = false;
           _error = null;
         });
       }
 
-      _unblockSmartThumbs(batch, currentToken: token);
-    } catch (_) {
-      if (mounted) {
+      // kick off smart thumbnails without blocking
+      unawaited(_unblockSmartThumbs(batch, currentToken: token));
+    } catch (e) {
+      if (mounted && token == _requestToken) {
         setState(() {
-          _loading = false;
-          _loadingMore = false;
           _error = 'Network error. Please try again.';
+        });
+      }
+    } finally {
+      if (mounted && token == _requestToken) {
+        setState(() {
+          if (reset) _loading = false;
+          _loadingMore = false;
         });
       }
     }

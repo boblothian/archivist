@@ -128,28 +128,121 @@ class RecentProgressService {
     _notify();
   }
 
+  /// Updated: prefers [positionMs]/[durationMs] if provided; falls back to [percent].
   Future<void> updateVideo({
     required String id,
     required String title,
     String? thumb,
-    required double percent,
+    double? percent, // was required; kept optional for resume timing path
     required String fileUrl,
     required String fileName,
+    int? positionMs, // NEW
+    int? durationMs, // NEW
   }) async {
     final box = await _ensureBox();
     final now = DateTime.now().millisecondsSinceEpoch;
+
+    double finalPercent =
+        (durationMs != null && durationMs > 0 && (positionMs ?? 0) >= 0)
+            ? ((positionMs ?? 0) / durationMs)
+            : (percent ?? 0.0);
+
     await box.put(id, {
       'id': id,
       'title': title,
       'thumb': thumb,
       'kind': 'video',
-      'percent': percent,
+      'percent': finalPercent,
       'fileUrl': fileUrl,
       'fileName': fileName,
+      if (positionMs != null) 'positionMs': positionMs,
+      if (durationMs != null) 'durationMs': durationMs,
       'lastOpenedAt': now,
       'lastWatchedAt': now,
     });
     _notify();
+  }
+
+  /// NEW: Mirror of video for audio resume support.
+  Future<void> updateAudio({
+    required String id,
+    required String title,
+    String? thumb,
+    required String fileUrl,
+    required String fileName,
+    int? positionMs,
+    int? durationMs,
+    double? percent, // optional fallback
+  }) async {
+    final box = await _ensureBox();
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    double finalPercent =
+        (durationMs != null && durationMs > 0 && (positionMs ?? 0) >= 0)
+            ? ((positionMs ?? 0) / durationMs)
+            : (percent ?? 0.0);
+
+    await box.put(id, {
+      'id': id,
+      'title': title,
+      'thumb': thumb,
+      'kind': 'audio',
+      'percent': finalPercent,
+      'fileUrl': fileUrl,
+      'fileName': fileName,
+      if (positionMs != null) 'positionMs': positionMs,
+      if (durationMs != null) 'durationMs': durationMs,
+      'lastOpenedAt': now,
+      'lastListenedAt': now,
+    });
+    _notify();
+  }
+
+  /// Optional: single entry point for media updates (useful for player screens).
+  Future<void> upsertMedia({
+    required String id,
+    required String title,
+    required String kind, // 'video' | 'audio'
+    String? thumb,
+    required String fileUrl,
+    String? fileName,
+    int? positionMs,
+    int? durationMs,
+    double? percent,
+  }) async {
+    if (kind == 'video') {
+      await updateVideo(
+        id: id,
+        title: title,
+        thumb: thumb,
+        fileUrl: fileUrl,
+        fileName: fileName ?? '',
+        positionMs: positionMs,
+        durationMs: durationMs,
+        percent: percent,
+      );
+    } else if (kind == 'audio') {
+      await updateAudio(
+        id: id,
+        title: title,
+        thumb: thumb,
+        fileUrl: fileUrl,
+        fileName: fileName ?? '',
+        positionMs: positionMs,
+        durationMs: durationMs,
+        percent: percent,
+      );
+    } else {
+      // Fallback: plain touch to keep history but without progress semantics
+      await touch(
+        id: id,
+        title: title,
+        kind: kind,
+        thumb: thumb,
+        fileUrl: fileUrl,
+        fileName: fileName,
+      );
+    }
   }
 
   Future<void> remove(String id) async {

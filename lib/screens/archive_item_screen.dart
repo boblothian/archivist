@@ -9,7 +9,9 @@ import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../archive_api.dart';
 import '../net.dart';
 import '../utils.dart'; // For downloadWithCache
 import 'cbz_viewer_screen.dart';
@@ -21,7 +23,7 @@ class ArchiveItemScreen extends StatefulWidget {
   final String identifier;
   final List<Map<String, String>> files;
 
-  /// NEW: Thumb to reuse (from the collection/item card) — used ONLY for audio.
+  /// Thumb to reuse (from the collection/item card) — used ONLY for audio.
   final String? parentThumbUrl;
 
   const ArchiveItemScreen({
@@ -29,7 +31,7 @@ class ArchiveItemScreen extends StatefulWidget {
     required this.title,
     required this.identifier,
     required this.files,
-    this.parentThumbUrl, // ← NEW (optional)
+    this.parentThumbUrl,
   });
 
   @override
@@ -39,11 +41,19 @@ class ArchiveItemScreen extends StatefulWidget {
 class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
   final Map<String, double> _downloadProgress = {};
 
+  // NEW: collection support
+  bool _checkedMetadata = false;
+  bool _isCollection = false;
+  String? _detailsUrl; // https://archive.org/details/<identifier>
+
   @override
   void initState() {
     super.initState();
 
-    // Auto-open if single file
+    // Precompute details URL
+    _detailsUrl = 'https://archive.org/details/${widget.identifier}';
+
+    // If we have exactly one file, auto-open it
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (widget.files.length == 1) {
         final file = widget.files.first;
@@ -54,6 +64,29 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
         _openFile(fileName, fileUrl, thumbUrl);
       }
     });
+
+    // If no files were provided, check if this identifier is a collection.
+    if (widget.files.isEmpty) {
+      _detectCollection();
+    }
+  }
+
+  Future<void> _detectCollection() async {
+    try {
+      final meta = await ArchiveApi.getMetadata(widget.identifier);
+      final m = (meta['metadata'] as Map?) ?? const {};
+      final type = (m['mediatype'] ?? '').toString().toLowerCase();
+      ifMounted(this, () {
+        _isCollection = type == 'collection';
+        _checkedMetadata = true;
+        setState(() {});
+      });
+    } catch (_) {
+      ifMounted(this, () {
+        _checkedMetadata = true; // even on error, stop a spinner loop
+        setState(() {});
+      });
+    }
   }
 
   // --- Android: open audio URL directly in installed media player ------------
@@ -98,6 +131,7 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
         ext == '.md' ||
         ext == '.log' ||
         ext == '.csv') {
+      // NOTE: per your request, leave text handling as-is (unchanged behavior).
       kind = 'text';
     } else if (isAudioFile(ext)) {
       kind = 'audio';
@@ -106,7 +140,7 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
       await RecentProgressService.instance.touch(
         id: widget.identifier,
         title: widget.title,
-        // NEW: prefer using the parent thumb for audio
+        // prefer using the parent thumb for audio
         thumb: widget.parentThumbUrl ?? thumbUrl,
         kind: kind,
         fileUrl: fileUrl,
@@ -195,8 +229,7 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
         viewer = PdfViewerScreen(
           file: cachedFile,
           url: fileUrl, // optional, but helpful for progress metadata
-          filenameHint:
-              fileName, // <<< add this so resume is per-file, not per-identifier
+          filenameHint: fileName, // Resume should be per-file
           identifier: widget.identifier,
           title: widget.title,
           thumbUrl: thumbUrl,
@@ -285,7 +318,7 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
   String _getThumbnailUrl(String fileName) {
     final ext = p.extension(fileName).toLowerCase();
 
-    // NEW: For AUDIO use the collection/item thumbnail if provided.
+    // For AUDIO use the collection/item thumbnail if provided.
     if (isAudioFile(ext) && (widget.parentThumbUrl?.isNotEmpty ?? false)) {
       return widget.parentThumbUrl!;
     }
@@ -400,7 +433,67 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
       ...audioFiles,
     ];
 
+    // --- NEW: Collection-friendly empty state
     if (displayFiles.isEmpty) {
+      // If we haven't finished checking metadata yet, show a spinner.
+      if (!_checkedMetadata) {
+        return Scaffold(
+          appBar: AppBar(title: Text(widget.title)),
+          body: const Center(child: CircularProgressIndicator()),
+        );
+      }
+
+      // If it's a collection, show a friendly collection message + open-link.
+      if (_isCollection) {
+        return Scaffold(
+          appBar: AppBar(title: Text(widget.title)),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.folder_open, size: 72, color: Colors.grey),
+                  const SizedBox(height: 16),
+                  Text(
+                    'This is a collection on Archive.org.',
+                    style: Theme.of(context).textTheme.titleMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Collections don’t have files themselves. Open it on Archive.org to browse items inside.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    icon: const Icon(Icons.open_in_new_rounded),
+                    label: const Text('Browse on Archive.org'),
+                    onPressed: () async {
+                      final url = _detailsUrl!;
+                      final uri = Uri.parse(url);
+                      final ok = await launchUrl(
+                        uri,
+                        mode: LaunchMode.externalApplication,
+                      );
+                      if (!ok && mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Could not open link')),
+                        );
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }
+
+      // Not a collection; just no supported files.
       return Scaffold(
         appBar: AppBar(title: Text(widget.title)),
         body: const Center(child: Text('No supported files found')),
@@ -455,7 +548,7 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
                             children: [
                               Positioned.fill(
                                 child: () {
-                                  // NEW: treat audio like image for preview if we have a thumb
+                                  // treat audio like image for preview if we have a thumb
                                   if (isPdf || isImage || isAudio) {
                                     return CachedNetworkImage(
                                       httpHeaders: Net.headers,

@@ -3,10 +3,12 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:chewie/chewie.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_chrome_cast/flutter_chrome_cast.dart';
-import 'package:media_cast_dlna/media_cast_dlna.dart'; // NEW: DLNA
+import 'package:media_cast_dlna/media_cast_dlna.dart'; // DLNA (Android only)
 import 'package:video_player/video_player.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../net.dart';
 
@@ -16,12 +18,16 @@ class VideoPlayerScreen extends StatefulWidget {
   final String identifier;
   final String title;
 
+  /// NEW: if provided, the player will seek here after init.
+  final int? startPositionMs;
+
   const VideoPlayerScreen({
     super.key,
     this.file,
     this.url,
     required this.identifier,
     required this.title,
+    this.startPositionMs, // NEW
   }) : assert(file != null || url != null);
 
   @override
@@ -36,10 +42,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   bool get _hasHttpUrl =>
       widget.url != null && widget.url!.toLowerCase().startsWith('http');
 
+  // Network resiliency
+  StreamSubscription<dynamic>? _connSub;
+  bool _lostNetwork = false;
+
+  // Track progress to return on pop
+  int _lastPosMs = 0;
+  int _lastDurMs = 0;
+  bool _popped = false;
+
   // ───────── Chromecast (Google Cast) ─────────
   StreamSubscription<GoogleCastSession?>? _gcSessionSub;
-  StreamSubscription<GoggleCastMediaStatus?>?
-  _gcMediaStatusSub; // (package name typo)
+  StreamSubscription? _gcMediaStatusSub;
   bool _isCastingChromecast = false;
 
   // ───────── DLNA/UPnP (Android only) ─────────
@@ -48,19 +62,28 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   bool _dlnaReady = false;
   bool _isCastingDlna = false;
   DeviceUdn? _activeDlnaUdn;
+  Timer? _dlnaRefreshTimer;
 
   @override
   void initState() {
     super.initState();
     _initializePlayer();
+    _initNetworkHandlers();
     _initChromecast();
     _initDlna();
+    WakelockPlus.enable();
   }
 
   @override
   void dispose() {
+    // Local player
     _chewieController?.dispose();
+    _videoController.removeListener(_onTick);
     _videoController.dispose();
+
+    // Network
+    _connSub?.cancel();
+    WakelockPlus.disable();
 
     // Chromecast cleanup
     _gcSessionSub?.cancel();
@@ -71,15 +94,49 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     } catch (_) {}
 
     // DLNA cleanup
+    _dlnaRefreshTimer?.cancel();
     _stopDlnaDiscovery();
 
     super.dispose();
+  }
+
+  // ───────────────────── Network handling ─────────────────────
+  void _initNetworkHandlers() {
+    _connSub = Connectivity().onConnectivityChanged.listen((event) async {
+      // Support both API shapes: ConnectivityResult and List<ConnectivityResult>
+      bool connected;
+      if (event is ConnectivityResult) {
+        connected = event != ConnectivityResult.none;
+      } else if (event is List<ConnectivityResult>) {
+        connected = event.any((r) => r != ConnectivityResult.none);
+      } else {
+        connected = true; // default to connected if unknown shape
+      }
+
+      if (!connected) {
+        _lostNetwork = true;
+        if (_videoController.value.isPlaying) {
+          await _videoController.pause();
+        }
+        if (mounted) setState(() {});
+      } else if (_lostNetwork) {
+        _lostNetwork = false;
+        // Nudge stream to reconnect and resume
+        final pos = _videoController.value.position;
+        await _videoController.seekTo(pos);
+        if (!_isCastingChromecast && !_isCastingDlna) {
+          await _videoController.play();
+        }
+        if (mounted) setState(() {});
+      }
+    });
   }
 
   // ───────────────────── CAST: Chromecast ─────────────────────
   Future<void> _initChromecast() async {
     try {
       const appId = GoogleCastDiscoveryCriteria.kDefaultApplicationId;
+
       GoogleCastOptions? options;
       if (Platform.isIOS) {
         options = IOSGoogleCastOptions(
@@ -88,12 +145,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       } else if (Platform.isAndroid) {
         options = GoogleCastOptionsAndroid(appId: appId);
       }
+
       if (options != null) {
         await GoogleCastContext.instance.setSharedInstanceWithOptions(options);
       }
 
-      await GoogleCastDiscoveryManager.instance.startDiscovery();
+      // Start discovery early, keep it alive
+      try {
+        await GoogleCastDiscoveryManager.instance.startDiscovery();
+      } catch (_) {}
 
+      // Observe session + media status
       _gcSessionSub = GoogleCastSessionManager.instance.currentSessionStream
           .listen((session) {
             if (session != null) {
@@ -130,7 +192,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       contentId: url,
       contentUrl: Uri.parse(url),
       contentType: _guessMime(url),
-      streamType: CastMediaStreamType.buffered,
+      streamType: _guessStreamType(url),
       metadata: GoogleCastGenericMediaMetadata(
         title: widget.title,
         subtitle: 'Archive.org',
@@ -184,11 +246,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           searchTarget: SearchTarget(target: 'upnp:rootdevice'),
         ),
       );
-      // poll discovered devices a few times
+
+      // initial devices
       _dlnaDevices = await _dlna.getDiscoveredDevices();
       if (mounted) setState(() {});
-      // keep a short refresher run
-      Timer.periodic(const Duration(seconds: 3), (t) async {
+
+      // keep short refresher polling then stop
+      _dlnaRefreshTimer?.cancel();
+      _dlnaRefreshTimer = Timer.periodic(const Duration(seconds: 3), (t) async {
         if (!mounted) {
           t.cancel();
           return;
@@ -219,7 +284,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     final udn = device.udn;
     final meta = VideoMetadata(
       title: widget.title,
-      upnpClass: 'object.item.videoItem', // generic class
+      upnpClass: 'object.item.videoItem',
       resolution: null,
       duration: null,
       genre: null,
@@ -265,7 +330,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         httpHeaders: Net.headers,
       );
     }
+
+    _videoController.addListener(_onTick);
     await _videoController.initialize();
+
+    // NEW: seek to resume point if provided
+    final resumeMs = widget.startPositionMs ?? 0;
+    if (resumeMs > 0) {
+      await _videoController.seekTo(Duration(milliseconds: resumeMs));
+    }
+
     _chewieController = ChewieController(
       videoPlayerController: _videoController,
       autoPlay: true,
@@ -277,6 +351,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (mounted) setState(() {});
   }
 
+  void _onTick() {
+    _lastPosMs = _videoController.value.position.inMilliseconds;
+    _lastDurMs = _videoController.value.duration.inMilliseconds;
+  }
+
   // ───────────────────── UI ─────────────────────
   @override
   Widget build(BuildContext context) {
@@ -286,58 +365,97 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
     final isCasting = _isCastingChromecast || _isCastingDlna;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-        actions: [
-          IconButton(
-            tooltip: 'Cast',
-            icon: Icon(isCasting ? Icons.cast_connected : Icons.cast),
-            onPressed: !_hasHttpUrl ? null : _openCastPicker,
+    return WillPopScope(
+      onWillPop: _handlePopWithProgress,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(widget.title),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () async => _handlePopWithProgress(),
           ),
-          if (_isCastingDlna)
+          actions: [
             IconButton(
-              tooltip: 'Stop DLNA',
-              icon: const Icon(Icons.stop_circle_outlined),
-              onPressed: _stopDlnaPlayback,
+              tooltip: 'Cast',
+              icon: Icon(isCasting ? Icons.cast_connected : Icons.cast),
+              onPressed: !_hasHttpUrl ? null : _openCastPicker,
             ),
-          if (_isCastingChromecast)
-            IconButton(
-              tooltip: 'Disconnect Chromecast',
-              icon: const Icon(Icons.close_fullscreen),
-              onPressed: () async {
-                await GoogleCastSessionManager.instance
-                    .endSessionAndStopCasting();
-              },
-            ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          if (!ready)
-            const Center(child: CircularProgressIndicator())
-          else if (isCasting)
-            const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.cast_connected, size: 64),
-                  SizedBox(height: 16),
-                  Text('Casting…'),
-                ],
+            if (_isCastingDlna)
+              IconButton(
+                tooltip: 'Stop DLNA',
+                icon: const Icon(Icons.stop_circle_outlined),
+                onPressed: _stopDlnaPlayback,
               ),
-            )
-          else
-            Chewie(controller: _chewieController!),
+            if (_isCastingChromecast)
+              IconButton(
+                tooltip: 'Disconnect Chromecast',
+                icon: const Icon(Icons.close_fullscreen),
+                onPressed: () async {
+                  try {
+                    await GoogleCastSessionManager.instance
+                        .endSessionAndStopCasting();
+                  } catch (e) {
+                    /* no-op */
+                  }
+                },
+              ),
+          ],
+        ),
+        body: Stack(
+          children: [
+            if (!ready)
+              const Center(child: CircularProgressIndicator())
+            else if (isCasting)
+              const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.cast_connected, size: 64),
+                    SizedBox(height: 16),
+                    Text('Casting…'),
+                  ],
+                ),
+              )
+            else
+              Chewie(controller: _chewieController!),
 
-          // Mini controller for Chromecast (auto shows when casting)
-          const Align(
-            alignment: Alignment.bottomCenter,
-            child: GoogleCastMiniController(),
-          ),
-        ],
+            // Chromecast mini controller (shows automatically when casting)
+            const Align(
+              alignment: Alignment.bottomCenter,
+              child: GoogleCastMiniController(),
+            ),
+
+            if (_lostNetwork)
+              Positioned(
+                left: 12,
+                right: 12,
+                top: 12,
+                child: Material(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(6),
+                  child: const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Text(
+                      'Connection lost. Reconnecting…',
+                      style: TextStyle(color: Colors.white),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
+  }
+
+  Future<bool> _handlePopWithProgress() async {
+    if (_popped) return false;
+    _popped = true;
+    Navigator.of(
+      context,
+    ).pop(<String, int>{'positionMs': _lastPosMs, 'durationMs': _lastDurMs});
+    return false; // we've handled the pop
   }
 
   // Combined picker (Chromecast + DLNA)
@@ -524,5 +642,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (lower.endsWith('.mkv')) return 'video/x-matroska';
     if (lower.endsWith('.mp4') || lower.endsWith('.m4v')) return 'video/mp4';
     return 'video/*';
+  }
+
+  CastMediaStreamType _guessStreamType(String url) {
+    final lower = url.toLowerCase();
+    if (lower.endsWith('.m3u8')) return CastMediaStreamType.live; // HLS
+    return CastMediaStreamType.buffered;
   }
 }

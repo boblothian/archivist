@@ -6,6 +6,14 @@ import '../archive_api.dart';
 
 part 'favourites_service.g.dart';
 
+/// Top-level helper so it can be used during JSON parsing and inside the service.
+String sanitizeArchiveId(String id) {
+  var s = id.trim();
+  if (s.startsWith('metadata/')) s = s.substring('metadata/'.length);
+  if (s.startsWith('details/')) s = s.substring('details/'.length);
+  return s;
+}
+
 @HiveType(typeId: 0)
 class FavoriteItem extends HiveObject {
   @HiveField(0)
@@ -64,8 +72,8 @@ class FavoriteItem extends HiveObject {
   };
 
   factory FavoriteItem.fromJson(Map<String, dynamic> json) => FavoriteItem(
-    id: json['id'] as String,
-    title: json['title'] as String,
+    id: sanitizeArchiveId((json['id'] ?? '').toString()),
+    title: (json['title'] ?? '').toString(),
     url: json['url'] as String?,
     thumb: json['thumb'] as String?,
     author: json['author'] as String?,
@@ -93,6 +101,39 @@ class FavoritesService {
   static const _thumbsKey = 'thumbs';
 
   Box<dynamic>? _box; // why: avoid late-read crash
+
+  // ------------------- NORMALISATION -------------------
+  // Ensure each stored file map has a usable 'name'
+  List<Map<String, String>> _normalizeFiles(
+    List<Map<String, String>> files, {
+    String? identifier,
+  }) {
+    String _extractName(Map<String, String> m) {
+      String name = (m['name'] ?? '').toString();
+      if (name.trim().isEmpty) {
+        name = (m['filename'] ?? m['pretty'] ?? '').toString();
+      }
+      if (name.trim().isEmpty) {
+        final url = (m['url'] ?? '').toString();
+        if (url.isNotEmpty) {
+          try {
+            name = Uri.decodeComponent(Uri.parse(url).pathSegments.last);
+          } catch (_) {}
+        }
+      }
+      return name.trim();
+    }
+
+    final out = <Map<String, String>>[];
+    for (final f in files) {
+      final m = Map<String, String>.from(f);
+      final name = _extractName(m);
+      if (name.isEmpty) continue; // drop unusable entries
+      m['name'] = name; // enforce presence for downstream extension checks
+      out.add(m);
+    }
+    return out;
+  }
 
   // Safe access to the opened box.
   Box<dynamic> get box {
@@ -174,7 +215,7 @@ class FavoritesService {
     int changed = 0;
 
     incoming.forEach((id, t) {
-      final key = id.trim();
+      final key = sanitizeArchiveId(id);
       final val = t.trim();
       if (key.isEmpty || val.isEmpty) return;
       if (current[key] != val) {
@@ -195,7 +236,42 @@ class FavoritesService {
     final dynamic raw = box.get('folders') ?? box.get('data');
     if (raw == null) return <String, List<FavoriteItem>>{};
 
-    if (raw is Map<String, List<FavoriteItem>>) return raw;
+    if (raw is Map<String, List<FavoriteItem>>) {
+      // sanitize ids + normalize files on the fly
+      final fixed = <String, List<FavoriteItem>>{};
+      raw.forEach((folder, list) {
+        final out = <FavoriteItem>[];
+        for (final e in list) {
+          final idClean = sanitizeArchiveId(e.id);
+          final normalized =
+              e.files != null
+                  ? e.copyWith(
+                    files: _normalizeFiles(e.files!, identifier: idClean),
+                  )
+                  : e;
+          out.add(
+            idClean == e.id
+                ? normalized
+                : normalized.copyWith().copyWith(/* no-op but keeps types */),
+          );
+          // We also want id to be the clean id. Re-create when changed:
+          if (idClean != e.id) {
+            out[out.length - 1] = FavoriteItem(
+              id: idClean,
+              title: e.title,
+              url: e.url,
+              thumb: e.thumb,
+              author: e.author,
+              mediatype: e.mediatype,
+              formats: e.formats,
+              files: normalized.files,
+            );
+          }
+        }
+        fixed[folder] = out;
+      });
+      return fixed;
+    }
 
     if (raw is Map) {
       final result = <String, List<FavoriteItem>>{};
@@ -206,14 +282,67 @@ class FavoritesService {
         if (value is List) {
           for (final e in value) {
             if (e is FavoriteItem) {
-              list.add(e);
+              final idClean = sanitizeArchiveId(e.id);
+              final normalized =
+                  e.files != null
+                      ? e.copyWith(
+                        files: _normalizeFiles(e.files!, identifier: idClean),
+                      )
+                      : e;
+              list.add(
+                idClean == e.id
+                    ? normalized
+                    : FavoriteItem(
+                      id: idClean,
+                      title: e.title,
+                      url: e.url,
+                      thumb: e.thumb,
+                      author: e.author,
+                      mediatype: e.mediatype,
+                      formats: e.formats,
+                      files: normalized.files,
+                    ),
+              );
             } else if (e is Map) {
               try {
-                list.add(FavoriteItem.fromJson(Map<String, dynamic>.from(e)));
+                final parsed = FavoriteItem.fromJson(
+                  Map<String, dynamic>.from(e),
+                );
+                final idClean = sanitizeArchiveId(parsed.id);
+                final normalized =
+                    parsed.files != null
+                        ? parsed.copyWith(
+                          files: _normalizeFiles(
+                            parsed.files!,
+                            identifier: idClean,
+                          ),
+                        )
+                        : parsed;
+                list.add(
+                  idClean == parsed.id
+                      ? normalized
+                      : FavoriteItem(
+                        id: idClean,
+                        title: normalized.title,
+                        url: normalized.url,
+                        thumb: normalized.thumb,
+                        author: normalized.author,
+                        mediatype: normalized.mediatype,
+                        formats: normalized.formats,
+                        files: normalized.files,
+                      ),
+                );
               } catch (_) {
+                final idStr = sanitizeArchiveId(
+                  (e['id'] ?? e['identifier'] ?? '').toString(),
+                );
+                final rawFiles =
+                    (e['files'] as List?)
+                        ?.map((f) => Map<String, String>.from(f as Map))
+                        .toList();
                 list.add(
                   FavoriteItem(
-                    id: (e['id'] ?? e['identifier'] ?? '').toString(),
+                    id: idStr,
                     title: (e['title'] ?? '').toString(),
                     url: (e['url'] as String?) ?? '',
                     thumb:
@@ -224,9 +353,9 @@ class FavoritesService {
                     mediatype: e['mediatype'] as String?,
                     formats: (e['formats'] as List?)?.cast<String>() ?? [],
                     files:
-                        (e['files'] as List?)
-                            ?.map((f) => Map<String, String>.from(f as Map))
-                            .toList(),
+                        rawFiles != null
+                            ? _normalizeFiles(rawFiles, identifier: idStr)
+                            : null,
                   ),
                 );
               }
@@ -236,6 +365,7 @@ class FavoritesService {
         result[folder] = list;
       });
 
+      // Write back migrated structure and drop legacy key if present
       box.put('folders', result);
       if (box.containsKey('data')) box.delete('data');
       return result;
@@ -245,7 +375,29 @@ class FavoritesService {
   }
 
   Future<void> _save(Map<String, List<FavoriteItem>> data) async {
-    await box.put('folders', data);
+    // Ensure ids are sanitized before persisting
+    final fixed = <String, List<FavoriteItem>>{};
+    data.forEach((folder, list) {
+      fixed[folder] =
+          list
+              .map(
+                (e) =>
+                    e.id == sanitizeArchiveId(e.id)
+                        ? e
+                        : FavoriteItem(
+                          id: sanitizeArchiveId(e.id),
+                          title: e.title,
+                          url: e.url,
+                          thumb: e.thumb,
+                          author: e.author,
+                          mediatype: e.mediatype,
+                          formats: e.formats,
+                          files: e.files,
+                        ),
+              )
+              .toList();
+    });
+    await box.put('folders', fixed);
     _notify();
   }
 
@@ -258,9 +410,11 @@ class FavoritesService {
       return;
     }
 
-    final normalized = _data;
+    final normalized = _data; // triggers normalization + id sanitization
     if (normalized.isEmpty) {
       await box.put('folders', {'Favourites': <FavoriteItem>[]});
+    } else {
+      await box.put('folders', normalized);
     }
   }
 
@@ -273,14 +427,31 @@ class FavoritesService {
       final list = data[folder]!;
       for (int i = 0; i < list.length; i++) {
         final item = list[i];
-        if (item.files == null) {
+        final cleanId = sanitizeArchiveId(item.id);
+        var current = item;
+        if (cleanId != item.id) {
+          current = FavoriteItem(
+            id: cleanId,
+            title: item.title,
+            url: item.url,
+            thumb: item.thumb,
+            author: item.author,
+            mediatype: item.mediatype,
+            formats: item.formats,
+            files: item.files,
+          );
+          list[i] = current;
+          changed = true;
+        }
+        if (current.files == null) {
           try {
-            final files = await ArchiveApi.fetchFilesForIdentifier(item.id);
-            list[i] = item.copyWith(files: files);
+            var files = await ArchiveApi.fetchFilesForIdentifier(cleanId);
+            files = _normalizeFiles(files, identifier: cleanId);
+            list[i] = current.copyWith(files: files);
             changed = true;
-            debugPrint('Migrated files for ${item.id}');
+            debugPrint('Migrated files for $cleanId');
           } catch (e) {
-            debugPrint('Failed to migrate files for ${item.id}: $e');
+            debugPrint('Failed to migrate files for $cleanId: $e');
           }
         }
       }
@@ -332,12 +503,13 @@ class FavoritesService {
   }
 
   bool contains(String folder, String id) =>
-      (_data[folder] ?? const []).any((e) => e.id == id);
+      (_data[folder] ?? const []).any((e) => e.id == sanitizeArchiveId(id));
 
   List<String> foldersForItem(String id) {
+    final target = sanitizeArchiveId(id);
     final res = <String>[];
     _data.forEach((f, list) {
-      if (list.any((e) => e.id == id)) res.add(f);
+      if (list.any((e) => e.id == target)) res.add(f);
     });
     res.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     return res;
@@ -354,10 +526,11 @@ class FavoritesService {
     List<String> formats = const [],
   }) async {
     final trimmedFolder = folder.trim();
-    if (contains(trimmedFolder, id)) return;
+    final cleanId = sanitizeArchiveId(id);
+    if (contains(trimmedFolder, cleanId)) return;
 
     final item = FavoriteItem(
-      id: id,
+      id: cleanId,
       title: title,
       url: url,
       thumb: thumb,
@@ -368,10 +541,11 @@ class FavoritesService {
 
     List<Map<String, String>> files = [];
     try {
-      files = await ArchiveApi.fetchFilesForIdentifier(id);
-      debugPrint('Fetched ${files.length} files for $id');
+      files = await ArchiveApi.fetchFilesForIdentifier(cleanId);
+      files = _normalizeFiles(files, identifier: cleanId);
+      debugPrint('Fetched ${files.length} files for $cleanId');
     } catch (e) {
-      debugPrint('Failed to fetch files for $id: $e');
+      debugPrint('Failed to fetch files for $cleanId: $e');
     }
 
     final finalItem = item.copyWith(files: files);
@@ -384,9 +558,23 @@ class FavoritesService {
       data.putIfAbsent(folder, () => <FavoriteItem>[]),
     );
 
-    if (!list.any((e) => e.id == item.id)) {
-      final latestThumb = getThumbForId(item.id) ?? item.thumb;
-      final finalItem = item.copyWith(thumb: latestThumb);
+    final cleanId = sanitizeArchiveId(item.id);
+    if (!list.any((e) => e.id == cleanId)) {
+      final latestThumb = getThumbForId(cleanId) ?? item.thumb;
+      final normalizedFiles =
+          item.files != null
+              ? _normalizeFiles(item.files!, identifier: cleanId)
+              : null;
+      final finalItem = FavoriteItem(
+        id: cleanId,
+        title: item.title,
+        url: item.url,
+        thumb: latestThumb,
+        author: item.author,
+        mediatype: item.mediatype,
+        formats: item.formats,
+        files: normalizedFiles,
+      );
       list.add(finalItem);
       data[folder] = list;
       await _save(data);
@@ -394,9 +582,10 @@ class FavoritesService {
   }
 
   Future<void> removeFromFolder(String folder, String id) async {
+    final target = sanitizeArchiveId(id);
     final data = Map<String, List<FavoriteItem>>.from(_data);
     final list = List<FavoriteItem>.from(data[folder] ?? const []);
-    list.removeWhere((e) => e.id == id);
+    list.removeWhere((e) => e.id == target);
     if (list.isEmpty && folder != 'Favourites') {
       data.remove(folder);
     } else {
@@ -431,9 +620,10 @@ class FavoritesService {
   }
 
   FavoriteItem? byId(String id) {
+    final target = sanitizeArchiveId(id);
     for (final list in _data.values) {
       for (final item in list) {
-        if (item.id == id) {
+        if (item.id == target) {
           final latestThumb = getThumbForId(item.id);
           return latestThumb != null && latestThumb != item.thumb
               ? item.copyWith(thumb: latestThumb)
@@ -444,17 +634,20 @@ class FavoritesService {
     return null;
   }
 
-  bool containsInAnyFolder(String id) =>
-      _data.values.any((list) => list.any((e) => e.id == id));
+  bool containsInAnyFolder(String id) {
+    final target = sanitizeArchiveId(id);
+    return _data.values.any((list) => list.any((e) => e.id == target));
+  }
 
   Future<void> removeFromAllFolders(String id) async {
+    final target = sanitizeArchiveId(id);
     final data = Map<String, List<FavoriteItem>>.from(_data);
     bool removed = false;
     final folderNames = List<String>.from(data.keys);
     for (final folder in folderNames) {
       final list = List<FavoriteItem>.from(data[folder] ?? const []);
       final before = list.length;
-      list.removeWhere((e) => e.id == id);
+      list.removeWhere((e) => e.id == target);
       if (list.length < before) {
         removed = true;
         if (list.isEmpty && folder != 'Favourites') {

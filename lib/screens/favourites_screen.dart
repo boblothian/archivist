@@ -1,6 +1,9 @@
 // lib/screens/favourites_screen.dart
-// NEW: open the full Archive Item page when tapping a favourite
+// NEW: open the Archive Item page for audio/text/images/PDFs; auto-play video only
+// NEW: if a favourite is a COLLECTION, open CollectionDetailScreen instead of ArchiveItemScreen.
+// NEW: sanitize Archive IDs (strip "metadata/" and "details/") before any fetch or navigation.
 import 'package:archivereader/screens/archive_item_screen.dart';
+import 'package:archivereader/screens/collection_detail_screen.dart';
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:archivereader/ui/capsule_theme.dart';
@@ -10,8 +13,8 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../archive_api.dart';
+import '../media/media_player_ops.dart';
 import '../utils/archive_helpers.dart';
-import '../utils/open_archive_item.dart';
 
 class FavoritesScreen extends StatelessWidget {
   final String? initialFolder;
@@ -50,7 +53,6 @@ class FavoritesScreen extends StatelessWidget {
               ),
             ),
             actions: [
-              // Three-dot menu: New, Rename (except All), divider, red Delete (except All)
               PopupMenuButton<_FolderMenu>(
                 tooltip: 'Folder options',
                 icon: const Icon(Icons.more_vert),
@@ -103,7 +105,6 @@ class FavoritesScreen extends StatelessWidget {
                                     onPressed: () {
                                       final raw = controller.text;
                                       final name = raw.trim();
-                                      // Why: prevent bad state and duplicates.
                                       if (name.isEmpty) {
                                         setState(
                                           () => error = 'Name cannot be empty',
@@ -298,6 +299,14 @@ class FavoritesScreen extends StatelessWidget {
 
 enum _FolderMenu { newFolder, rename, delete }
 
+// ── Local helper: sanitize Archive identifiers ──────────────────────
+String _sanitizeArchiveId(String id) {
+  var s = id.trim();
+  if (s.startsWith('metadata/')) s = s.substring('metadata/'.length);
+  if (s.startsWith('details/')) s = s.substring('details/'.length);
+  return s;
+}
+
 // ── Grid Body with capsule thumbs and delete "X" ──────────────────────────────
 class _GridBody extends StatefulWidget {
   final String folderName;
@@ -316,9 +325,7 @@ class _GridBodyState extends State<_GridBody>
 
   Future<void> _showMetadataSheet(FavoriteItem item) async {
     if (!mounted) return;
-
     HapticFeedback.mediumImpact();
-
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -362,7 +369,11 @@ class _GridBodyState extends State<_GridBody>
           itemCount: widget.items.length,
           itemBuilder: (context, i) {
             final fav = widget.items[i];
-            final id = fav.id.trim();
+
+            // Sanitize ID here before any operation.
+            final rawId = fav.id.trim();
+            final id = _sanitizeArchiveId(rawId);
+
             final title = fav.title.trim().isEmpty ? id : fav.title.trim();
             final thumb =
                 (fav.thumb?.trim().isNotEmpty == true)
@@ -394,15 +405,34 @@ class _GridBodyState extends State<_GridBody>
                     );
                     try {
                       files = await ArchiveApi.fetchFilesForIdentifier(id);
+
+                      // --- If STILL empty, this may be a collection. Check metadata.
                       if (files.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('No downloadable files found'),
-                          ),
-                        );
-                        return;
+                        try {
+                          final metaResp = await ArchiveApi.getMetadata(id);
+                          final md = (metaResp['metadata'] as Map?) ?? const {};
+                          final mediatype =
+                              (md['mediatype'] ?? '').toString().toLowerCase();
+                          if (mediatype == 'collection') {
+                            if (!mounted) return;
+                            // Open collection browser view instead of item page.
+                            await Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder:
+                                    (_) => CollectionDetailScreen(
+                                      categoryName: title,
+                                      collectionName: id,
+                                    ),
+                              ),
+                            );
+                            return;
+                          }
+                        } catch (_) {
+                          // ignore metadata failure, we’ll just fall back below
+                        }
                       }
-                      // cache files back into favourites
+
+                      // cache files back into favourites (even if empty)
                       final updated = fav.copyWith(files: files);
                       await FavoritesService.instance.addToFolder(
                         widget.folderName,
@@ -418,39 +448,79 @@ class _GridBodyState extends State<_GridBody>
                           backgroundColor: Colors.red,
                         ),
                       );
+                      // Try to detect collection even on error.
+                      try {
+                        final metaResp = await ArchiveApi.getMetadata(id);
+                        final md = (metaResp['metadata'] as Map?) ?? const {};
+                        final mediatype =
+                            (md['mediatype'] ?? '').toString().toLowerCase();
+                        if (mediatype == 'collection' && mounted) {
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder:
+                                  (_) => CollectionDetailScreen(
+                                    categoryName: title,
+                                    collectionName: id,
+                                  ),
+                            ),
+                          );
+                          return;
+                        }
+                      } catch (_) {}
+                      // Still open the item page so the user can try there
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder:
+                              (_) => ArchiveItemScreen(
+                                title: title,
+                                identifier: id,
+                                files: const <Map<String, String>>[],
+                                parentThumbUrl: thumb,
+                              ),
+                        ),
+                      );
                       return;
                     }
                   }
 
                   if (!context.mounted) return;
 
-                  // 2) If there are any videos → open the old bottom sheet chooser
-                  final videoFiles =
-                      files.where((f) {
-                        final name = (f['name'] ?? '').toLowerCase();
-                        return [
-                          'mp4',
-                          'm4v',
-                          'webm',
-                          'mkv',
-                          'm3u8',
-                          'avi',
-                          'mov',
-                        ].any(name.endsWith);
-                      }).toList();
+                  // 2) Build absolute URLs from file list (encode names)
+                  String toUrl(String name) =>
+                      'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
+                  final allUrls = <String>[];
+                  for (final f in files) {
+                    final name = (f['name'] ?? '').trim();
+                    if (name.isEmpty) continue;
+                    allUrls.add(toUrl(name));
+                  }
 
-                  if (videoFiles.isNotEmpty) {
-                    await showVideoFileChooser(
-                      context: context,
+                  bool isVideo(String u) {
+                    final l = u.toLowerCase();
+                    return l.endsWith('.mp4') ||
+                        l.endsWith('.m4v') ||
+                        l.endsWith('.webm') ||
+                        l.endsWith('.mkv') ||
+                        l.endsWith('.m3u8') ||
+                        l.endsWith('.avi') ||
+                        l.endsWith('.mov');
+                  }
+
+                  // Only auto-play video; EVERYTHING else opens ArchiveItemScreen
+                  final videoUrls = allUrls.where(isVideo).toList();
+                  final bestVideo = MediaPlayerOps.pickBestVideoUrl(videoUrls);
+
+                  if (bestVideo != null) {
+                    await MediaPlayerOps.playVideo(
+                      context,
+                      url: bestVideo,
                       identifier: id,
                       title: title,
-                      videoOptions: videoFiles,
-                      thumbForId: (_) => thumb,
                     );
                     return;
                   }
 
-                  // 3) Otherwise open the Archive Item screen
+                  // Fallback: open full item page (audio/text/images/PDFs; or no files)
                   await Navigator.of(context).push(
                     MaterialPageRoute(
                       builder:
@@ -478,7 +548,6 @@ class _GridBodyState extends State<_GridBody>
                               fillParent: true,
                             ),
                           ),
-                          // Optional: "READY" badge when files are cached
                           if (fav.files != null && fav.files!.isNotEmpty)
                             Positioned(
                               top: 6,
@@ -644,12 +713,12 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
   @override
   void initState() {
     super.initState();
-    _future = ArchiveApi.getMetadata(widget.item.id);
+    _future = ArchiveApi.getMetadata(_sanitizeArchiveId(widget.item.id));
   }
 
   Future<void> _retry() async {
     setState(() {
-      _future = ArchiveApi.getMetadata(widget.item.id);
+      _future = ArchiveApi.getMetadata(_sanitizeArchiveId(widget.item.id));
     });
   }
 
@@ -877,10 +946,8 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
               if (added.isEmpty) added = _flat(meta['date']).trim();
               if (added.isEmpty) added = _flat(meta['addeddate']).trim();
 
-              final subjects = _asList(meta['subject']);
-              subjects.sort(
-                (a, b) => a.toLowerCase().compareTo(b.toLowerCase()),
-              );
+              final subjects = _asList(meta['subject'])
+                ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
               final formatSet = <String>{
                 ...widget.item.formats
@@ -906,28 +973,25 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                 ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
               final cachedFilesCount = widget.item.files?.length ?? 0;
+              final cleanId = _sanitizeArchiveId(widget.item.id);
               final thumb =
                   (widget.item.thumb?.trim().isNotEmpty == true)
                       ? widget.item.thumb!.trim()
-                      : archiveThumbUrl(widget.item.id);
+                      : archiveThumbUrl(cleanId);
               final url =
                   (widget.item.url?.trim().isNotEmpty == true)
                       ? widget.item.url!.trim()
-                      : 'https://archive.org/details/${widget.item.id}';
+                      : 'https://archive.org/details/$cleanId';
 
               final infoChips = <Widget>[];
-              if (mediatype.isNotEmpty) {
+              if (mediatype.isNotEmpty)
                 infoChips.add(_buildInfoChip(theme, mediatype));
-              }
-              if (year.isNotEmpty) {
+              if (year.isNotEmpty)
                 infoChips.add(_buildInfoChip(theme, 'Year $year'));
-              }
-              if (language.isNotEmpty) {
+              if (language.isNotEmpty)
                 infoChips.add(_buildInfoChip(theme, language));
-              }
-              if (runtime.isNotEmpty) {
+              if (runtime.isNotEmpty)
                 infoChips.add(_buildInfoChip(theme, runtime));
-              }
               if (downloads.isNotEmpty) {
                 infoChips.add(_buildInfoChip(theme, '$downloads downloads'));
               }
@@ -1042,7 +1106,7 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                       SizedBox(
                         width: 120,
                         child: CapsuleThumbCard(
-                          heroTag: 'fav-meta:${widget.item.id}',
+                          heroTag: 'fav-meta:$cleanId',
                           imageUrl: thumb,
                           fit: BoxFit.cover,
                         ),
@@ -1059,7 +1123,7 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                               ),
                             ),
                             const SizedBox(height: 4),
-                            _buildIdentifierRow(theme, widget.item.id),
+                            _buildIdentifierRow(theme, cleanId),
                             if (infoChips.isNotEmpty) ...[
                               const SizedBox(height: 12),
                               Wrap(

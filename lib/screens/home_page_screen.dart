@@ -17,9 +17,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../media/media_player_ops.dart';
 import '../utils/archive_helpers.dart';
-import '../utils/external_launch.dart';
 import '../widgets/big_section_header.dart';
+import 'archive_item_screen.dart';
 import 'cbz_viewer_screen.dart';
 import 'collection_detail_screen.dart';
 
@@ -220,6 +221,12 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
         SizedBox(height: 8.0),
         _BuildContinueWatching(),
 
+        // NEW: Recently listened shelf
+        SizedBox(height: 24.0),
+        BigSectionHeader('Recently listened'),
+        SizedBox(height: 8.0),
+        _BuildContinueListening(),
+
         SizedBox(height: 24.0),
         FeaturedCollectionsCarousel(),
 
@@ -268,7 +275,7 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
   }
 }
 
-// ===== UNIFIED CARD (PDF + VIDEO) =====
+// ===== UNIFIED CARD (PDF + VIDEO + AUDIO) =====
 class _ResumeMediaCard extends StatelessWidget {
   final String id;
   final String title;
@@ -619,7 +626,7 @@ class _BuildContinueReading extends StatelessWidget {
   }
 }
 
-// ===== CONTINUE WATCHING (VIDEO) — OPENS IN VLC/MX PLAYER =====
+// ===== CONTINUE WATCHING (VIDEO) — Resumes using positionMs if available =====
 class _BuildContinueWatching extends StatelessWidget {
   const _BuildContinueWatching();
 
@@ -662,7 +669,16 @@ class _BuildContinueWatching extends StatelessWidget {
                   final title = (e['title'] as String?) ?? id;
                   final fileUrl = e['fileUrl'] as String?;
                   final fileName = e['fileName'] as String?;
-                  final percent = (e['percent'] as double?) ?? 0.0;
+
+                  // New: prefer positionMs/durationMs when present
+                  final positionMs = (e['positionMs'] as int?) ?? 0;
+                  final durationMs = (e['durationMs'] as int?) ?? 0;
+                  double percent;
+                  if (durationMs > 0 && positionMs >= 0) {
+                    percent = positionMs / durationMs;
+                  } else {
+                    percent = (e['percent'] as double?) ?? 0.0;
+                  }
 
                   final fallback = 'https://archive.org/services/img/$id';
                   final initialThumb = (e['thumb'] as String?) ?? fallback;
@@ -677,71 +693,52 @@ class _BuildContinueWatching extends StatelessWidget {
                         id: id,
                         title: title,
                         thumb: thumbToUse,
-                        progress: percent,
+                        progress: percent.clamp(0.0, 1.0),
                         progressLabel:
-                            percent > 0
+                            (percent > 0)
                                 ? '${(percent * 100).toStringAsFixed(0)}% watched'
                                 : 'Tap to open',
                         onTap: () async {
                           if (fileUrl == null || fileName == null) {
+                            // Fallback: open the full item page if we can’t resume a specific file
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('No video file recorded.'),
-                                duration: Duration(seconds: 2),
+                                content: Text(
+                                  'No video file recorded; opening item…',
+                                ),
+                              ),
+                            );
+                            await Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder:
+                                    (_) => ArchiveItemScreen(
+                                      title: title,
+                                      identifier: id,
+                                      files:
+                                          const <
+                                            Map<String, String>
+                                          >[], // unknown here
+                                      parentThumbUrl: thumbToUse,
+                                    ),
                               ),
                             );
                             return;
                           }
 
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Row(
-                                children: [
-                                  const Icon(
-                                    Icons.play_circle_outline,
-                                    color: Colors.white,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      'Opening: $fileName',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              backgroundColor: Colors.black87,
-                              behavior: SnackBarBehavior.floating,
-                              duration: const Duration(seconds: 2),
-                            ),
-                          );
-
-                          String mime = 'video/*';
-                          final ext = fileName.toLowerCase();
-                          if (ext.endsWith('.mp4') || ext.endsWith('.m4v')) {
-                            mime = 'video/mp4';
-                          } else if (ext.endsWith('.webm')) {
-                            mime = 'video/webm';
-                          } else if (ext.endsWith('.mkv')) {
-                            mime = 'video/x-matroska';
-                          } else if (ext.endsWith('.m3u8')) {
-                            mime = 'application/vnd.apple.mpegurl';
-                          }
-
+                          // Use the centralized in-app player with resume time
                           try {
-                            await openExternallyWithChooser(
+                            await MediaPlayerOps.playVideo(
+                              context,
                               url: fileUrl,
-                              mimeType: mime,
-                              chooserTitle: 'Open with',
+                              identifier: id,
+                              title: title,
+                              startPositionMs: positionMs, // <-- resume time
                             );
                           } catch (e) {
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Failed to open: $e')),
-                              );
-                            }
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Failed to play: $e')),
+                            );
                           }
                         },
                         onDelete:
@@ -753,6 +750,121 @@ class _BuildContinueWatching extends StatelessWidget {
               ),
             ),
           ],
+        );
+      },
+    );
+  }
+}
+
+// ===== CONTINUE LISTENING (AUDIO) — Resumes using positionMs if available =====
+class _BuildContinueListening extends StatelessWidget {
+  const _BuildContinueListening();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: RecentProgressService.instance.version,
+      builder: (context, _, __) {
+        final recent =
+            RecentProgressService.instance
+                .recent(limit: 30)
+                .where((e) => (e['kind'] as String?) == 'audio')
+                .toList();
+
+        if (recent.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.only(top: 8.0),
+            child: Center(
+              child: Text(
+                'No recent listening',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+          );
+        }
+
+        return SizedBox(
+          height: 220,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: recent.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 16),
+            itemBuilder: (_, i) {
+              final e = recent[i];
+              final id = e['id'] as String;
+              final title = (e['title'] as String?) ?? id;
+              final fileUrl = e['fileUrl'] as String?;
+              final fileName = e['fileName'] as String?;
+
+              final positionMs = (e['positionMs'] as int?) ?? 0;
+              final durationMs = (e['durationMs'] as int?) ?? 0;
+              final percent =
+                  (durationMs > 0 && positionMs >= 0)
+                      ? (positionMs / durationMs)
+                      : ((e['percent'] as double?) ?? 0.0);
+
+              final fallback = 'https://archive.org/services/img/$id';
+              final initialThumb = (e['thumb'] as String?) ?? fallback;
+
+              return FutureBuilder<String>(
+                future: _resolveThumb(id, initialThumb),
+                initialData: initialThumb,
+                builder: (context, snap) {
+                  final thumbToUse = snap.data ?? initialThumb;
+                  return _ResumeMediaCard(
+                    id: id,
+                    title: title,
+                    thumb: thumbToUse,
+                    progress: percent.clamp(0.0, 1.0),
+                    progressLabel:
+                        percent > 0
+                            ? '${(percent * 100).toStringAsFixed(0)}% listened'
+                            : 'Tap to play',
+                    onTap: () async {
+                      if (fileUrl == null || fileName == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'No audio file recorded; opening item…',
+                            ),
+                          ),
+                        );
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder:
+                                (_) => ArchiveItemScreen(
+                                  title: title,
+                                  identifier: id,
+                                  files: const <Map<String, String>>[],
+                                  parentThumbUrl: thumbToUse,
+                                ),
+                          ),
+                        );
+                        return;
+                      }
+
+                      try {
+                        await MediaPlayerOps.playAudio(
+                          context,
+                          url: fileUrl,
+                          identifier: id,
+                          title: title,
+                          startPositionMs: positionMs, // <-- resume audio
+                        );
+                      } catch (err) {
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Failed to play: $err')),
+                        );
+                      }
+                    },
+                    onDelete: () => RecentProgressService.instance.remove(id),
+                  );
+                },
+              );
+            },
+          ),
         );
       },
     );

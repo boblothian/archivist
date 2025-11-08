@@ -2,7 +2,6 @@
 import 'dart:convert';
 
 import 'package:animations/animations.dart';
-import 'package:archivereader/screens/video_player_screen.dart';
 import 'package:archivereader/services/app_preferences.dart';
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
@@ -19,6 +18,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../media/media_player_ops.dart';
 import '../net.dart';
 import '../utils/archive_helpers.dart';
 import '../utils/external_launch.dart';
@@ -1688,15 +1688,11 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                           _dismissKeyboard();
 
                           if (choice == 'inapp') {
-                            Navigator.of(context).push(
-                              _sharedAxisRoute(
-                                VideoPlayerScreen(
-                                  url: videoUrl,
-                                  file: null,
-                                  identifier: identifier,
-                                  title: title,
-                                ),
-                              ),
+                            await MediaPlayerOps.playVideo(
+                              context,
+                              url: videoUrl,
+                              identifier: identifier,
+                              title: title,
                             );
                           } else if (choice == 'browser') {
                             await launchUrl(

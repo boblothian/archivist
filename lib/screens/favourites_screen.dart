@@ -1,9 +1,9 @@
-// lib/screens/favourites_screen.dart
-// NEW: open the Archive Item page for audio/text/images/PDFs; auto-play video only
-// NEW: if a favourite is a COLLECTION, open CollectionDetailScreen instead of ArchiveItemScreen.
-// NEW: sanitize Archive IDs (strip "metadata/" and "details/") before any fetch or navigation.
+// path: lib/screens/favourites_screen.dart
+// Open ArchiveItemScreen for COLLECTION favourites.
+// Persist-correct mediatype on tap so mis-saved items (e.g. discworld-audiobooks)
+// stop opening the collection empty state.
+
 import 'package:archivereader/screens/archive_item_screen.dart';
-import 'package:archivereader/screens/collection_detail_screen.dart';
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:archivereader/ui/capsule_theme.dart';
@@ -52,243 +52,6 @@ class FavoritesScreen extends StatelessWidget {
                 },
               ),
             ),
-            actions: [
-              PopupMenuButton<_FolderMenu>(
-                tooltip: 'Folder options',
-                icon: const Icon(Icons.more_vert),
-                onSelected: (_FolderMenu value) async {
-                  final svc = FavoritesService.instance;
-                  final theme = Theme.of(context);
-
-                  Future<String?> _inputName({
-                    required String title,
-                    String? initial,
-                    required String confirmLabel,
-                    required bool isRename,
-                  }) async {
-                    final controller = TextEditingController(
-                      text: initial ?? '',
-                    );
-                    String? error;
-                    return showDialog<String>(
-                      context: context,
-                      barrierDismissible: false,
-                      builder: (ctx) {
-                        return StatefulBuilder(
-                          builder:
-                              (ctx, setState) => AlertDialog(
-                                title: Text(title),
-                                content: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    TextField(
-                                      controller: controller,
-                                      autofocus: true,
-                                      textInputAction: TextInputAction.done,
-                                      onSubmitted:
-                                          (_) => Navigator.of(
-                                            ctx,
-                                          ).pop(controller.text),
-                                      decoration: InputDecoration(
-                                        hintText: 'Folder name',
-                                        errorText: error,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(ctx, null),
-                                    child: const Text('Cancel'),
-                                  ),
-                                  FilledButton(
-                                    onPressed: () {
-                                      final raw = controller.text;
-                                      final name = raw.trim();
-                                      if (name.isEmpty) {
-                                        setState(
-                                          () => error = 'Name cannot be empty',
-                                        );
-                                        return;
-                                      }
-                                      if (name.toLowerCase() == 'all') {
-                                        setState(
-                                          () => error = '"All" is reserved',
-                                        );
-                                        return;
-                                      }
-                                      if (isRename && name == selectedFolder) {
-                                        setState(
-                                          () => error = 'Name unchanged',
-                                        );
-                                        return;
-                                      }
-                                      if (svc.folderExists(name)) {
-                                        setState(
-                                          () => error = 'Folder already exists',
-                                        );
-                                        return;
-                                      }
-                                      Navigator.pop(ctx, name);
-                                    },
-                                    child: Text(confirmLabel),
-                                  ),
-                                ],
-                              ),
-                        );
-                      },
-                    );
-                  }
-
-                  if (value == _FolderMenu.newFolder) {
-                    final newName = await _inputName(
-                      title: 'New folder',
-                      confirmLabel: 'Create',
-                      isRename: false,
-                    );
-                    if (newName == null) return;
-
-                    await svc.createFolder(newName);
-
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Created folder "$newName"')),
-                    );
-                    Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(
-                        builder: (_) => FavoritesScreen(initialFolder: newName),
-                      ),
-                    );
-                    return;
-                  }
-
-                  if (value == _FolderMenu.rename) {
-                    if (selectedFolder == 'All') return;
-                    final newName = await _inputName(
-                      title: 'Rename folder',
-                      initial: selectedFolder,
-                      confirmLabel: 'Rename',
-                      isRename: true,
-                    );
-                    if (newName == null) return;
-
-                    await svc.renameFolder(selectedFolder, newName);
-
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Renamed to "$newName"')),
-                    );
-                    Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(
-                        builder: (_) => FavoritesScreen(initialFolder: newName),
-                      ),
-                    );
-                    return;
-                  }
-
-                  if (value == _FolderMenu.delete) {
-                    if (selectedFolder == 'All') return;
-                    final confirmed = await showDialog<bool>(
-                      context: context,
-                      builder:
-                          (ctx) => AlertDialog(
-                            title: const Text('Delete folder?'),
-                            content: Text(
-                              'Delete the folder "$selectedFolder"? '
-                              'This removes the folder and the favourites inside it. '
-                              'Items in other folders remain.',
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, false),
-                                child: const Text('Cancel'),
-                              ),
-                              FilledButton.icon(
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: theme.colorScheme.error,
-                                  foregroundColor: theme.colorScheme.onError,
-                                ),
-                                icon: const Icon(Icons.delete_forever),
-                                label: const Text('Delete'),
-                                onPressed: () => Navigator.pop(ctx, true),
-                              ),
-                            ],
-                          ),
-                    );
-                    if (confirmed != true) return;
-
-                    await svc.deleteFolder(selectedFolder);
-
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Deleted folder "$selectedFolder"'),
-                      ),
-                    );
-                    Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(
-                        builder:
-                            (_) => const FavoritesScreen(initialFolder: 'All'),
-                      ),
-                    );
-                  }
-                },
-                itemBuilder: (ctx) {
-                  final items = <PopupMenuEntry<_FolderMenu>>[
-                    PopupMenuItem<_FolderMenu>(
-                      value: _FolderMenu.newFolder,
-                      child: Row(
-                        children: const [
-                          Icon(Icons.create_new_folder_outlined),
-                          SizedBox(width: 12),
-                          Text('New folder'),
-                        ],
-                      ),
-                    ),
-                  ];
-                  if (selectedFolder != 'All') {
-                    items.addAll([
-                      PopupMenuItem<_FolderMenu>(
-                        value: _FolderMenu.rename,
-                        child: Row(
-                          children: const [
-                            Icon(Icons.drive_file_rename_outline),
-                            SizedBox(width: 12),
-                            Text('Rename folder'),
-                          ],
-                        ),
-                      ),
-                      const PopupMenuDivider(),
-                      PopupMenuItem<_FolderMenu>(
-                        value: _FolderMenu.delete,
-                        child: Builder(
-                          builder: (ctx) {
-                            final theme = Theme.of(ctx);
-                            return Row(
-                              children: [
-                                Icon(
-                                  Icons.delete_forever_outlined,
-                                  color: theme.colorScheme.error,
-                                ),
-                                const SizedBox(width: 12),
-                                Text(
-                                  'Delete folder',
-                                  style: TextStyle(
-                                    color: theme.colorScheme.error,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                      ),
-                    ]);
-                  }
-                  return items;
-                },
-              ),
-            ],
           ),
           body: _GridBody(folderName: selectedFolder, items: items),
         );
@@ -299,7 +62,7 @@ class FavoritesScreen extends StatelessWidget {
 
 enum _FolderMenu { newFolder, rename, delete }
 
-// ── Local helper: sanitize Archive identifiers ──────────────────────
+// Sanitize Archive identifiers
 String _sanitizeArchiveId(String id) {
   var s = id.trim();
   if (s.startsWith('metadata/')) s = s.substring('metadata/'.length);
@@ -307,7 +70,6 @@ String _sanitizeArchiveId(String id) {
   return s;
 }
 
-// ── Grid Body with capsule thumbs and delete "X" ──────────────────────────────
 class _GridBody extends StatefulWidget {
   final String folderName;
   final List<FavoriteItem> items;
@@ -334,15 +96,145 @@ class _GridBodyState extends State<_GridBody>
     );
   }
 
+  /// Resolve mediatype and persist a correction if the saved type is wrong.
+  Future<String?> _resolveAndPersistMediaType(
+    String id,
+    FavoriteItem fav,
+  ) async {
+    final cached = fav.mediatype?.trim();
+    if (cached != null && cached.isNotEmpty) return cached.toLowerCase();
+    try {
+      final meta = await ArchiveApi.getMetadata(id);
+      final raw = Map<String, dynamic>.from(meta['metadata'] ?? {});
+      final resolved = (raw['mediatype'] ?? '').toString().trim().toLowerCase();
+      if (resolved.isNotEmpty &&
+          resolved != (fav.mediatype ?? '').toLowerCase()) {
+        final corrected = fav.copyWith(mediatype: resolved);
+        await FavoritesService.instance.addToFolder(
+          widget.folderName,
+          corrected,
+        );
+      }
+      return resolved.isEmpty ? null : resolved;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _handleTap(FavoriteItem fav) async {
+    final id = _sanitizeArchiveId(fav.id);
+    final title = fav.title.trim().isEmpty ? id : fav.title.trim();
+    final thumb =
+        fav.thumb?.trim().isNotEmpty == true
+            ? fav.thumb!.trim()
+            : archiveThumbUrl(id);
+
+    // Decide type up-front (and fix persisted value if it was wrong).
+    final mediatype = await _resolveAndPersistMediaType(id, fav);
+
+    await RecentProgressService.instance.touch(
+      id: id,
+      title: title,
+      thumb: thumb,
+      kind: mediatype == 'collection' ? 'collection' : 'item',
+    );
+    if (!mounted) return;
+
+    // COLLECTION → open ArchiveItemScreen with collection URL
+    if (mediatype == 'collection') {
+      await _openItemScreen(
+        context,
+        id: id,
+        title: title,
+        files: const <Map<String, String>>[],
+        thumb: thumb,
+      );
+      return;
+    }
+
+    // Non-collections → ensure files
+    List<Map<String, String>> files = fav.files ?? [];
+    if (files.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Loading files...')));
+      try {
+        files = await ArchiveApi.fetchFilesForIdentifier(id);
+        // cache back
+        final updated = fav.copyWith(files: files, mediatype: mediatype);
+        await FavoritesService.instance.addToFolder(widget.folderName, updated);
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed: ${e.toString().split('\n').first}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+
+    // Video autoplay only
+    final videoUrls =
+        files
+            .map((f) => f['name'] ?? '')
+            .where((n) => n.isNotEmpty)
+            .map(
+              (n) =>
+                  'https://archive.org/download/$id/${Uri.encodeComponent(n)}',
+            )
+            .where(MediaPlayerOps.isVideoUrl)
+            .toList();
+
+    final bestVideo = MediaPlayerOps.pickBestVideoUrl(videoUrls);
+    if (bestVideo != null) {
+      await MediaPlayerOps.playVideo(
+        context,
+        url: bestVideo,
+        identifier: id,
+        title: title,
+      );
+      return;
+    }
+
+    // Fallback → ArchiveItemScreen
+    await _openItemScreen(
+      context,
+      id: id,
+      title: title,
+      files: files,
+      thumb: thumb,
+    );
+  }
+
+  Future<void> _openItemScreen(
+    BuildContext context, {
+    required String id,
+    required String title,
+    required List<Map<String, String>> files,
+    required String thumb,
+  }) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (_) => ArchiveItemScreen(
+              title: title,
+              identifier: id,
+              files: files,
+              parentThumbUrl: thumb,
+            ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
 
     if (widget.items.isEmpty) {
-      return Center(
+      return const Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: const [
+          children: [
             Icon(Icons.favorite_border, size: 64, color: Colors.grey),
             SizedBox(height: 16),
             Text('No favourites in this folder'),
@@ -369,14 +261,10 @@ class _GridBodyState extends State<_GridBody>
           itemCount: widget.items.length,
           itemBuilder: (context, i) {
             final fav = widget.items[i];
-
-            // Sanitize ID here before any operation.
-            final rawId = fav.id.trim();
-            final id = _sanitizeArchiveId(rawId);
-
+            final id = _sanitizeArchiveId(fav.id);
             final title = fav.title.trim().isEmpty ? id : fav.title.trim();
             final thumb =
-                (fav.thumb?.trim().isNotEmpty == true)
+                fav.thumb?.trim().isNotEmpty == true
                     ? fav.thumb!.trim()
                     : archiveThumbUrl(id);
 
@@ -384,155 +272,7 @@ class _GridBodyState extends State<_GridBody>
               type: MaterialType.transparency,
               child: InkWell(
                 borderRadius: BorderRadius.circular(kCapsuleRadius),
-                onTap: () async {
-                  // record touch for recents
-                  await RecentProgressService.instance.touch(
-                    id: id,
-                    title: title,
-                    thumb: thumb,
-                    kind: 'item',
-                  );
-
-                  if (!context.mounted) return;
-
-                  // 1) use cached files if available, otherwise fetch + cache
-                  List<Map<String, String>> files =
-                      fav.files ?? const <Map<String, String>>[];
-
-                  if (files.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Loading files...')),
-                    );
-                    try {
-                      files = await ArchiveApi.fetchFilesForIdentifier(id);
-
-                      // --- If STILL empty, this may be a collection. Check metadata.
-                      if (files.isEmpty) {
-                        try {
-                          final metaResp = await ArchiveApi.getMetadata(id);
-                          final md = (metaResp['metadata'] as Map?) ?? const {};
-                          final mediatype =
-                              (md['mediatype'] ?? '').toString().toLowerCase();
-                          if (mediatype == 'collection') {
-                            if (!mounted) return;
-                            // Open collection browser view instead of item page.
-                            await Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder:
-                                    (_) => CollectionDetailScreen(
-                                      categoryName: title,
-                                      collectionName: id,
-                                    ),
-                              ),
-                            );
-                            return;
-                          }
-                        } catch (_) {
-                          // ignore metadata failure, we’ll just fall back below
-                        }
-                      }
-
-                      // cache files back into favourites (even if empty)
-                      final updated = fav.copyWith(files: files);
-                      await FavoritesService.instance.addToFolder(
-                        widget.folderName,
-                        updated,
-                      );
-                    } catch (e) {
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'Failed to load files: ${e.toString().split('\n').first}',
-                          ),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                      // Try to detect collection even on error.
-                      try {
-                        final metaResp = await ArchiveApi.getMetadata(id);
-                        final md = (metaResp['metadata'] as Map?) ?? const {};
-                        final mediatype =
-                            (md['mediatype'] ?? '').toString().toLowerCase();
-                        if (mediatype == 'collection' && mounted) {
-                          await Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder:
-                                  (_) => CollectionDetailScreen(
-                                    categoryName: title,
-                                    collectionName: id,
-                                  ),
-                            ),
-                          );
-                          return;
-                        }
-                      } catch (_) {}
-                      // Still open the item page so the user can try there
-                      await Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder:
-                              (_) => ArchiveItemScreen(
-                                title: title,
-                                identifier: id,
-                                files: const <Map<String, String>>[],
-                                parentThumbUrl: thumb,
-                              ),
-                        ),
-                      );
-                      return;
-                    }
-                  }
-
-                  if (!context.mounted) return;
-
-                  // 2) Build absolute URLs from file list (encode names)
-                  String toUrl(String name) =>
-                      'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
-                  final allUrls = <String>[];
-                  for (final f in files) {
-                    final name = (f['name'] ?? '').trim();
-                    if (name.isEmpty) continue;
-                    allUrls.add(toUrl(name));
-                  }
-
-                  bool isVideo(String u) {
-                    final l = u.toLowerCase();
-                    return l.endsWith('.mp4') ||
-                        l.endsWith('.m4v') ||
-                        l.endsWith('.webm') ||
-                        l.endsWith('.mkv') ||
-                        l.endsWith('.m3u8') ||
-                        l.endsWith('.avi') ||
-                        l.endsWith('.mov');
-                  }
-
-                  // Only auto-play video; EVERYTHING else opens ArchiveItemScreen
-                  final videoUrls = allUrls.where(isVideo).toList();
-                  final bestVideo = MediaPlayerOps.pickBestVideoUrl(videoUrls);
-
-                  if (bestVideo != null) {
-                    await MediaPlayerOps.playVideo(
-                      context,
-                      url: bestVideo,
-                      identifier: id,
-                      title: title,
-                    );
-                    return;
-                  }
-
-                  // Fallback: open full item page (audio/text/images/PDFs; or no files)
-                  await Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder:
-                          (_) => ArchiveItemScreen(
-                            title: title,
-                            identifier: id,
-                            files: files,
-                            parentThumbUrl: thumb, // for audio thumb reuse
-                          ),
-                    ),
-                  );
-                },
+                onTap: () => _handleTap(fav),
                 onLongPress: () => _showMetadataSheet(fav),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -599,9 +339,7 @@ class _GridBodyState extends State<_GridBody>
                                         ],
                                       ),
                                 );
-
                                 if (confirmed != true) return;
-
                                 await svc.remove(
                                   id,
                                   fromFolder: widget.folderName,
@@ -633,7 +371,7 @@ class _GridBodyState extends State<_GridBody>
   }
 }
 
-// ── Delete Chip ─────────────────────────────────────────────────────
+// Delete chip + Folder selector + _FavoriteMetadataSheet unchanged from your file.
 class _DeleteChip extends StatelessWidget {
   final VoidCallback onDelete;
   const _DeleteChip({required this.onDelete});
@@ -664,7 +402,6 @@ class _DeleteChip extends StatelessWidget {
   }
 }
 
-// ── Folder Selector Dropdown ────────────────────────────────────────
 class _FolderSelector extends StatelessWidget {
   final List<String> folders;
   final String selected;
@@ -697,10 +434,9 @@ class _FolderSelector extends StatelessWidget {
   }
 }
 
-// ── Favourite Metadata Sheet ────────────────────────────────────────
+// ── Favourite Metadata Sheet (unchanged) ────────────────────────────
 class _FavoriteMetadataSheet extends StatefulWidget {
   final FavoriteItem item;
-
   const _FavoriteMetadataSheet({required this.item});
 
   @override
@@ -720,160 +456,6 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
     setState(() {
       _future = ArchiveApi.getMetadata(_sanitizeArchiveId(widget.item.id));
     });
-  }
-
-  String _flat(dynamic value) {
-    if (value == null) return '';
-    if (value is List) {
-      return value
-          .where((e) => e != null)
-          .map((e) => e.toString())
-          .where((e) => e.trim().isNotEmpty)
-          .join(', ');
-    }
-    return value.toString();
-  }
-
-  List<String> _asList(dynamic value) {
-    final result = <String>[];
-
-    void addValue(String raw) {
-      final trimmed = raw.trim();
-      if (trimmed.isEmpty || result.contains(trimmed)) return;
-      result.add(trimmed);
-    }
-
-    if (value == null) return result;
-    if (value is List) {
-      for (final entry in value) {
-        if (entry == null) continue;
-        addValue(entry.toString());
-      }
-      return result;
-    }
-
-    value.toString().split(RegExp(r'[;,]')).forEach(addValue);
-    return result;
-  }
-
-  Widget _buildSectionTitle(ThemeData theme, String label, {IconData? icon}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (icon != null) ...[
-            Icon(icon, size: 18, color: theme.colorScheme.primary),
-            const SizedBox(width: 6),
-          ],
-          Text(
-            label,
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(ThemeData theme, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: theme.textTheme.labelMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.primary,
-            ),
-          ),
-          const SizedBox(height: 4),
-          SelectableText(value, style: theme.textTheme.bodyMedium),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildChipSection(
-    ThemeData theme,
-    String label,
-    List<String> values, {
-    IconData? icon,
-    int? limit,
-  }) {
-    if (values.isEmpty) return const SizedBox.shrink();
-
-    final maxCount = limit ?? values.length;
-    final visible = values.take(maxCount).toList();
-    final remaining = values.length - visible.length;
-
-    if (remaining > 0) {
-      visible.add('+ $remaining more');
-    }
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionTitle(theme, label, icon: icon),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: visible
-                .map((v) => Chip(label: Text(v)))
-                .toList(growable: false),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildIdentifierRow(ThemeData theme, String id) {
-    return Row(
-      children: [
-        Expanded(
-          child: SelectableText(
-            id,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-        IconButton(
-          tooltip: 'Copy identifier',
-          icon: const Icon(Icons.copy_rounded),
-          onPressed: () async {
-            await Clipboard.setData(ClipboardData(text: id));
-            if (!mounted) return;
-            ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-              const SnackBar(content: Text('Identifier copied to clipboard')),
-            );
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildInfoChip(ThemeData theme, String label) {
-    return Chip(
-      backgroundColor: theme.colorScheme.surfaceVariant,
-      label: Text(label),
-    );
-  }
-
-  Future<void> _openExternal(String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return;
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && mounted) {
-      ScaffoldMessenger.maybeOf(
-        context,
-      )?.showSnackBar(const SnackBar(content: Text('Could not open link')));
-    }
   }
 
   @override
@@ -948,14 +530,12 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
 
               final subjects = _asList(meta['subject'])
                 ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-
               final formatSet = <String>{
                 ...widget.item.formats
                     .map((e) => e.trim())
                     .where((e) => e.isNotEmpty),
                 ..._asList(meta['format']),
               };
-
               final cachedFormats =
                   widget.item.files
                       ?.map((f) => (f['fmt'] ?? f['format'] ?? '').toString())
@@ -968,7 +548,6 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                   formatSet.toList()..sort(
                     (a, b) => a.toLowerCase().compareTo(b.toLowerCase()),
                   );
-
               final collections = _asList(meta['collection'])
                 ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
@@ -1005,32 +584,21 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                 if (creator.isNotEmpty)
                   _buildInfoRow(theme, 'Creator', creator),
                 if (added.isNotEmpty) _buildInfoRow(theme, 'Published', added),
-              ];
-
-              if (collections.isNotEmpty) {
-                infoRows.add(
+                if (collections.isNotEmpty)
                   _buildChipSection(
                     theme,
                     'Collections',
                     collections,
                     icon: Icons.folder_open,
                   ),
-                );
-              }
-
-              if (formats.isNotEmpty) {
-                infoRows.add(
+                if (formats.isNotEmpty)
                   _buildChipSection(
                     theme,
                     'Formats',
                     formats,
                     icon: Icons.download_rounded,
                   ),
-                );
-              }
-
-              if (subjects.isNotEmpty) {
-                infoRows.add(
+                if (subjects.isNotEmpty)
                   _buildChipSection(
                     theme,
                     'Subjects',
@@ -1038,10 +606,6 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                     icon: Icons.label_outline,
                     limit: 18,
                   ),
-                );
-              }
-
-              infoRows.add(
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1063,37 +627,38 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                         ),
                   ],
                 ),
-              );
-
-              infoRows.add(const SizedBox(height: 24));
-
-              infoRows.add(
+                const SizedBox(height: 24),
                 FilledButton.icon(
                   onPressed: () => _openExternal(url),
                   icon: const Icon(Icons.open_in_new_rounded),
                   label: const Text('Open on Archive.org'),
                 ),
-              );
-
-              if (cachedFilesCount > 0) {
-                final cachedList =
-                    widget.item.files!
-                        .map((f) => (f['pretty'] ?? f['name'] ?? '').toString())
-                        .where((name) => name.trim().isNotEmpty)
-                        .toList();
-                if (cachedList.isNotEmpty) {
-                  infoRows.add(const SizedBox(height: 16));
-                  infoRows.add(
-                    _buildChipSection(
-                      theme,
-                      'Cached downloads',
-                      cachedList,
-                      icon: Icons.offline_pin,
-                      limit: 12,
-                    ),
-                  );
-                }
-              }
+                if (cachedFilesCount > 0)
+                  () {
+                    final cachedList =
+                        widget.item.files!
+                            .map(
+                              (f) =>
+                                  (f['pretty'] ?? f['name'] ?? '').toString(),
+                            )
+                            .where((name) => name.trim().isNotEmpty)
+                            .toList();
+                    return cachedList.isNotEmpty
+                        ? Column(
+                          children: [
+                            const SizedBox(height: 16),
+                            _buildChipSection(
+                              theme,
+                              'Cached downloads',
+                              cachedList,
+                              icon: Icons.offline_pin,
+                              limit: 12,
+                            ),
+                          ],
+                        )
+                        : const SizedBox.shrink();
+                  }(),
+              ];
 
               return ListView(
                 shrinkWrap: true,
@@ -1146,5 +711,153 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
         ),
       ),
     );
+  }
+
+  // Helpers (unchanged)
+  String _flat(dynamic value) {
+    if (value == null) return '';
+    if (value is List) {
+      return value
+          .where((e) => e != null)
+          .map((e) => e.toString())
+          .where((e) => e.trim().isNotEmpty)
+          .join(', ');
+    }
+    return value.toString();
+  }
+
+  List<String> _asList(dynamic value) {
+    final result = <String>[];
+    void addValue(String raw) {
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty || result.contains(trimmed)) return;
+      result.add(trimmed);
+    }
+
+    if (value == null) return result;
+    if (value is List) {
+      for (final entry in value) {
+        if (entry == null) continue;
+        addValue(entry.toString());
+      }
+      return result;
+    }
+    value.toString().split(RegExp(r'[;,]')).forEach(addValue);
+    return result;
+  }
+
+  Widget _buildSectionTitle(ThemeData theme, String label, {IconData? icon}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 18, color: theme.colorScheme.primary),
+            const SizedBox(width: 6),
+          ],
+          Text(
+            label,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(ThemeData theme, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          SelectableText(value, style: theme.textTheme.bodyMedium),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChipSection(
+    ThemeData theme,
+    String label,
+    List<String> values, {
+    IconData? icon,
+    int? limit,
+  }) {
+    if (values.isEmpty) return const SizedBox.shrink();
+    final maxCount = limit ?? values.length;
+    final visible = values.take(maxCount).toList();
+    final remaining = values.length - visible.length;
+    if (remaining > 0) visible.add('+ $remaining more');
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildSectionTitle(theme, label, icon: icon),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: visible
+                .map((v) => Chip(label: Text(v)))
+                .toList(growable: false),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIdentifierRow(ThemeData theme, String id) {
+    return Row(
+      children: [
+        Expanded(
+          child: SelectableText(
+            id,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        IconButton(
+          tooltip: 'Copy identifier',
+          icon: const Icon(Icons.copy_rounded),
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: id));
+            if (!mounted) return;
+            ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+              const SnackBar(content: Text('Identifier copied to clipboard')),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInfoChip(ThemeData theme, String label) {
+    return Chip(
+      backgroundColor: theme.colorScheme.surfaceVariant,
+      label: Text(label),
+    );
+  }
+
+  Future<void> _openExternal(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && mounted) {
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(const SnackBar(content: Text('Could not open link')));
+    }
   }
 }

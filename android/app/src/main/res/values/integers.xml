@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <integer name="exo_player_min_buffer_ms">15000</integer>
+    <integer name="exo_player_max_buffer_ms">50000</integer>
+    <integer name="exo_player_buffer_for_playback_ms">2500</integer>
+    <integer name="exo_player_buffer_for_playback_after_rebuffer_ms">5000</integer>
+</resources>

@@ -107,31 +107,28 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   // ───────────────────── Network handling ─────────────────────
   void _initNetworkHandlers() {
     _connSub = Connectivity().onConnectivityChanged.listen((event) async {
-      // Support both API shapes: ConnectivityResult and List<ConnectivityResult>
       bool connected;
       if (event is ConnectivityResult) {
         connected = event != ConnectivityResult.none;
       } else if (event is List<ConnectivityResult>) {
         connected = event.any((r) => r != ConnectivityResult.none);
       } else {
-        connected = true; // default to connected if unknown shape
+        connected = true;
       }
 
-      if (!connected) {
+      if (!connected && !_lostNetwork) {
         _lostNetwork = true;
-        if (_videoController.value.isPlaying) {
-          await _videoController.pause();
-        }
+        if (_videoController.value.isPlaying) await _videoController.pause();
         if (mounted) setState(() {});
-      } else if (_lostNetwork) {
+      } else if (connected && _lostNetwork) {
         _lostNetwork = false;
-        // Nudge stream to reconnect and resume
-        final pos = _videoController.value.position;
-        await _videoController.seekTo(pos);
-        if (!_isCastingChromecast && !_isCastingDlna) {
-          await _videoController.play();
+        if (mounted) setState(() {}); // Force rebuild
+
+        // Resume playback if it was playing
+        if (_chewieController != null &&
+            !_chewieController!.videoPlayerController.value.isPlaying) {
+          await _chewieController!.play();
         }
-        if (mounted) setState(() {});
       }
     });
   }
@@ -338,6 +335,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     _videoController.addListener(_onTick);
     await _videoController.initialize();
 
+    // Force initial state
+    _wasBuffering = _videoController.value.isBuffering;
+    _wasPlaying = _videoController.value.isPlaying;
+
+    // Ensure listener is attached
+    _videoController.removeListener(_onTick);
+    _videoController.addListener(_onTick);
+
     // Make sure isBuffering transitions clear reliably on some platforms
     await _videoController.setLooping(false);
 
@@ -379,11 +384,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   // ───────────────────── UI ─────────────────────
   @override
   Widget build(BuildContext context) {
-    final ready =
-        _chewieController != null &&
-        _chewieController!.videoPlayerController.value.isInitialized;
-
+    final isInitialized =
+        _chewieController?.videoPlayerController.value.isInitialized ?? false;
     final isCasting = _isCastingChromecast || _isCastingDlna;
+    final showBuffering =
+        isInitialized &&
+        !isCasting &&
+        _videoController.value.isBuffering &&
+        !_videoController.value.isPlaying;
 
     return WillPopScope(
       onWillPop: _handlePopWithProgress,
@@ -392,7 +400,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           title: Text(widget.title),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () async => _handlePopWithProgress(),
+            onPressed: () => _handlePopWithProgress(),
           ),
           actions: [
             IconButton(
@@ -421,7 +429,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         ),
         body: Stack(
           children: [
-            if (!ready)
+            // Main player
+            if (!isInitialized)
               const Center(child: CircularProgressIndicator())
             else if (isCasting)
               const Center(
@@ -435,7 +444,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 ),
               )
             else
-              // Add a key so Chewie can't keep stale state if media changes
               Chewie(
                 key: ValueKey(
                   widget.url ?? widget.file?.path ?? widget.identifier,
@@ -443,32 +451,31 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 controller: _chewieController!,
               ),
 
-            // Chromecast mini controller (shows automatically when casting)
+            // Chromecast mini controller
             const Align(
               alignment: Alignment.bottomCenter,
               child: GoogleCastMiniController(),
             ),
 
-            // Our buffering overlay:
-            // Show only while the player reports buffering AND it's not currently playing.
-            if (_wasBuffering && !_wasPlaying && !isCasting && ready)
-              const Center(child: CircularProgressIndicator()),
+            // Buffering spinner (only when truly buffering)
+            if (showBuffering) const Center(child: CircularProgressIndicator()),
 
+            // Network lost banner
             if (_lostNetwork)
               Positioned(
                 left: 12,
                 right: 12,
                 top: 12,
-                child: Material(
-                  color: Colors.black87,
-                  borderRadius: BorderRadius.circular(6),
-                  child: const Padding(
-                    padding: EdgeInsets.all(8),
-                    child: Text(
-                      'Connection lost. Reconnecting…',
-                      style: TextStyle(color: Colors.white),
-                      textAlign: TextAlign.center,
-                    ),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.black87,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text(
+                    'Connection lost. Reconnecting…',
+                    style: TextStyle(color: Colors.white),
+                    textAlign: TextAlign.center,
                   ),
                 ),
               ),

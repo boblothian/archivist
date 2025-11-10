@@ -51,8 +51,6 @@ class MediaPlayerOps {
               url: url,
               identifier: identifier,
               title: title,
-              // If your VideoPlayerScreen doesn't have this param, remove it here
-              // or add `final int? startPositionMs;` to that screen.
               startPositionMs: startPositionMs,
             ),
       ),
@@ -69,7 +67,6 @@ class MediaPlayerOps {
         fileName: effectiveFileName ?? '',
         positionMs: pr.positionMs,
         durationMs: pr.durationMs,
-        // percent is computed from position/duration inside updateVideo
       );
     }
   }
@@ -106,7 +103,6 @@ class MediaPlayerOps {
             ? Uri.parse(effectiveUrl).pathSegments.last
             : null);
 
-    // Push audio player. Pass startPositionMs only if your screen supports it.
     final result = await Navigator.push<dynamic>(
       context,
       MaterialPageRoute(
@@ -114,7 +110,6 @@ class MediaPlayerOps {
             (_) => ArchiveAudioPlayerScreen(
               url: effectiveUrl,
               title: title,
-              // Add this optional named parameter to your audio screen if not present.
               startPositionMs: startPositionMs,
             ),
       ),
@@ -140,21 +135,24 @@ class MediaPlayerOps {
   static String? pickBestVideoUrl(List<String> urls) {
     if (urls.isEmpty) return null;
     final lower = urls.map((u) => u.toLowerCase()).toList();
-    // prefer mp4/m4v
+
+    // Prefer MP4/M4V
     for (int i = 0; i < urls.length; i++) {
       final u = lower[i];
       if (u.endsWith('.mp4') || u.endsWith('.m4v')) return urls[i];
     }
-    // then webm/mkv
+
+    // Then WebM/MKV
     for (int i = 0; i < urls.length; i++) {
       final u = lower[i];
       if (u.endsWith('.webm') || u.endsWith('.mkv')) return urls[i];
     }
-    // then HLS
+
+    // Then HLS
     for (int i = 0; i < urls.length; i++) {
       if (lower[i].endsWith('.m3u8')) return urls[i];
     }
-    // otherwise first
+
     return urls.first;
   }
 
@@ -163,6 +161,7 @@ class MediaPlayerOps {
   static String? pickBestAudioUrl(List<String> urls) {
     if (urls.isEmpty) return null;
     final lower = urls.map((u) => u.toLowerCase()).toList();
+
     for (int i = 0; i < urls.length; i++) {
       if (lower[i].endsWith('.mp3')) return urls[i];
     }
@@ -176,6 +175,37 @@ class MediaPlayerOps {
       if (lower[i].endsWith('.m3u8')) return urls[i];
     }
     return urls.first;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // NEW: Helper methods for detecting media types from URLs
+  // ─────────────────────────────────────────────────────────────────────
+
+  /// Returns `true` if the URL points to a known video file.
+  static bool isVideoUrl(String url) {
+    final l = url.toLowerCase();
+    return l.endsWith('.mp4') ||
+        l.endsWith('.m4v') ||
+        l.endsWith('.webm') ||
+        l.endsWith('.mkv') ||
+        l.endsWith('.m3u8') ||
+        l.endsWith('.avi') ||
+        l.endsWith('.mov') ||
+        l.endsWith('.wmv') ||
+        l.endsWith('.flv') ||
+        l.endsWith('.ogv');
+  }
+
+  /// Returns `true` if the URL points to a known audio file.
+  static bool isAudioUrl(String url) {
+    final l = url.toLowerCase();
+    return l.endsWith('.mp3') ||
+        l.endsWith('.wav') ||
+        l.endsWith('.flac') ||
+        l.endsWith('.aac') ||
+        l.endsWith('.ogg') ||
+        l.endsWith('.m4a') ||
+        l.endsWith('.opus');
   }
 }
 
@@ -193,10 +223,8 @@ class PlaybackResult {
 PlaybackResult? _extractPlaybackResult(dynamic result) {
   if (result == null) return null;
 
-  // Already a typed result
   if (result is PlaybackResult) return result;
 
-  // Map-style: {'positionMs': int, 'durationMs': int}
   if (result is Map) {
     final pos = result['positionMs'];
     final dur = result['durationMs'];
@@ -208,7 +236,6 @@ PlaybackResult? _extractPlaybackResult(dynamic result) {
     }
   }
 
-  // Plain int: treat as position only
   if (result is int) {
     return PlaybackResult(positionMs: result, durationMs: 0);
   }

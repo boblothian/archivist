@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../archive_api.dart';
 import '../media/media_player_ops.dart'; // ← use in-app audio player
 import '../net.dart';
+import '../services/favourites_service.dart';
 import '../utils.dart'; // For downloadWithCache
 import 'cbz_viewer_screen.dart';
 import 'image_viewer_screen.dart'; // for image galleries
@@ -25,12 +26,15 @@ class ArchiveItemScreen extends StatefulWidget {
   /// Thumb to reuse (from the collection/item card) — used ONLY for audio.
   final String? parentThumbUrl;
 
+  final FavoriteItem? favoriteItem;
+
   const ArchiveItemScreen({
     super.key,
     required this.title,
     required this.identifier,
     required this.files,
     this.parentThumbUrl,
+    this.favoriteItem,
   });
 
   @override
@@ -66,25 +70,58 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
 
     // If no files were provided, check if this identifier is a collection.
     if (widget.files.isEmpty) {
-      _detectCollection();
+      _detectCollection().then((_) {
+        // After metadata check, also detect audio collections
+        if (_isCollection == false && mounted) {
+          _detectAudioCollection();
+        }
+      });
+    }
+    if (widget.files.isEmpty && !_isCollection) {
+      _fetchFiles();
+    }
+  }
+
+  Future<void> _detectAudioCollection() async {
+    try {
+      final meta = await ArchiveApi.getMetadata(widget.identifier);
+      final md = (meta['metadata'] as Map?) ?? {};
+      final mediatype = (md['mediatype'] ?? '').toString().toLowerCase();
+
+      if (mediatype == 'audio' && (md['collection'] is List)) {
+        ifMounted(this, () {
+          setState(() {
+            _isCollection = true;
+            _checkedMetadata = true;
+          });
+        });
+      }
+    } catch (_) {
+      ifMounted(this, () => setState(() => _checkedMetadata = true));
     }
   }
 
   Future<void> _detectCollection() async {
     try {
       final meta = await ArchiveApi.getMetadata(widget.identifier);
-      final m = (meta['metadata'] as Map?) ?? const {};
-      final type = (m['mediatype'] ?? '').toString().toLowerCase();
-      ifMounted(this, () {
-        _isCollection = type == 'collection';
-        _checkedMetadata = true;
-        setState(() {});
-      });
+      final md = (meta['metadata'] as Map?) ?? {};
+      final mediatype = (md['mediatype'] ?? '').toString().toLowerCase();
+
+      // Only treat as collection if NOT audio/texts/movies with files
+      if (mediatype == 'collection' ||
+          (mediatype == 'audio' && widget.files.isEmpty) ||
+          (mediatype == 'texts' && widget.files.isEmpty)) {
+        ifMounted(this, () {
+          setState(() {
+            _isCollection = true;
+            _checkedMetadata = true;
+          });
+        });
+      } else {
+        ifMounted(this, () => setState(() => _checkedMetadata = true));
+      }
     } catch (_) {
-      ifMounted(this, () {
-        _checkedMetadata = true; // even on error, stop a spinner loop
-        setState(() {});
-      });
+      ifMounted(this, () => setState(() => _checkedMetadata = true));
     }
   }
 
@@ -206,6 +243,24 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
           context,
         ).showSnackBar(SnackBar(content: Text('Failed to open: $e')));
       });
+    }
+  }
+
+  Future<void> _fetchFiles() async {
+    try {
+      final files = await ArchiveApi.fetchFilesForIdentifier(widget.identifier);
+      if (mounted) {
+        setState(() {
+          // Rebuild with files
+          widget.files.addAll(files.map((f) => {'name': f['name']!}).toList());
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to load files: $e')));
+      }
     }
   }
 

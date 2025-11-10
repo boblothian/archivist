@@ -1,12 +1,17 @@
 // lib/services/favourites_service.dart
+// PATCH: skip file fetch for collections during migration.
+// ADD: audit helper to verify audio files saved as expected.
+// PATCH 1: upsert behaviour in addToFolder()
+// PATCH 2: optional explicit updater for convenience
+
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../archive_api.dart';
+import '../utils/archive_helpers.dart';
 
 part 'favourites_service.g.dart';
 
-/// Top-level helper so it can be used during JSON parsing and inside the service.
 String sanitizeArchiveId(String id) {
   var s = id.trim();
   if (s.startsWith('metadata/')) s = s.substring('metadata/'.length);
@@ -100,19 +105,16 @@ class FavoritesService {
   static const _boxName = 'favorites_v2';
   static const _thumbsKey = 'thumbs';
 
-  Box<dynamic>? _box; // why: avoid late-read crash
+  Box<dynamic>? _box;
 
-  // ------------------- NORMALISATION -------------------
-  // Ensure each stored file map has a usable 'name'
   List<Map<String, String>> _normalizeFiles(
     List<Map<String, String>> files, {
     String? identifier,
   }) {
     String _extractName(Map<String, String> m) {
       String name = (m['name'] ?? '').toString();
-      if (name.trim().isEmpty) {
+      if (name.trim().isEmpty)
         name = (m['filename'] ?? m['pretty'] ?? '').toString();
-      }
       if (name.trim().isEmpty) {
         final url = (m['url'] ?? '').toString();
         if (url.isNotEmpty) {
@@ -135,7 +137,6 @@ class FavoritesService {
     return out;
   }
 
-  // Safe access to the opened box.
   Box<dynamic> get box {
     final b = _box;
     if (b == null || !b.isOpen) {
@@ -146,7 +147,6 @@ class FavoritesService {
     return b;
   }
 
-  // Memoized init; safe to call many times.
   late final Future<void> ready = _init();
   Future<void> init() => ready;
 
@@ -161,7 +161,6 @@ class FavoritesService {
 
     await _migrateIfNeeded();
 
-    // SAFE MIGRATION – never crash the app
     try {
       await _migrateOldFavorites();
     } catch (e, s) {
@@ -171,7 +170,6 @@ class FavoritesService {
     _notify();
   }
 
-  // ------------------- THUMBNAILS -------------------
   Map<String, String> get _thumbMap {
     final raw = box.get(_thumbsKey);
     if (raw is Map) return Map<String, String>.from(raw);
@@ -205,7 +203,6 @@ class FavoritesService {
     _notify();
   }
 
-  // ---- Public thumbs API for cloud sync ----
   Map<String, String> get thumbOverrides =>
       Map<String, String>.unmodifiable(_thumbMap);
 
@@ -231,13 +228,11 @@ class FavoritesService {
     return changed;
   }
 
-  // ------------------- FOLDER DATA -------------------
   Map<String, List<FavoriteItem>> get _data {
     final dynamic raw = box.get('folders') ?? box.get('data');
     if (raw == null) return <String, List<FavoriteItem>>{};
 
     if (raw is Map<String, List<FavoriteItem>>) {
-      // sanitize ids + normalize files on the fly
       final fixed = <String, List<FavoriteItem>>{};
       raw.forEach((folder, list) {
         final out = <FavoriteItem>[];
@@ -249,22 +244,21 @@ class FavoritesService {
                     files: _normalizeFiles(e.files!, identifier: idClean),
                   )
                   : e;
-          out.add(
-            idClean == e.id
-                ? normalized
-                : normalized.copyWith().copyWith(/* no-op but keeps types */),
-          );
-          // We also want id to be the clean id. Re-create when changed:
-          if (idClean != e.id) {
-            out[out.length - 1] = FavoriteItem(
-              id: idClean,
-              title: e.title,
-              url: e.url,
-              thumb: e.thumb,
-              author: e.author,
-              mediatype: e.mediatype,
-              formats: e.formats,
-              files: normalized.files,
+
+          if (idClean == e.id) {
+            out.add(normalized);
+          } else {
+            out.add(
+              FavoriteItem(
+                id: idClean,
+                title: e.title,
+                url: e.url,
+                thumb: e.thumb,
+                author: e.author,
+                mediatype: e.mediatype,
+                formats: e.formats,
+                files: normalized.files,
+              ),
             );
           }
         }
@@ -365,7 +359,6 @@ class FavoritesService {
         result[folder] = list;
       });
 
-      // Write back migrated structure and drop legacy key if present
       box.put('folders', result);
       if (box.containsKey('data')) box.delete('data');
       return result;
@@ -375,7 +368,6 @@ class FavoritesService {
   }
 
   Future<void> _save(Map<String, List<FavoriteItem>> data) async {
-    // Ensure ids are sanitized before persisting
     final fixed = <String, List<FavoriteItem>>{};
     data.forEach((folder, list) {
       fixed[folder] =
@@ -418,7 +410,7 @@ class FavoritesService {
     }
   }
 
-  // ------------------- SAFE MIGRATION -------------------
+  // ------------------- SAFE MIGRATION (patched) -------------------
   Future<void> _migrateOldFavorites() async {
     final data = Map<String, List<FavoriteItem>>.from(_data);
     bool changed = false;
@@ -429,6 +421,7 @@ class FavoritesService {
         final item = list[i];
         final cleanId = sanitizeArchiveId(item.id);
         var current = item;
+
         if (cleanId != item.id) {
           current = FavoriteItem(
             id: cleanId,
@@ -443,7 +436,13 @@ class FavoritesService {
           list[i] = current;
           changed = true;
         }
-        if (current.files == null) {
+
+        // Skip fetching for collections/unknown; keep behavior aligned with addFavoriteWithFiles.
+        final mt = (current.mediatype ?? '').toLowerCase();
+        final isCollection = mt == 'collection';
+        final isUnknown = mt.isEmpty || mt == 'unknown';
+
+        if (current.files == null && !isCollection && !isUnknown) {
           try {
             var files = await ArchiveApi.fetchFilesForIdentifier(cleanId);
             files = _normalizeFiles(files, identifier: cleanId);
@@ -529,21 +528,41 @@ class FavoritesService {
     final cleanId = sanitizeArchiveId(id);
     if (contains(trimmedFolder, cleanId)) return;
 
+    String? resolvedMediatype = mediatype?.toLowerCase();
+    String? resolvedThumb = thumb;
+    List<String> resolvedFormats = formats;
+
+    if (resolvedMediatype == null) {
+      try {
+        final meta = await ArchiveApi.getMetadata(cleanId);
+        final md = (meta['metadata'] as Map?) ?? {};
+        resolvedMediatype = (md['mediatype'] as String?)?.toLowerCase();
+        resolvedThumb ??= archiveThumbUrl(cleanId);
+      } catch (e) {
+        debugPrint('Failed to resolve mediatype for $cleanId: $e');
+        resolvedMediatype = 'unknown';
+      }
+    }
+
     final item = FavoriteItem(
       id: cleanId,
       title: title,
-      url: url,
-      thumb: thumb,
+      url: url ?? 'https://archive.org/details/$cleanId',
+      thumb: resolvedThumb,
       author: author,
-      mediatype: mediatype,
-      formats: formats,
+      mediatype: resolvedMediatype,
+      formats: resolvedFormats,
     );
+
+    if (resolvedMediatype == 'collection' || resolvedMediatype == 'unknown') {
+      await addToFolder(trimmedFolder, item);
+      return;
+    }
 
     List<Map<String, String>> files = [];
     try {
       files = await ArchiveApi.fetchFilesForIdentifier(cleanId);
       files = _normalizeFiles(files, identifier: cleanId);
-      debugPrint('Fetched ${files.length} files for $cleanId');
     } catch (e) {
       debugPrint('Failed to fetch files for $cleanId: $e');
     }
@@ -552,19 +571,41 @@ class FavoritesService {
     await addToFolder(trimmedFolder, finalItem);
   }
 
+  // --- PATCH 1: upsert behaviour in addToFolder() ---
   Future<void> addToFolder(String folder, FavoriteItem item) async {
     final data = Map<String, List<FavoriteItem>>.from(_data);
     final list = List<FavoriteItem>.from(
       data.putIfAbsent(folder, () => <FavoriteItem>[]),
     );
-
     final cleanId = sanitizeArchiveId(item.id);
-    if (!list.any((e) => e.id == cleanId)) {
-      final latestThumb = getThumbForId(cleanId) ?? item.thumb;
-      final normalizedFiles =
-          item.files != null
-              ? _normalizeFiles(item.files!, identifier: cleanId)
-              : null;
+    final latestThumb = getThumbForId(cleanId) ?? item.thumb;
+    final normalizedFiles =
+        item.files != null
+            ? _normalizeFiles(item.files!, identifier: cleanId)
+            : null;
+    final idx = list.indexWhere((e) => e.id == cleanId);
+    if (idx >= 0) {
+      // merge into existing
+      final cur = list[idx];
+      final merged = FavoriteItem(
+        id: cur.id,
+        title: cur.title.isNotEmpty ? cur.title : item.title,
+        url: (item.url?.trim().isNotEmpty == true) ? item.url : cur.url,
+        thumb: latestThumb ?? cur.thumb,
+        author: item.author ?? cur.author,
+        // prefer incoming mediatype if present
+        mediatype:
+            (item.mediatype?.trim().isNotEmpty == true)
+                ? item.mediatype
+                : cur.mediatype,
+        // prefer non-empty incoming formats; else keep existing
+        formats: (item.formats.isNotEmpty) ? item.formats : cur.formats,
+        // prefer incoming files when provided; else keep existing
+        files: normalizedFiles ?? cur.files,
+      );
+      list[idx] = merged;
+    } else {
+      // insert new
       final finalItem = FavoriteItem(
         id: cleanId,
         title: item.title,
@@ -576,9 +617,48 @@ class FavoritesService {
         files: normalizedFiles,
       );
       list.add(finalItem);
-      data[folder] = list;
-      await _save(data);
     }
+    data[folder] = list;
+    await _save(data);
+  }
+
+  // --- PATCH 2: optional explicit updater for convenience ---
+  Future<void> updateFavorite({
+    required String id,
+    String? folder, // if null, update in all folders containing the item
+    String? title,
+    String? url,
+    String? thumb,
+    String? author,
+    String? mediatype,
+    List<String>? formats,
+    List<Map<String, String>>? files,
+  }) async {
+    final cleanId = sanitizeArchiveId(id);
+    final data = Map<String, List<FavoriteItem>>.from(_data);
+    bool changed = false;
+    final foldersToTouch = folder == null ? data.keys.toList() : [folder!];
+    for (final f in foldersToTouch) {
+      final list = List<FavoriteItem>.from(data[f] ?? const <FavoriteItem>[]);
+      for (int i = 0; i < list.length; i++) {
+        if (list[i].id != cleanId) continue;
+        final normalizedFiles =
+            files != null ? _normalizeFiles(files, identifier: cleanId) : null;
+        list[i] = FavoriteItem(
+          id: list[i].id,
+          title: title ?? list[i].title,
+          url: url ?? list[i].url,
+          thumb: thumb ?? list[i].thumb,
+          author: author ?? list[i].author,
+          mediatype: mediatype ?? list[i].mediatype,
+          formats: formats ?? list[i].formats,
+          files: normalizedFiles ?? list[i].files,
+        );
+        data[f] = list;
+        changed = true;
+      }
+    }
+    if (changed) await _save(data);
   }
 
   Future<void> removeFromFolder(String folder, String id) async {
@@ -603,7 +683,6 @@ class FavoritesService {
     return true;
   }
 
-  // ------------------- PUBLIC HELPERS -------------------
   List<FavoriteItem> get allItems {
     final seen = <String, FavoriteItem>{};
     for (final items in _data.values) {
@@ -667,5 +746,46 @@ class FavoritesService {
     } else {
       await removeFromFolder(folder, id);
     }
+  }
+
+  // ------------------- AUDIT: verify audio files saved -------------------
+  /// Returns a compact report and optional detailed problems list.
+  Future<({String summary, List<String> problems})> auditAudioFiles() async {
+    final data = _data;
+    int audioCount = 0;
+    int audioWithFiles = 0;
+    int audioWithoutFiles = 0;
+    int collectionCount = 0;
+
+    final problems = <String>[];
+
+    for (final entry in data.entries) {
+      final folder = entry.key;
+      for (final it in entry.value) {
+        final mt = (it.mediatype ?? '').toLowerCase();
+        if (mt == 'collection') {
+          collectionCount++;
+          if (it.files != null && it.files!.isNotEmpty) {
+            problems.add('[collection-has-files] ${it.id} ($folder)');
+          }
+          continue;
+        }
+        final isAudio = mt == 'audio' || mt == 'etree';
+        if (isAudio) {
+          audioCount++;
+          final hasFiles = (it.files != null && it.files!.isNotEmpty);
+          if (hasFiles) {
+            audioWithFiles++;
+          } else {
+            audioWithoutFiles++;
+            problems.add('[audio-missing-files] ${it.id} ($folder)');
+          }
+        }
+      }
+    }
+
+    final summary =
+        'Audio items: $audioCount | with files: $audioWithFiles | missing files: $audioWithoutFiles | collections: $collectionCount';
+    return (summary: summary, problems: problems);
   }
 }

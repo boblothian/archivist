@@ -108,11 +108,32 @@ class ArchiveApi {
     return jsonDecode(resp.body) as Map<String, dynamic>;
   }
 
+  // Helper: Check if files are direct downloads (not just metadata)
+  static bool _isDownloadableFormatForItem(List files) {
+    for (final f in files) {
+      if (f is Map<String, dynamic>) {
+        final format = (f['format'] as String?) ?? '';
+        final name = (f['name'] as String?) ?? '';
+        if (_isDownloadableFormat(format, name)) return true;
+      }
+    }
+    return false;
+  }
+
+  // SINGLE isCollection — includes audio fix
+  // In archive_api.dart — update the comment/existing logic
   static Future<bool> isCollection(String identifier) async {
     try {
       final meta = await getMetadata(identifier);
       final mediatype = _flat(meta['metadata']?['mediatype']) ?? '';
-      return mediatype.toLowerCase() == 'collection';
+      final mt = mediatype.toLowerCase();
+
+      // Force 'audio' to be treated as collection-like (shows child files)
+      if (mt == 'audio') return true;
+
+      // For real collections: no files
+      final files = (meta['files'] as List?) ?? [];
+      return files.isEmpty || !_isDownloadableFormatForItem(files);
     } catch (_) {
       return false;
     }
@@ -193,7 +214,7 @@ class ArchiveApi {
               .where((c) => c.identifier.isNotEmpty)
               .toList();
 
-      debugPrint('Found ${results.length} collections'); // ← now debugPrint
+      debugPrint('Found ${results.length} collections');
       return results;
     } catch (e) {
       debugPrint('JSON error: $e');

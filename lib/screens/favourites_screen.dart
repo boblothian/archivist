@@ -1,8 +1,4 @@
 // path: lib/screens/favourites_screen.dart
-// Open ArchiveItemScreen for COLLECTION favourites.
-// Persist-correct mediatype on tap so mis-saved items (e.g. discworld-audiobooks)
-// stop opening the collection empty state.
-
 import 'package:archivereader/screens/archive_item_screen.dart';
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
@@ -39,17 +35,20 @@ class FavoritesScreen extends StatelessWidget {
         return Scaffold(
           appBar: AppBar(
             bottom: PreferredSize(
-              preferredSize: const Size.fromHeight(22),
-              child: _FolderSelector(
-                folders: folders,
-                selected: selectedFolder,
-                onChanged: (folder) {
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(
-                      builder: (_) => FavoritesScreen(initialFolder: folder),
-                    ),
-                  );
-                },
+              preferredSize: const Size.fromHeight(56),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: _FolderSelector(
+                  folders: folders,
+                  currentFolder: selectedFolder,
+                  onChanged: (folder) {
+                    Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(
+                        builder: (_) => FavoritesScreen(initialFolder: folder),
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
           ),
@@ -60,9 +59,6 @@ class FavoritesScreen extends StatelessWidget {
   }
 }
 
-enum _FolderMenu { newFolder, rename, delete }
-
-// Sanitize Archive identifiers
 String _sanitizeArchiveId(String id) {
   var s = id.trim();
   if (s.startsWith('metadata/')) s = s.substring('metadata/'.length);
@@ -96,13 +92,14 @@ class _GridBodyState extends State<_GridBody>
     );
   }
 
-  /// Resolve mediatype and persist a correction if the saved type is wrong.
+  /// Resolve real mediatype from Archive.org and persist it
   Future<String?> _resolveAndPersistMediaType(
     String id,
     FavoriteItem fav,
   ) async {
     final cached = fav.mediatype?.trim();
     if (cached != null && cached.isNotEmpty) return cached.toLowerCase();
+
     try {
       final meta = await ArchiveApi.getMetadata(id);
       final raw = Map<String, dynamic>.from(meta['metadata'] ?? {});
@@ -129,30 +126,20 @@ class _GridBodyState extends State<_GridBody>
             ? fav.thumb!.trim()
             : archiveThumbUrl(id);
 
-    // Decide type up-front (and fix persisted value if it was wrong).
     final mediatype = await _resolveAndPersistMediaType(id, fav);
 
     await RecentProgressService.instance.touch(
       id: id,
       title: title,
       thumb: thumb,
-      kind: mediatype == 'collection' ? 'collection' : 'item',
+      kind:
+          mediatype == 'collection' || mediatype == 'audio'
+              ? 'collection'
+              : 'item', // FIX: Treat audio as collection for progress
     );
     if (!mounted) return;
 
-    // COLLECTION → open ArchiveItemScreen with collection URL
-    if (mediatype == 'collection') {
-      await _openItemScreen(
-        context,
-        id: id,
-        title: title,
-        files: const <Map<String, String>>[],
-        thumb: thumb,
-      );
-      return;
-    }
-
-    // Non-collections → ensure files
+    // LOAD FILES FIRST (for all types)
     List<Map<String, String>> files = fav.files ?? [];
     if (files.isEmpty) {
       ScaffoldMessenger.of(
@@ -160,7 +147,6 @@ class _GridBodyState extends State<_GridBody>
       ).showSnackBar(const SnackBar(content: Text('Loading files...')));
       try {
         files = await ArchiveApi.fetchFilesForIdentifier(id);
-        // cache back
         final updated = fav.copyWith(files: files, mediatype: mediatype);
         await FavoritesService.instance.addToFolder(widget.folderName, updated);
       } catch (e) {
@@ -173,7 +159,7 @@ class _GridBodyState extends State<_GridBody>
       }
     }
 
-    // Video autoplay only
+    // VIDEO AUTOPLAY (if any videos found)
     final videoUrls =
         files
             .map((f) => f['name'] ?? '')
@@ -184,7 +170,6 @@ class _GridBodyState extends State<_GridBody>
             )
             .where(MediaPlayerOps.isVideoUrl)
             .toList();
-
     final bestVideo = MediaPlayerOps.pickBestVideoUrl(videoUrls);
     if (bestVideo != null) {
       await MediaPlayerOps.playVideo(
@@ -196,14 +181,27 @@ class _GridBodyState extends State<_GridBody>
       return;
     }
 
-    // Fallback → ArchiveItemScreen
-    await _openItemScreen(
-      context,
-      id: id,
-      title: title,
-      files: files,
-      thumb: thumb,
-    );
+    // ROUTE TO RIGHT SCREEN
+    if (mediatype == 'collection' || mediatype == 'audio') {
+      // FIX: Include 'audio'
+      // For collections/audio: Use ArchiveItemScreen with files (shows MP3 grid)
+      await _openItemScreen(
+        context,
+        id: id,
+        title: title,
+        files: files, // Already loaded — shows MP3s!
+        thumb: thumb,
+      );
+    } else {
+      // Single items (PDFs, etc.): Same screen
+      await _openItemScreen(
+        context,
+        id: id,
+        title: title,
+        files: files,
+        thumb: thumb,
+      );
+    }
   }
 
   Future<void> _openItemScreen(
@@ -371,7 +369,6 @@ class _GridBodyState extends State<_GridBody>
   }
 }
 
-// Delete chip + Folder selector + _FavoriteMetadataSheet unchanged from your file.
 class _DeleteChip extends StatelessWidget {
   final VoidCallback onDelete;
   const _DeleteChip({required this.onDelete});
@@ -402,39 +399,39 @@ class _DeleteChip extends StatelessWidget {
   }
 }
 
+// FIXED: No more duplicate 'All', no unused param
 class _FolderSelector extends StatelessWidget {
-  final List<String> folders;
-  final String selected;
+  final String currentFolder;
   final ValueChanged<String> onChanged;
+  final List<String> folders;
 
   const _FolderSelector({
-    required this.folders,
-    required this.selected,
+    required this.currentFolder,
     required this.onChanged,
+    required this.folders,
   });
 
   @override
   Widget build(BuildContext context) {
-    final items = <DropdownMenuItem<String>>[
-      const DropdownMenuItem(value: 'All', child: Text('All Favourites')),
-      ...folders.map((f) => DropdownMenuItem(value: f, child: Text(f))),
-    ];
+    final items = <String>['All', ...folders].toSet().toList();
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: DropdownButton<String>(
-        value: selected,
-        isExpanded: true,
-        underline: const SizedBox(),
-        items: items,
-        onChanged: (v) => v != null ? onChanged(v) : null,
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
+    return DropdownButton<String>(
+      value: currentFolder,
+      isExpanded: true,
+      hint: const Text('Select folder'),
+      items:
+          items.map((folder) {
+            return DropdownMenuItem<String>(
+              value: folder,
+              child: Text(folder, overflow: TextOverflow.ellipsis),
+            );
+          }).toList(),
+      onChanged: (value) => value != null ? onChanged(value) : null,
     );
   }
 }
 
-// ── Favourite Metadata Sheet (unchanged) ────────────────────────────
+// ── Metadata Sheet (unchanged) ────────────────────────────
 class _FavoriteMetadataSheet extends StatefulWidget {
   final FavoriteItem item;
   const _FavoriteMetadataSheet({required this.item});
@@ -571,9 +568,8 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                 infoChips.add(_buildInfoChip(theme, language));
               if (runtime.isNotEmpty)
                 infoChips.add(_buildInfoChip(theme, runtime));
-              if (downloads.isNotEmpty) {
+              if (downloads.isNotEmpty)
                 infoChips.add(_buildInfoChip(theme, '$downloads downloads'));
-              }
               if (cachedFilesCount > 0) {
                 final label =
                     'Cached $cachedFilesCount file${cachedFilesCount == 1 ? '' : 's'}';
@@ -713,7 +709,6 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
     );
   }
 
-  // Helpers (unchanged)
   String _flat(dynamic value) {
     if (value == null) return '';
     if (value is List) {

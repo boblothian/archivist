@@ -501,24 +501,19 @@ class _BuildContinueReading extends StatelessWidget {
     return ValueListenableBuilder<int>(
       valueListenable: RecentProgressService.instance.version,
       builder: (context, _, __) {
+        // In _BuildContinueReading.build()
         final recent =
-            RecentProgressService.instance
-                .recent(limit: 30)
-                .where(
-                  (e) =>
-                      [
-                        'pdf',
-                        'epub',
-                        'cbz',
-                        'cbr',
-                        'txt',
-                      ].contains(e['kind']) ||
-                      (e['fileName'] as String?)?.toLowerCase().endsWith(
-                            '.txt',
-                          ) ==
-                          true,
-                )
-                .toList();
+            RecentProgressService.instance.recent(limit: 30).where((e) {
+              final kind = (e['kind'] as String?)?.toLowerCase();
+              final fileName = (e['fileName'] as String?)?.toLowerCase();
+
+              // Only allow known reading formats
+              final validKinds = {'pdf', 'epub', 'cbz', 'cbr', 'txt'};
+              final isValidKind = kind != null && validKinds.contains(kind);
+              final isTxtByFile = fileName != null && fileName.endsWith('.txt');
+
+              return isValidKind || isTxtByFile;
+            }).toList();
 
         if (recent.isEmpty) {
           return const Padding(

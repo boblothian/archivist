@@ -1016,11 +1016,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             fmt.contains('mp4') ||
             fmt.contains('mpeg4') ||
             fmt.contains('h.264') ||
-            fmt.contains('matroska') ||
             fmt.contains('webm') ||
             lower.endsWith('.mp4') ||
             lower.endsWith('.m4v') ||
-            lower.endsWith('.mkv') ||
             lower.endsWith('.webm') ||
             lower.endsWith('.m3u8');
 

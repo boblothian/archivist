@@ -1,4 +1,4 @@
-// lib/services/cloud_sync_service.dart  (FULL FILE)
+// lib/services/cloud_sync_service.dart
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -31,9 +31,9 @@ class CloudSyncService {
       '_createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
 
-    // Services ready (safe if already initialized)
-    unawaited(FavoritesService.instance.init());
-    unawaited(RecentProgressService.instance.init());
+    // FIX: Await init to ensure boxes open before pull (fixes race)
+    await FavoritesService.instance.init();
+    await RecentProgressService.instance.init();
 
     await _pullOnce();
 
@@ -59,9 +59,15 @@ class CloudSyncService {
     _debounce = null;
   }
 
-  void _schedulePush() {
+  void _schedulePush({bool immediate = false}) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 500), _pushSafely);
+    final delay =
+        immediate
+            ? Duration.zero
+            : const Duration(
+              milliseconds: 100,
+            ); // FIX: Reduce debounce for faster push
+    _debounce = Timer(delay, _pushSafely);
   }
 
   // ---------------- Pull (one-time merge) ----------------
@@ -72,7 +78,7 @@ class CloudSyncService {
     _pulled = true;
     if (data == null) return;
 
-    // 1) Favorites folders
+    // 1) Favorites folders (unchanged)
     final favFolders =
         (data['favoritesFolders'] as Map?)?.cast<String, dynamic>() ?? {};
     if (favFolders.isNotEmpty) {
@@ -120,7 +126,7 @@ class CloudSyncService {
       }
     }
 
-    // 2) Thumbs (overrides)
+    // 2) Thumbs (overrides) (unchanged)
     final remoteThumbs =
         (data['thumbs'] as Map?)?.map(
           (k, v) => MapEntry(k.toString(), v.toString()),
@@ -141,16 +147,20 @@ class CloudSyncService {
         final local = rsvc.getById(id);
         final r = (remote['lastOpenedAt'] as int?) ?? 0;
         final l = (local?['lastOpenedAt'] as int?) ?? 0;
-        if (r <= l) continue;
+        if (local != null && r <= l)
+          continue; // FIX: Skip if local exists and not newer (prevents restoring deletes)
 
-        final kind = (remote['kind'] as String?) ?? 'pdf';
+        final kind = (remote['kind'] as String?)?.toLowerCase() ?? '';
         final title = (remote['title'] as String?) ?? id;
         final thumb = remote['thumb'] as String?;
         final fileUrl = remote['fileUrl'] as String?;
         final fileName = remote['fileName'] as String?;
 
+        // FIX: Handle all kinds properly; skip unknown to prevent pollution
         if (kind == 'video') {
           final percent = (remote['percent'] as num?)?.toDouble() ?? 0.0;
+          final positionMs = (remote['positionMs'] as int?);
+          final durationMs = (remote['durationMs'] as int?);
           await rsvc.updateVideo(
             id: id,
             title: title,
@@ -158,6 +168,22 @@ class CloudSyncService {
             percent: percent,
             fileUrl: fileUrl ?? '',
             fileName: fileName ?? '',
+            positionMs: positionMs,
+            durationMs: durationMs,
+          );
+        } else if (kind == 'audio') {
+          final percent = (remote['percent'] as num?)?.toDouble() ?? 0.0;
+          final positionMs = (remote['positionMs'] as int?);
+          final durationMs = (remote['durationMs'] as int?);
+          await rsvc.updateAudio(
+            id: id,
+            title: title,
+            thumb: thumb,
+            fileUrl: fileUrl ?? '',
+            fileName: fileName ?? '',
+            percent: percent,
+            positionMs: positionMs,
+            durationMs: durationMs,
           );
         } else if (kind == 'epub') {
           await rsvc.updateEpub(
@@ -171,8 +197,13 @@ class CloudSyncService {
             fileUrl: fileUrl,
             fileName: fileName,
           );
-        } else {
+        } else if (kind == 'pdf' ||
+            kind == 'cbz' ||
+            kind == 'cbr' ||
+            kind == 'txt') {
+          // FIX: Explicitly handle reading kinds; for cbz/cbr/txt assume page-based
           await rsvc.updatePdf(
+            // Or add updateCbz if needed
             id: id,
             title: title,
             thumb: thumb,
@@ -181,6 +212,9 @@ class CloudSyncService {
             fileUrl: fileUrl,
             fileName: fileName,
           );
+        } else {
+          debugPrint('Skipping unknown kind "$kind" for id "$id"');
+          continue; // FIX: Skip invalid/unknown kinds
         }
       }
     }
@@ -191,7 +225,7 @@ class CloudSyncService {
     if (_pushing || _userDoc == null) return;
     _pushing = true;
     try {
-      // Favorites payload
+      // Favorites payload (unchanged)
       final favPayload = <String, List<Map<String, dynamic>>>{};
       final fsvc = FavoritesService.instance;
       for (final folder in fsvc.folders()) {
@@ -201,10 +235,10 @@ class CloudSyncService {
             .toList(growable: false);
       }
 
-      // Thumbs payload
+      // Thumbs payload (unchanged)
       final thumbsPayload = fsvc.thumbOverrides;
 
-      // Recent payload
+      // Recent payload (unchanged)
       final recentList = RecentProgressService.instance.recent(limit: 9999);
       final recentPayload = <String, Map<String, dynamic>>{
         for (final e in recentList)

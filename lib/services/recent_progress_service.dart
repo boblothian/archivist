@@ -2,6 +2,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 
+import 'cloud_sync_service.dart';
+
 class RecentProgressService {
   RecentProgressService._();
   static final instance = RecentProgressService._();
@@ -9,7 +11,6 @@ class RecentProgressService {
   Box<dynamic>? _box;
   bool _isInitializing = false;
 
-  // Schema version – bump when breaking changes occur
   static const _kBoxName = 'recent_progress';
   static const _kSchemaVersionKey = '_schema_version';
   static const _kCurrentSchemaVersion = 2;
@@ -17,16 +18,14 @@ class RecentProgressService {
   final version = ValueNotifier<int>(0);
   void _notify() => version.value++;
 
-  // --- Init lifecycle (memoized) ---
   late final Future<void> ready = _init();
   Future<void> init() => ready;
 
   Future<void> _init() async {
     if (_box != null && _box!.isOpen) return;
     if (_isInitializing) {
-      while (_isInitializing) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-      }
+      while (_isInitializing)
+        await Future.delayed(const Duration(milliseconds: 50));
       return;
     }
     _isInitializing = true;
@@ -36,11 +35,10 @@ class RecentProgressService {
               ? Hive.box<dynamic>(_kBoxName)
               : await Hive.openBox<dynamic>(_kBoxName);
 
-      // === SCHEMA MIGRATION ===
       final currentVersion = _box!.get(_kSchemaVersionKey) as int?;
       if (currentVersion == null || currentVersion < _kCurrentSchemaVersion) {
         debugPrint(
-          'RecentProgress: Migrating schema v$currentVersion → v$_kCurrentSchemaVersion',
+          'RecentProgress: Migrating schema v$currentVersion to v$_kCurrentSchemaVersion',
         );
         await _box!.clear();
         await _box!.put(_kSchemaVersionKey, _kCurrentSchemaVersion);
@@ -51,16 +49,15 @@ class RecentProgressService {
     } finally {
       _isInitializing = false;
     }
-    _notify(); // Trigger UI rebuild after cold start
+    _notify();
   }
 
-  // Keep for writers that may be called before init() has been awaited.
   Future<Box<dynamic>> _ensureBox() async {
     await init();
     return _box!;
   }
 
-  // ----------------- Writers -----------------
+  // --- Writers ---
   Future<void> touch({
     required String id,
     required String title,
@@ -157,7 +154,6 @@ class RecentProgressService {
   }) async {
     final box = await _ensureBox();
     final now = DateTime.now().millisecondsSinceEpoch;
-
     double finalPercent =
         (durationMs != null && durationMs > 0 && (positionMs ?? 0) >= 0)
             ? ((positionMs ?? 0) / durationMs)
@@ -192,7 +188,6 @@ class RecentProgressService {
   }) async {
     final box = await _ensureBox();
     final now = DateTime.now().millisecondsSinceEpoch;
-
     double finalPercent =
         (durationMs != null && durationMs > 0 && (positionMs ?? 0) >= 0)
             ? ((positionMs ?? 0) / durationMs)
@@ -260,15 +255,15 @@ class RecentProgressService {
     }
   }
 
-  /// **CRITICAL**: Delete + immediate push to prevent ghost restore
+  /// Delete + immediate push
   Future<void> remove(String id) async {
     final box = await _ensureBox();
     await box.delete(id);
     _notify();
-    _triggerImmediatePush(); // ← Ensures cloud is updated instantly
+    _triggerImmediatePush(id);
   }
 
-  // ----------------- Readers -----------------
+  // --- Readers ---
   Map<String, dynamic>? get lastViewed {
     final box = _box;
     if (box == null || box.isEmpty) return null;
@@ -279,6 +274,14 @@ class RecentProgressService {
     return list.firstOrNull;
   }
 
+  void _triggerImmediatePush([String? deletedId]) {
+    CloudSyncService.instance.schedulePush(
+      // ← public
+      immediate: true,
+      deletedId: deletedId,
+    );
+  }
+
   List<Map<String, dynamic>> recent({int limit = 10}) {
     final box = _box;
     if (box == null || box.isEmpty) return [];
@@ -287,12 +290,10 @@ class RecentProgressService {
         .whereType<Map>()
         .map((v) => Map<String, dynamic>.from(v))
         .where((map) {
-          // Strict validation
           final id = map['id'];
           final title = map['title'];
           final lastOpenedAt = map['lastOpenedAt'];
           final kind = map['kind'] as String?;
-
           return id is String &&
               title is String &&
               lastOpenedAt is int &&
@@ -314,7 +315,6 @@ class RecentProgressService {
     return v == null ? null : Map<String, dynamic>.from(v);
   }
 
-  // ----------------- Helpers -----------------
   static bool _isValidKind(String kind) {
     return const {
       'pdf',
@@ -325,21 +325,5 @@ class RecentProgressService {
       'video',
       'audio',
     }.contains(kind.toLowerCase());
-  }
-
-  /// Trigger immediate cloud push (used after remove/update)
-  void _triggerImmediatePush() {
-    // This is safe to call even if CloudSync not started
-    try {
-      // Access CloudSyncService without import cycle
-      final sync = (null as dynamic)?.instance;
-      if (sync != null &&
-          sync.runtimeType.toString().contains('CloudSyncService')) {
-        // Use reflection or add public method later
-        // For now: just rely on version listener + reduced debounce in CloudSync
-      }
-    } catch (_) {
-      // Ignore if not available
-    }
   }
 }

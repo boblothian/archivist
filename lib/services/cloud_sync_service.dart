@@ -31,43 +31,42 @@ class CloudSyncService {
       '_createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
 
-    // FIX: Await init to ensure boxes open before pull (fixes race)
+    // Await init to prevent race
     await FavoritesService.instance.init();
     await RecentProgressService.instance.init();
 
+    // iOS: Clear Firestore cache to prevent ghost restores
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      try {
+        await FirebaseFirestore.instance.clearPersistence();
+        debugPrint('iOS Firestore cache cleared');
+      } catch (e) {
+        debugPrint('Failed to clear persistence: $e');
+      }
+    }
+
     await _pullOnce();
 
-    _favListener ??= _schedulePush;
-    _recentListener ??= _schedulePush;
+    _favListener ??= schedulePush;
+    _recentListener ??= schedulePush;
 
     FavoritesService.instance.version.addListener(_favListener!);
     RecentProgressService.instance.version.addListener(_recentListener!);
 
-    _schedulePush();
+    schedulePush();
   }
 
   Future<void> stop() async {
-    if (_favListener != null) {
-      FavoritesService.instance.version.removeListener(_favListener!);
-      _favListener = null;
-    }
-    if (_recentListener != null) {
-      RecentProgressService.instance.version.removeListener(_recentListener!);
-      _recentListener = null;
-    }
+    _favListener = null;
+    _recentListener = null;
     _debounce?.cancel();
     _debounce = null;
   }
 
-  void _schedulePush({bool immediate = false}) {
+  void schedulePush({bool immediate = false, String? deletedId}) {
     _debounce?.cancel();
-    final delay =
-        immediate
-            ? Duration.zero
-            : const Duration(
-              milliseconds: 100,
-            ); // FIX: Reduce debounce for faster push
-    _debounce = Timer(delay, _pushSafely);
+    final delay = immediate ? Duration.zero : const Duration(milliseconds: 100);
+    _debounce = Timer(delay, () => _pushSafely(deletedId: deletedId));
   }
 
   // ---------------- Pull (one-time merge) ----------------
@@ -78,7 +77,7 @@ class CloudSyncService {
     _pulled = true;
     if (data == null) return;
 
-    // 1) Favorites folders (unchanged)
+    // 1) Favorites folders
     final favFolders =
         (data['favoritesFolders'] as Map?)?.cast<String, dynamic>() ?? {};
     if (favFolders.isNotEmpty) {
@@ -119,14 +118,12 @@ class CloudSyncService {
                 );
               }
             }
-          } catch (_) {
-            /* ignore malformed rows */
-          }
+          } catch (_) {}
         }
       }
     }
 
-    // 2) Thumbs (overrides) (unchanged)
+    // 2) Thumbs
     final remoteThumbs =
         (data['thumbs'] as Map?)?.map(
           (k, v) => MapEntry(k.toString(), v.toString()),
@@ -136,7 +133,7 @@ class CloudSyncService {
       await FavoritesService.instance.mergeThumbOverrides(remoteThumbs);
     }
 
-    // 3) Recent progress
+    // 3) Recent progress — timestamp merge
     final recentMap =
         (data['recentProgress'] as Map?)?.cast<String, dynamic>() ?? {};
     if (recentMap.isNotEmpty) {
@@ -145,10 +142,11 @@ class CloudSyncService {
         final id = e.key;
         final remote = Map<String, dynamic>.from(e.value as Map);
         final local = rsvc.getById(id);
-        final r = (remote['lastOpenedAt'] as int?) ?? 0;
-        final l = (local?['lastOpenedAt'] as int?) ?? 0;
-        if (local != null && r <= l)
-          continue; // FIX: Skip if local exists and not newer (prevents restoring deletes)
+        final rTime = (remote['lastOpenedAt'] as int?) ?? 0;
+        final lTime = (local?['lastOpenedAt'] as int?) ?? 0;
+
+        // Skip if local exists and is newer or equal
+        if (local != null && rTime <= lTime) continue;
 
         final kind = (remote['kind'] as String?)?.toLowerCase() ?? '';
         final title = (remote['title'] as String?) ?? id;
@@ -156,11 +154,10 @@ class CloudSyncService {
         final fileUrl = remote['fileUrl'] as String?;
         final fileName = remote['fileName'] as String?;
 
-        // FIX: Handle all kinds properly; skip unknown to prevent pollution
         if (kind == 'video') {
           final percent = (remote['percent'] as num?)?.toDouble() ?? 0.0;
-          final positionMs = (remote['positionMs'] as int?);
-          final durationMs = (remote['durationMs'] as int?);
+          final positionMs = remote['positionMs'] as int?;
+          final durationMs = remote['durationMs'] as int?;
           await rsvc.updateVideo(
             id: id,
             title: title,
@@ -173,8 +170,8 @@ class CloudSyncService {
           );
         } else if (kind == 'audio') {
           final percent = (remote['percent'] as num?)?.toDouble() ?? 0.0;
-          final positionMs = (remote['positionMs'] as int?);
-          final durationMs = (remote['durationMs'] as int?);
+          final positionMs = remote['positionMs'] as int?;
+          final durationMs = remote['durationMs'] as int?;
           await rsvc.updateAudio(
             id: id,
             title: title,
@@ -197,13 +194,8 @@ class CloudSyncService {
             fileUrl: fileUrl,
             fileName: fileName,
           );
-        } else if (kind == 'pdf' ||
-            kind == 'cbz' ||
-            kind == 'cbr' ||
-            kind == 'txt') {
-          // FIX: Explicitly handle reading kinds; for cbz/cbr/txt assume page-based
+        } else if (['pdf', 'cbz', 'cbr', 'txt'].contains(kind)) {
           await rsvc.updatePdf(
-            // Or add updateCbz if needed
             id: id,
             title: title,
             thumb: thumb,
@@ -212,20 +204,16 @@ class CloudSyncService {
             fileUrl: fileUrl,
             fileName: fileName,
           );
-        } else {
-          debugPrint('Skipping unknown kind "$kind" for id "$id"');
-          continue; // FIX: Skip invalid/unknown kinds
         }
       }
     }
   }
 
   // ---------------- Push (debounced) ----------------
-  Future<void> _pushSafely() async {
+  Future<void> _pushSafely({String? deletedId}) async {
     if (_pushing || _userDoc == null) return;
     _pushing = true;
     try {
-      // Favorites payload (unchanged)
       final favPayload = <String, List<Map<String, dynamic>>>{};
       final fsvc = FavoritesService.instance;
       for (final folder in fsvc.folders()) {
@@ -235,10 +223,8 @@ class CloudSyncService {
             .toList(growable: false);
       }
 
-      // Thumbs payload (unchanged)
       final thumbsPayload = fsvc.thumbOverrides;
 
-      // Recent payload (unchanged)
       final recentList = RecentProgressService.instance.recent(limit: 9999);
       final recentPayload = <String, Map<String, dynamic>>{
         for (final e in recentList)
@@ -251,6 +237,13 @@ class CloudSyncService {
         'recentProgress': recentPayload,
         '_updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+
+      // Explicit delete for safety
+      if (deletedId != null) {
+        await _userDoc!.update({
+          'recentProgress.$deletedId': FieldValue.delete(),
+        });
+      }
     } catch (e, s) {
       debugPrint('CloudSync push failed: $e\n$s');
     } finally {

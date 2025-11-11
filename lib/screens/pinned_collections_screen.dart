@@ -119,7 +119,7 @@ class _PinnedCollectionsScreenState extends State<PinnedCollectionsScreen> {
     setState(() => _collections.removeAt(index));
 
     final snack = SnackBar(
-      content: Text('Unpinned "${removed.title ?? removed.identifier}"'),
+      content: Text('Unpinned "${removed.title}"'),
       action: SnackBarAction(
         label: 'Undo',
         onPressed: () {
@@ -294,7 +294,7 @@ class _PinnedCollectionTile extends StatelessWidget {
                               imageUrl: collection.thumbnailUrl!,
                               fit: BoxFit.cover,
                               placeholder:
-                                  (_, __) => Container(
+                                  (_, _) => Container(
                                     color: Colors.grey[300],
                                     child: const Icon(
                                       Icons.image,
@@ -302,7 +302,7 @@ class _PinnedCollectionTile extends StatelessWidget {
                                     ),
                                   ),
                               errorWidget:
-                                  (_, __, ___) => Container(
+                                  (_, _, _) => Container(
                                     color: Colors.grey[300],
                                     child: const Icon(Icons.broken_image),
                                   ),

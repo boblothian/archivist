@@ -24,8 +24,9 @@ class RecentProgressService {
   Future<void> _init() async {
     if (_box != null && _box!.isOpen) return;
     if (_isInitializing) {
-      while (_isInitializing)
+      while (_isInitializing) {
         await Future.delayed(const Duration(milliseconds: 50));
+      }
       return;
     }
     _isInitializing = true;

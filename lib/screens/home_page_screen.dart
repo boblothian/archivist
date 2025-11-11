@@ -5,9 +5,6 @@ import 'dart:io';
 // Project imports
 import 'package:archivereader/screens/pdf_viewer_screen.dart';
 import 'package:archivereader/screens/text_viewer_screen.dart';
-import 'package:archivereader/services/favourites_service.dart';
-import 'package:archivereader/services/favourites_service_compat.dart';
-import 'package:archivereader/services/filters.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:archivereader/services/thumb_override_service.dart';
 import 'package:archivereader/ui/shell/root_shell.dart'; // <-- Added for app bar control
@@ -70,7 +67,7 @@ class CollectionCapsuleCard extends StatelessWidget {
                   height: 48,
                   fit: BoxFit.cover,
                   errorWidget:
-                      (_, __, ___) => const Icon(Icons.image_not_supported),
+                      (_, _, _) => const Icon(Icons.image_not_supported),
                 ),
               ),
               const SizedBox(width: 10),
@@ -91,21 +88,7 @@ class HomePageScreen extends StatefulWidget {
 }
 
 class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
-  static const _kSfw = 'home_sfw';
-  static const _kFav = 'home_fav';
-  static const _kDld = 'home_dld';
   static const _pinsKey = 'pinned_collections';
-
-  bool _sfwOnly = false;
-  bool _favouritesOnly = false;
-  bool _downloadedOnly = false;
-  List<String> _pinned = [];
-
-  ArchiveFilters get _filters => ArchiveFilters(
-    sfwOnly: _sfwOnly,
-    favouritesOnly: _favouritesOnly,
-    downloadedOnly: _downloadedOnly,
-  );
 
   @override
   void initState() {
@@ -149,61 +132,13 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
   }
 
   Future<void> _loadPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _sfwOnly = prefs.getBool(_kSfw) ?? false;
-      _favouritesOnly = prefs.getBool(_kFav) ?? false;
-      _downloadedOnly = prefs.getBool(_kDld) ?? false;
-    });
+    final _ = await SharedPreferences.getInstance();
+    setState(() {});
   }
 
   Future<void> _loadPins() async {
     final prefs = await SharedPreferences.getInstance();
-    final list = prefs.getStringList(_pinsKey) ?? const <String>[];
-    setState(() => _pinned = List.of(list));
-  }
-
-  Future<void> _addPin(String id) async {
-    final trimmed = id.trim();
-    if (trimmed.isEmpty) return;
-    final prefs = await SharedPreferences.getInstance();
-    final list = prefs.getStringList(_pinsKey) ?? const <String>[];
-    if (!list.contains(trimmed)) {
-      list.add(trimmed);
-      await prefs.setStringList(_pinsKey, list);
-      setState(() => _pinned = List.of(list));
-    }
-  }
-
-  Future<void> _removePin(String id) async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = prefs.getStringList(_pinsKey) ?? const <String>[];
-    list.remove(id);
-    await prefs.setStringList(_pinsKey, list);
-    setState(() => _pinned = List.of(list));
-  }
-
-  void _onReorderPins(int oldIndex, int newIndex) {
-    setState(() {
-      if (oldIndex < newIndex) newIndex -= 1;
-      final item = _pinned.removeAt(oldIndex);
-      _pinned.insert(newIndex, item);
-    });
-    SharedPreferences.getInstance().then((prefs) {
-      prefs.setStringList(_pinsKey, _pinned);
-    });
-  }
-
-  void _openCollectionById(BuildContext context, String id) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder:
-            (_) => CollectionDetailScreen(
-              categoryName: id,
-              customQuery: 'collection:$id',
-            ),
-      ),
-    );
+    final _ = prefs.getStringList(_pinsKey) ?? const <String>[];
   }
 
   @override
@@ -233,44 +168,6 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
         SizedBox(height: 24.0),
         ExploreByCategory(),
       ],
-    );
-  }
-
-  Widget _buildFavouritesShelf(BuildContext context) {
-    final List<FavoriteItem> raw =
-        FavoritesService.instance.itemsOrEmpty.cast<FavoriteItem>();
-
-    final List<FavouriteVm> favs =
-        raw.map<FavouriteVm?>(toFavouriteVm).whereType<FavouriteVm>().toList();
-
-    if (favs.isEmpty) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Text('No favorites yet'),
-        ),
-      );
-    }
-
-    return SizedBox(
-      height: 100,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        itemCount: favs.length,
-        itemBuilder: (context, i) {
-          final item = favs[i];
-          return Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: CollectionCapsuleCard(
-              identifier: item.identifier,
-              title: item.title,
-              thumbnailUrl: item.thumbnailUrl,
-              downloads: item.downloads,
-              onTap: () => _openCollectionById(context, item.identifier),
-            ),
-          );
-        },
-      ),
     );
   }
 }
@@ -328,9 +225,9 @@ class _ResumeMediaCard extends StatelessWidget {
                   child: CachedNetworkImage(
                     imageUrl: thumb,
                     fit: BoxFit.cover,
-                    placeholder: (_, __) => Container(color: Colors.grey[300]),
+                    placeholder: (_, _) => Container(color: Colors.grey[300]),
                     errorWidget:
-                        (_, __, ___) =>
+                        (_, _, _) =>
                             const Icon(Icons.play_circle_outline, size: 40),
                   ),
                 ),
@@ -500,7 +397,7 @@ class _BuildContinueReading extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<int>(
       valueListenable: RecentProgressService.instance.version,
-      builder: (context, _, __) {
+      builder: (context, _, _) {
         // In _BuildContinueReading.build()
         final recent =
             RecentProgressService.instance.recent(limit: 30).where((e) {
@@ -537,7 +434,7 @@ class _BuildContinueReading extends StatelessWidget {
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 itemCount: recent.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 16),
+                separatorBuilder: (_, _) => const SizedBox(width: 16),
                 itemBuilder: (_, i) {
                   final e = recent[i];
                   final id = e['id'] as String;
@@ -629,7 +526,7 @@ class _BuildContinueWatching extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<int>(
       valueListenable: RecentProgressService.instance.version,
-      builder: (context, _, __) {
+      builder: (context, _, _) {
         final recent =
             RecentProgressService.instance
                 .recent(limit: 30)
@@ -657,7 +554,7 @@ class _BuildContinueWatching extends StatelessWidget {
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 itemCount: recent.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 16),
+                separatorBuilder: (_, _) => const SizedBox(width: 16),
                 itemBuilder: (_, i) {
                   final e = recent[i];
                   final id = e['id'] as String;
@@ -759,7 +656,7 @@ class _BuildContinueListening extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<int>(
       valueListenable: RecentProgressService.instance.version,
-      builder: (context, _, __) {
+      builder: (context, _, _) {
         final recent =
             RecentProgressService.instance
                 .recent(limit: 30)
@@ -784,7 +681,7 @@ class _BuildContinueListening extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             itemCount: recent.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 16),
+            separatorBuilder: (_, _) => const SizedBox(width: 16),
             itemBuilder: (_, i) {
               final e = recent[i];
               final id = e['id'] as String;
@@ -911,13 +808,13 @@ class FeaturedCollectionsCarousel extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: featured.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 16),
+            separatorBuilder: (_, _) => const SizedBox(width: 16),
             itemBuilder: (context, i) {
               final f = featured[i];
               return _FeaturedTile(
-                title: f['title']! as String,
-                collection: f['collection']! as String,
-                imageUrl: f['image']! as String,
+                title: f['title']!,
+                collection: f['collection']!,
+                imageUrl: f['image']!,
               );
             },
           ),
@@ -963,7 +860,7 @@ class _FeaturedTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final _ = Theme.of(context).colorScheme;
 
     return InkWell(
       borderRadius: BorderRadius.circular(16),

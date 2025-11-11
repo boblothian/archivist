@@ -295,8 +295,9 @@ class _TmdbResultTile extends StatelessWidget {
                 width: 60,
                 height: 90,
                 fit: BoxFit.cover,
-                placeholder: (_, __) => Container(color: cs.surfaceVariant),
-                errorWidget: (_, __, ___) => const Icon(Icons.broken_image),
+                placeholder:
+                    (_, _) => Container(color: cs.surfaceContainerHighest),
+                errorWidget: (_, _, _) => const Icon(Icons.broken_image),
               ),
             ),
             const SizedBox(width: 12),

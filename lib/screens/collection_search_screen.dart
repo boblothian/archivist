@@ -59,20 +59,12 @@ class _SearchCache {
     };
     await prefs.setString(key, jsonEncode(payload));
   }
-
-  static Future<void> clear() async {
-    _memory.clear();
-    final prefs = await SharedPreferences.getInstance();
-    final keys = prefs.getKeys().where((k) => k.startsWith('search_cache:'));
-    for (final k in keys) await prefs.remove(k);
-  }
 }
 
 class CollectionSearchScreen extends StatefulWidget {
   final ValueNotifier<bool>? activateTrigger;
 
-  const CollectionSearchScreen({Key? key, this.activateTrigger})
-    : super(key: key);
+  const CollectionSearchScreen({super.key, this.activateTrigger});
 
   @override
   State<CollectionSearchScreen> createState() => _CollectionSearchScreenState();
@@ -262,8 +254,7 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
                           physics: const AlwaysScrollableScrollPhysics(),
                           padding: const EdgeInsets.all(12),
                           itemCount: _results.length,
-                          separatorBuilder:
-                              (_, __) => const SizedBox(height: 8),
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
                           itemBuilder: (_, i) {
                             final c = _results[i];
                             final pinned = store.pinnedIds.contains(
@@ -353,7 +344,7 @@ class _CollectionCard extends StatelessWidget {
                             imageUrl: collection.thumbnailUrl!,
                             fit: BoxFit.cover,
                             placeholder:
-                                (_, __) => const Center(
+                                (_, _) => const Center(
                                   child: SizedBox(
                                     width: 24,
                                     height: 24,
@@ -363,7 +354,7 @@ class _CollectionCard extends StatelessWidget {
                                   ),
                                 ),
                             errorWidget:
-                                (_, __, ___) => const Icon(
+                                (_, _, _) => const Icon(
                                   Icons.broken_image,
                                   color: Colors.grey,
                                 ),

@@ -66,9 +66,9 @@ extension FavoritesServiceCompat on FavoritesService {
     try {
       final Map data = self._data;
       final List<dynamic> all = [];
-      data.values.forEach((list) {
+      for (var list in data.values) {
         if (list is List) all.addAll(list);
-      });
+      }
       return all;
     } catch (_) {}
 
@@ -120,7 +120,7 @@ String? favThumb(dynamic o) {
   try {
     final v = (o as dynamic).image;
     if (v is String && v.isNotEmpty) return v;
-  } catch(_) {}
+  } catch (_) {}
   return null;
 }
 

@@ -119,7 +119,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     return PageRouteBuilder<T>(
       transitionDuration: const Duration(milliseconds: 300),
       reverseTransitionDuration: const Duration(milliseconds: 250),
-      pageBuilder: (_, __, ___) => page,
+      pageBuilder: (_, _, _) => page,
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
         return SharedAxisTransition(
           animation: animation,
@@ -235,7 +235,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     const int kMaxConcurrent = 6;
     final Map<int, String> thumbUpdates = {};
 
-    Future<void> _process(Map<String, String> item) async {
+    Future<void> process(Map<String, String> item) async {
       try {
         if (!mounted || _isDisposed || currentToken != _requestToken) return;
 
@@ -267,7 +267,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       if (!mounted || _isDisposed || currentToken != _requestToken) return;
       final end = (i + kMaxConcurrent).clamp(0, batch.length);
       final slice = batch.sublist(i, end);
-      await Future.wait(slice.map(_process));
+      await Future.wait(slice.map(process));
     }
 
     if (thumbUpdates.isNotEmpty &&
@@ -473,7 +473,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     bool isSearching = false;
     bool enrichEnabled = false;
 
-    void _safePop<T extends Object?>(T? result) {
+    void safePop<T extends Object?>(T? result) {
       if (!mounted || _isDisposed) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || _isDisposed) return;
@@ -491,7 +491,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           builder: (dialogCtx, setDialogState) {
             bool dialogClosing = false;
 
-            Future<void> _enrich() async {
+            Future<void> enrich() async {
               if (dialogClosing) return;
               setDialogState(() => enrichEnabled = true);
               try {
@@ -521,7 +521,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               }
             }
 
-            Future<void> _searchAndPickPoster() async {
+            Future<void> searchAndPickPoster() async {
               if (dialogClosing) return;
               final query = titleCtrl.text.trim();
               if (query.isEmpty) {
@@ -564,7 +564,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                 );
 
                 dialogClosing = true;
-                _safePop<DialogResult>(DialogResult.generateThumb);
+                safePop<DialogResult>(DialogResult.generateThumb);
               } catch (e) {
                 messenger?.showSnackBar(
                   SnackBar(
@@ -592,13 +592,13 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                       subtitle: Text('Add "$title" to a folder'),
                       onTap: () {
                         dialogClosing = true;
-                        _safePop<DialogResult>(DialogResult.addToFolder);
+                        safePop<DialogResult>(DialogResult.addToFolder);
                       },
                     ),
                     const Divider(height: 16),
                     SwitchListTile(
                       value: enrichEnabled,
-                      onChanged: (_) => _enrich(),
+                      onChanged: (_) => enrich(),
                       title: const Text('Enrich Metadata'),
                       subtitle: const Text(
                         'Pull title, year, description, and poster from TMDb',
@@ -631,7 +631,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                                   )
                                   : IconButton(
                                     icon: const Icon(Icons.search),
-                                    onPressed: _searchAndPickPoster,
+                                    onPressed: searchAndPickPoster,
                                   ),
                         ),
                       ),
@@ -649,7 +649,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => _safePop<void>(null),
+                  onPressed: () => safePop<void>(null),
                   child: const Text('Cancel'),
                 ),
               ],
@@ -1579,7 +1579,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                 Expanded(
                   child: ListView.separated(
                     itemCount: options.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (_, i) {
                       final op = options[i];
                       final icon =
@@ -2036,7 +2036,7 @@ class _CollectionQuickPick extends StatelessWidget {
               child: ListView.separated(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 itemCount: items.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
+                separatorBuilder: (_, _) => const Divider(height: 1),
                 itemBuilder: (context, i) {
                   final it = items[i];
                   final id = it['identifier']!;
@@ -2055,7 +2055,7 @@ class _CollectionQuickPick extends StatelessWidget {
                         height: 64,
                         fit: BoxFit.cover,
                         errorWidget:
-                            (_, __, ___) => Image.network(
+                            (_, _, _) => Image.network(
                               archiveFallbackThumbUrl(id),
                               width: 48,
                               height: 64,

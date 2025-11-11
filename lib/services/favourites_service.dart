@@ -111,10 +111,11 @@ class FavoritesService {
     List<Map<String, String>> files, {
     String? identifier,
   }) {
-    String _extractName(Map<String, String> m) {
+    String extractName(Map<String, String> m) {
       String name = (m['name'] ?? '').toString();
-      if (name.trim().isEmpty)
+      if (name.trim().isEmpty) {
         name = (m['filename'] ?? m['pretty'] ?? '').toString();
+      }
       if (name.trim().isEmpty) {
         final url = (m['url'] ?? '').toString();
         if (url.isNotEmpty) {
@@ -129,7 +130,7 @@ class FavoritesService {
     final out = <Map<String, String>>[];
     for (final f in files) {
       final m = Map<String, String>.from(f);
-      final name = _extractName(m);
+      final name = extractName(m);
       if (name.isEmpty) continue; // drop unusable entries
       m['name'] = name; // enforce presence for downstream extension checks
       out.add(m);
@@ -637,7 +638,7 @@ class FavoritesService {
     final cleanId = sanitizeArchiveId(id);
     final data = Map<String, List<FavoriteItem>>.from(_data);
     bool changed = false;
-    final foldersToTouch = folder == null ? data.keys.toList() : [folder!];
+    final foldersToTouch = folder == null ? data.keys.toList() : [folder];
     for (final f in foldersToTouch) {
       final list = List<FavoriteItem>.from(data[f] ?? const <FavoriteItem>[]);
       for (int i = 0; i < list.length; i++) {

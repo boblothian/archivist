@@ -69,10 +69,8 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
       bool connected;
       if (event is ConnectivityResult) {
         connected = event != ConnectivityResult.none;
-      } else if (event is List<ConnectivityResult>) {
-        connected = event.any((r) => r != ConnectivityResult.none);
       } else {
-        connected = true;
+        connected = event.any((r) => r != ConnectivityResult.none);
       }
 
       if (!connected) {
@@ -81,7 +79,7 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
         if (mounted) setState(() {});
       } else if (_lostNetwork) {
         _lostNetwork = false;
-        final pos = await _player.position;
+        final pos = _player.position;
         await _player.seek(pos);
         await _player.play();
         if (mounted) setState(() {});

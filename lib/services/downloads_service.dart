@@ -73,7 +73,7 @@ class DownloadsService {
   List<String> getDownloadedFiles(String identifier) =>
       List.unmodifiable(_pathsById[identifier] ?? const []);
 
-  /// Where we store media: <appDocs>/Archivist/downloads/<identifier>/
+  /// Where we store media: appDocs/Archivist/downloads/identifier/
   Future<Directory> _dirFor(String identifier) async {
     final docs = await getApplicationDocumentsDirectory();
     final dir = Directory(
@@ -211,7 +211,7 @@ class DownloadsService {
     // Remove any stray query-like suffixes
     base = base.split('?').first.split('#').first;
     // Minimal sanitization for filesystems
-    base = base.replaceAll(RegExp(r'[^\w\.\-\(\)\[\] ]+'), '_');
+    base = base.replaceAll(RegExp(r'[^\w.\-()\[\] ]+'), '_');
     // Guard against no extension (HLS .m3u8 may be fine)
     return base;
   }

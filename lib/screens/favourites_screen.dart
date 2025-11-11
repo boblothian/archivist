@@ -23,7 +23,7 @@ class FavoritesScreen extends StatelessWidget {
 
     return ValueListenableBuilder<int>(
       valueListenable: svc.version,
-      builder: (context, _, __) {
+      builder: (context, _, _) {
         final folders = svc.folders();
         final selectedFolder = initialFolder ?? folders.firstOrNull ?? 'All';
 
@@ -413,7 +413,7 @@ class _FolderSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final items = <String>['All', ...folders].toSet().toList();
+    final items = <String>{'All', ...folders}.toList();
 
     return DropdownButton<String>(
       value: currentFolder,
@@ -560,16 +560,21 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                       : 'https://archive.org/details/$cleanId';
 
               final infoChips = <Widget>[];
-              if (mediatype.isNotEmpty)
+              if (mediatype.isNotEmpty) {
                 infoChips.add(_buildInfoChip(theme, mediatype));
-              if (year.isNotEmpty)
+              }
+              if (year.isNotEmpty) {
                 infoChips.add(_buildInfoChip(theme, 'Year $year'));
-              if (language.isNotEmpty)
+              }
+              if (language.isNotEmpty) {
                 infoChips.add(_buildInfoChip(theme, language));
-              if (runtime.isNotEmpty)
+              }
+              if (runtime.isNotEmpty) {
                 infoChips.add(_buildInfoChip(theme, runtime));
-              if (downloads.isNotEmpty)
+              }
+              if (downloads.isNotEmpty) {
                 infoChips.add(_buildInfoChip(theme, '$downloads downloads'));
+              }
               if (cachedFilesCount > 0) {
                 final label =
                     'Cached $cachedFilesCount file${cachedFilesCount == 1 ? '' : 's'}';
@@ -840,7 +845,7 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
 
   Widget _buildInfoChip(ThemeData theme, String label) {
     return Chip(
-      backgroundColor: theme.colorScheme.surfaceVariant,
+      backgroundColor: theme.colorScheme.surfaceContainerHighest,
       label: Text(label),
     );
   }

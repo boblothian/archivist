@@ -559,13 +559,13 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
                                       imageUrl: thumbUrl,
                                       fit: BoxFit.cover,
                                       placeholder:
-                                          (_, __) => const Center(
+                                          (_, _) => const Center(
                                             child: CircularProgressIndicator(
                                               strokeWidth: 1,
                                             ),
                                           ),
                                       errorWidget:
-                                          (_, __, ___) => Container(
+                                          (_, _, _) => Container(
                                             color: Colors.grey[300],
                                             alignment: Alignment.center,
                                             child: Icon(

@@ -20,10 +20,7 @@ class AppTheme {
     final scheme = ColorScheme.fromSeed(
       seedColor: AppColours.seed,
       brightness: brightness,
-    ).copyWith(
-      background: isDark ? AppColours.darkBg : AppColours.lightBg,
-      surface: isDark ? const Color(0xFF121217) : Colors.white,
-    );
+    ).copyWith(surface: isDark ? const Color(0xFF121217) : Colors.white);
 
     final inter = GoogleFonts.interTextTheme();
     final merri = GoogleFonts.merriweatherTextTheme();
@@ -31,7 +28,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      scaffoldBackgroundColor: scheme.background,
+      scaffoldBackgroundColor: scheme.surface,
       textTheme: inter
           .merge(merri)
           .apply(bodyColor: scheme.onSurface, displayColor: scheme.onSurface),
@@ -55,7 +52,7 @@ class AppTheme {
         ),
       ),
       chipTheme: ChipThemeData(
-        backgroundColor: scheme.surfaceVariant,
+        backgroundColor: scheme.surfaceContainerHighest,
         selectedColor: scheme.primaryContainer,
         labelStyle: TextStyle(color: scheme.onSurface),
         secondaryLabelStyle: TextStyle(color: scheme.onSurface),

@@ -6,7 +6,6 @@ import 'package:http/http.dart' as http;
 class TmdbService {
   static const String _apiKey = '855e122c79a37991131b7f379919494e';
   static const String _base = 'https://api.themoviedb.org/3';
-  static const String _imgBase = 'https://image.tmdb.org/t/p';
 
   // In-memory cache
   static final Map<String, TmdbResult> _cache = {};

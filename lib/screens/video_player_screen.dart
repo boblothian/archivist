@@ -110,11 +110,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       bool connected;
       if (event is ConnectivityResult) {
         connected = event != ConnectivityResult.none;
-      } else if (event is List<ConnectivityResult>) {
+      } else
         connected = event.any((r) => r != ConnectivityResult.none);
-      } else {
-        connected = true;
-      }
 
       if (!connected && !_lostNetwork) {
         _lostNetwork = true;
@@ -561,13 +558,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                       }
                       return ListView.separated(
                         itemCount: devices.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        separatorBuilder: (_, _) => const Divider(height: 1),
                         itemBuilder: (_, i) {
                           final d = devices[i];
                           return ListTile(
                             leading: const Icon(Icons.cast),
-                            title: Text(d.friendlyName ?? 'Chromecast'),
-                            subtitle: Text(d.modelName ?? d.deviceID ?? ''),
+                            title: Text(d.friendlyName),
+                            subtitle: Text(d.modelName ?? d.deviceID),
                             onTap: () async {
                               try {
                                 await GoogleCastSessionManager.instance
@@ -623,14 +620,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                               : ListView.separated(
                                 itemCount: _dlnaDevices.length,
                                 separatorBuilder:
-                                    (_, __) => const Divider(height: 1),
+                                    (_, _) => const Divider(height: 1),
                                 itemBuilder: (_, i) {
                                   final dev = _dlnaDevices[i];
                                   return ListTile(
                                     leading: const Icon(Icons.tv_outlined),
-                                    title: Text(
-                                      dev.friendlyName ?? 'DLNA device',
-                                    ),
+                                    title: Text(dev.friendlyName),
                                     subtitle: Text(dev.deviceType),
                                     onTap: () async {
                                       try {

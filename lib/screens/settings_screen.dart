@@ -75,7 +75,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 ValueListenableBuilder<bool>(
                   valueListenable: _nsfwNotifier,
-                  builder: (_, allowNsfw, __) {
+                  builder: (_, allowNsfw, _) {
                     return SwitchListTile(
                       secondary: Icon(
                         allowNsfw ? Icons.visibility : Icons.visibility_off,

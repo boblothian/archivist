@@ -384,17 +384,18 @@ class _ResumeMediaCard extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 // 3 fixed columns. Headings open bottom-sheet pop-out only if > 1 item.
 // ─────────────────────────────────────────────────────────────────────────────
+// Drop-in replacement for your current _TopContinueColumns
 class _TopContinueColumns extends StatelessWidget {
   const _TopContinueColumns();
+
+  static const double _capsuleHeight = 44;
+  static const double _gap = 8;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, c) {
-        final w = c.maxWidth;
-        const gap = 12.0;
-        const cols = 3;
-        final tileW = (w - gap * (cols - 1)) / cols;
+        final isNarrow = c.maxWidth < 560;
 
         return ValueListenableBuilder<int>(
           valueListenable: RecentProgressService.instance.version,
@@ -444,22 +445,32 @@ class _TopContinueColumns extends StatelessWidget {
               );
             }
 
+            final pills =
+                sections.map((s) => _MiniCapsuleButton(section: s)).toList();
+
+            if (isNarrow) {
+              // Mobile: short horizontal pills
+              return SizedBox(
+                height: _capsuleHeight,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  itemCount: pills.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: _gap),
+                  itemBuilder: (_, i) => pills[i],
+                ),
+              );
+            }
+
+            // Wide: 3 equal short capsules
             return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: List.generate(cols, (i) {
-                final s = (i < sections.length) ? sections[i] : null;
-                return SizedBox(
-                  width: tileW,
+              children: List.generate(3, (i) {
+                final w =
+                    (i < pills.length) ? pills[i] : const SizedBox.shrink();
+                return Expanded(
                   child: Padding(
-                    padding: EdgeInsets.only(right: i == cols - 1 ? 0 : gap),
-                    child:
-                        s == null
-                            ? const SizedBox.shrink()
-                            : _ContinueSectionColumn(
-                              title: s.title,
-                              entries: s.entries,
-                              kind: s.kind,
-                            ),
+                    padding: EdgeInsets.only(right: i == 2 ? 0 : _gap),
+                    child: w,
                   ),
                 );
               }),
@@ -477,6 +488,127 @@ class _TopContinueColumns extends StatelessWidget {
     final isValidKind = kind != null && validKinds.contains(kind);
     final isTxtByFile = fileName != null && fileName.endsWith('.txt');
     return isValidKind || isTxtByFile;
+  }
+}
+
+class _MiniCapsuleButton extends StatelessWidget {
+  final _SectionModel section;
+  const _MiniCapsuleButton({required this.section});
+
+  IconData get _icon {
+    switch (section.kind) {
+      case _SectionKind.reading:
+        return Icons.menu_book_rounded;
+      case _SectionKind.watching:
+        return Icons.movie_rounded;
+      case _SectionKind.listening:
+        return Icons.headphones_rounded;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    final latest = section.entries.first;
+    final id = latest['id'] as String? ?? '';
+    final thumb =
+        (latest['thumb'] as String?) ?? 'https://archive.org/services/img/$id';
+
+    Future<void> open() async {
+      if (section.entries.length == 1) {
+        // Direct resume if only one entry.
+        await _ContinueSectionColumn.handleResumeTap(
+          context,
+          section.kind,
+          section.entries.first,
+        );
+      } else {
+        // Pop-out sheet over existing UI.
+        await _ContinueSectionColumn(
+          title: section.title,
+          entries: section.entries,
+          kind: section.kind,
+        )._showSectionSheet(
+          context,
+          title: section.title,
+          entries: section.entries,
+          kind: section.kind,
+        );
+      }
+    }
+
+    // FIX: wrap in IntrinsicWidth + add clipBehavior so the stadium-shaped Material
+    // has a finite width in horizontal ListView constraints.
+    return IntrinsicWidth(
+      child: Material(
+        color: cs.surfaceContainerHigh,
+        shape: const StadiumBorder(),
+        elevation: 0,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: open,
+          child: Container(
+            height: _TopContinueColumns._capsuleHeight,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                Icon(_icon, size: 18, color: cs.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    section.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13, // tighter
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _CountBadge(count: section.entries.length),
+                const SizedBox(width: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: CachedNetworkImage(
+                    imageUrl: thumb,
+                    width: 28, // smaller preview
+                    height: 28,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CountBadge extends StatelessWidget {
+  final int count;
+  const _CountBadge({required this.count});
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: cs.primary.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        '$count',
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: cs.primary,
+          fontWeight: FontWeight.w700,
+          fontSize: 11, // compact
+        ),
+      ),
+    );
   }
 }
 
@@ -1129,32 +1261,36 @@ class ExploreByCategory extends StatelessWidget {
             separatorBuilder: (_, __) => const SizedBox(width: 8),
             itemBuilder: (context, i) {
               final c = categories[i];
-              return Material(
-                color: cs.surfaceContainerHigh,
-                shape: const StadiumBorder(),
-                elevation: 0,
-                child: InkWell(
-                  customBorder: const StadiumBorder(),
-                  onTap: () => _openCategory(context, c.key),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(c.icon, size: 18, color: cs.primary),
-                        const SizedBox(width: 8),
-                        Text(
-                          c.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: textTheme.labelLarge?.copyWith(
-                            fontWeight: FontWeight.w600,
+              // FIX: IntrinsicWidth + clipBehavior for stadium-shaped Material
+              return IntrinsicWidth(
+                child: Material(
+                  color: cs.surfaceContainerHigh,
+                  shape: const StadiumBorder(),
+                  elevation: 0,
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    customBorder: const StadiumBorder(),
+                    onTap: () => _openCategory(context, c.key),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(c.icon, size: 18, color: cs.primary),
+                          const SizedBox(width: 8),
+                          Text(
+                            c.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: textTheme.labelLarge?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1203,12 +1339,7 @@ class FeaturedCollectionsCarousel extends StatelessWidget {
         'image': 'https://archive.org/services/img/gutenberg',
       },
       {
-        'title': 'Vintage Comics',
-        'collection': 'comics_inbox',
-        'image': 'https://archive.org/services/img/comics_inbox',
-      },
-      {
-        'title': 'Old Magazines',
+        'title': 'Magazines',
         'collection': 'magazines',
         'image': 'https://archive.org/services/img/magazines',
       },
@@ -1216,6 +1347,11 @@ class FeaturedCollectionsCarousel extends StatelessWidget {
         'title': 'Film Archives',
         'collection': 'movies',
         'image': 'https://archive.org/services/img/movies',
+      },
+      {
+        'title': 'Comics',
+        'collection': 'comics_inbox',
+        'image': 'https://archive.org/services/img/comics_inbox',
       },
     ];
 

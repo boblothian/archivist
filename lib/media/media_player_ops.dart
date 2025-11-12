@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../screens/audio_player_screen.dart';
 import '../screens/video_player_screen.dart';
+import '../services/media_service.dart';
 import '../services/recent_progress_service.dart';
 
 class MediaPlayerOps {
@@ -19,7 +20,6 @@ class MediaPlayerOps {
     required String identifier,
     required String title,
 
-    // NEW: resume support
     int startPositionMs = 0,
 
     // Optional extras (used when saving progress)
@@ -41,7 +41,7 @@ class MediaPlayerOps {
             ? Uri.parse(effectiveUrl).pathSegments.last
             : null);
 
-    // Push player screen. We pass startPositionMs ONLY IF the screen supports it.
+    // Single-item playback: do NOT pass queue args.
     final result = await Navigator.push<dynamic>(
       context,
       MaterialPageRoute(
@@ -56,7 +56,6 @@ class MediaPlayerOps {
       ),
     );
 
-    // Try to capture playback progress and persist it.
     final pr = _extractPlaybackResult(result);
     if (pr != null) {
       await RecentProgressService.instance.updateVideo(
@@ -72,9 +71,6 @@ class MediaPlayerOps {
   }
 
   /// Play audio from a local file or URL.
-  /// - Exactly one of [localFilePath] or [url] should be provided.
-  /// - Optional [startPositionMs] lets the player seek to a resume point.
-  /// - If the player screen returns a position/duration on pop, we persist it.
   static Future<void> playAudio(
     BuildContext context, {
     String? localFilePath,
@@ -82,7 +78,6 @@ class MediaPlayerOps {
     required String identifier,
     required String title,
 
-    // NEW: resume support
     int startPositionMs = 0,
 
     // Optional extras (used when saving progress)
@@ -129,35 +124,111 @@ class MediaPlayerOps {
     }
   }
 
-  /// Choose a sensible video URL from a list:
-  /// - prefer MP4 for broader cast support
-  /// - fallback to HLS (.m3u8)
+  /// Choose a sensible video URL from a list.
   static String? pickBestVideoUrl(List<String> urls) {
     if (urls.isEmpty) return null;
     final lower = urls.map((u) => u.toLowerCase()).toList();
 
-    // Prefer MP4/M4V
     for (int i = 0; i < urls.length; i++) {
       final u = lower[i];
       if (u.endsWith('.mp4') || u.endsWith('.m4v')) return urls[i];
     }
-
-    // Then WebM/MKV
     for (int i = 0; i < urls.length; i++) {
       final u = lower[i];
       if (u.endsWith('.webm') || u.endsWith('.mkv')) return urls[i];
     }
-
-    // Then HLS
     for (int i = 0; i < urls.length; i++) {
       if (lower[i].endsWith('.m3u8')) return urls[i];
     }
-
     return urls.first;
   }
 
-  /// Choose a sensible audio URL from a list:
-  /// - prefer mp3, then ogg, then flac, then m3u8 streams
+  // -------------------- QUEUE VERSIONS --------------------
+
+  static Future<void> playVideoQueue(
+    BuildContext context, {
+    required MediaQueue queue,
+    required String identifier, // ← make this required & non-nullable
+    String? title,
+    int? startPositionMs,
+  }) async {
+    final start = queue.startIndex;
+    final urls = queue.items.map((e) => e.url).toList();
+    final titles = {for (final p in queue.items) p.url: p.title};
+
+    final result = await Navigator.push<dynamic>(
+      context,
+      MaterialPageRoute(
+        builder:
+            (_) => VideoPlayerScreen(
+              url: urls[start],
+              queue: urls,
+              queueTitles: titles,
+              startIndex: start,
+              identifier: identifier,
+              title: title ?? queue.items[start].title,
+              startPositionMs: startPositionMs,
+            ),
+      ),
+    );
+
+    final pr = _extractPlaybackResult(result);
+    if (pr != null) {
+      await RecentProgressService.instance.updateVideo(
+        id: identifier,
+        title: title ?? queue.items[start].title,
+        fileUrl: urls[start],
+        fileName: titles[urls[start]] ?? '',
+        positionMs: pr.positionMs,
+        durationMs: pr.durationMs,
+      );
+    }
+  }
+
+  static Future<void> playAudioQueue(
+    BuildContext context, {
+    required MediaQueue queue,
+    required String identifier, // ← make this required & non-nullable
+    String? title,
+    int? startPositionMs,
+    String? itemThumb, // optional: single image for all tracks
+  }) async {
+    final start = queue.startIndex;
+    final urls = queue.items.map((e) => e.url).toList();
+    final titles = {for (final p in queue.items) p.url: p.title};
+
+    final thumbs = <String, String>{for (final u in urls) u: (itemThumb ?? '')};
+
+    final result = await Navigator.push<dynamic>(
+      context,
+      MaterialPageRoute(
+        builder:
+            (_) => ArchiveAudioPlayerScreen(
+              url: urls[start],
+              queue: urls,
+              queueTitles: titles,
+              queueThumbnails: thumbs,
+              startIndex: start,
+              title: title ?? queue.items[start].title,
+              startPositionMs: startPositionMs,
+            ),
+      ),
+    );
+
+    final pr = _extractPlaybackResult(result);
+    if (pr != null) {
+      await RecentProgressService.instance.updateAudio(
+        id: identifier,
+        title: title ?? queue.items[start].title,
+        fileUrl: urls[start],
+        fileName: titles[urls[start]] ?? '',
+        positionMs: pr.positionMs,
+        durationMs: pr.durationMs,
+      );
+    }
+  }
+
+  /// Choose a sensible audio URL from a list.
   static String? pickBestAudioUrl(List<String> urls) {
     if (urls.isEmpty) return null;
     final lower = urls.map((u) => u.toLowerCase()).toList();
@@ -178,10 +249,9 @@ class MediaPlayerOps {
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // NEW: Helper methods for detecting media types from URLs
+  // Helpers
   // ─────────────────────────────────────────────────────────────────────
 
-  /// Returns `true` if the URL points to a known video file.
   static bool isVideoUrl(String url) {
     final l = url.toLowerCase();
     return l.endsWith('.mp4') ||
@@ -196,7 +266,6 @@ class MediaPlayerOps {
         l.endsWith('.ogv');
   }
 
-  /// Returns `true` if the URL points to a known audio file.
   static bool isAudioUrl(String url) {
     final l = url.toLowerCase();
     return l.endsWith('.mp3') ||
@@ -209,11 +278,6 @@ class MediaPlayerOps {
   }
 }
 
-/// Flexible return type from player screens.
-/// You can:
-/// - `Navigator.pop(context, PlaybackResult(positionMs: ..., durationMs: ...))`
-/// - `Navigator.pop(context, {'positionMs': 1234, 'durationMs': 9999})`
-/// - `Navigator.pop(context, 1234)`  // position only
 class PlaybackResult {
   final int positionMs;
   final int durationMs;

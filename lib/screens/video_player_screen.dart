@@ -14,12 +14,17 @@ import '../net.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
   final File? file;
-  final String? url;
+  final String? url; // nullable
   final String identifier;
   final String title;
 
   /// If provided, the player seeks here after init (milliseconds).
   final int? startPositionMs;
+
+  // Optional queue support
+  final List<String>? queue; // nullable
+  final Map<String, String>? queueTitles; // url -> display title (optional)
+  final int? startIndex; // nullable
 
   const VideoPlayerScreen({
     super.key,
@@ -28,7 +33,10 @@ class VideoPlayerScreen extends StatefulWidget {
     required this.identifier,
     required this.title,
     this.startPositionMs,
-  }) : assert(file != null || url != null);
+    this.queue,
+    this.queueTitles,
+    this.startIndex,
+  });
 
   @override
   State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
@@ -36,11 +44,27 @@ class VideoPlayerScreen extends StatefulWidget {
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   // ───────── Local player ─────────
-  late final VideoPlayerController _videoController;
+  VideoPlayerController? _videoController;
   ChewieController? _chewieController;
 
-  bool get _hasHttpUrl =>
-      widget.url != null && widget.url!.toLowerCase().startsWith('http');
+  // Queue state
+  List<String> _urls = const [];
+  Map<String, String> _titles = const {};
+  int _queueIndex = 0;
+
+  // Typed index helper (avoid num from clamp)
+  int _idx(int i) {
+    if (_urls.isEmpty) return 0;
+    if (i < 0) return 0;
+    if (i >= _urls.length) return _urls.length - 1;
+    return i;
+  }
+
+  String get _currentUrl =>
+      _urls.isNotEmpty ? _urls[_idx(_queueIndex)] : (widget.url ?? '');
+  String get _currentTitle => _titles[_currentUrl] ?? widget.title;
+
+  bool get _hasHttpUrl => _currentUrl.toLowerCase().startsWith('http');
 
   // Network resiliency
   StreamSubscription<dynamic>? _connSub;
@@ -71,19 +95,46 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   @override
   void initState() {
     super.initState();
-    _initializePlayer();
+
+    // Runtime validation (debug only)
+    assert(
+      widget.file != null ||
+          widget.url != null ||
+          (widget.queue != null && widget.queue!.isNotEmpty),
+      'Provide a file, a url, or a non-empty queue',
+    );
+
+    _initQueueState();
+    _initializePlayerForCurrent();
     _initNetworkHandlers();
     _initChromecast();
     _initDlna();
     WakelockPlus.enable();
   }
 
+  void _initQueueState() {
+    // Decide queue vs single
+    if (widget.queue != null && widget.queue!.isNotEmpty) {
+      _urls = List<String>.from(widget.queue!);
+      _titles = Map<String, String>.from(widget.queueTitles ?? const {});
+      final raw = widget.startIndex ?? 0;
+      _queueIndex = _idx(raw);
+    } else if (widget.url != null) {
+      _urls = [widget.url!];
+      _titles = const {};
+      _queueIndex = 0;
+    } else {
+      // local file only mode — no URLs
+      _urls = const [];
+      _titles = const {};
+      _queueIndex = 0;
+    }
+  }
+
   @override
   void dispose() {
     // Local player
-    _chewieController?.dispose();
-    _videoController.removeListener(_onTick);
-    _videoController.dispose();
+    _disposePlayers();
 
     // Network
     _connSub?.cancel();
@@ -104,18 +155,31 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     super.dispose();
   }
 
+  void _disposePlayers() {
+    try {
+      _videoController?.removeListener(_onTick);
+    } catch (_) {}
+    _chewieController?.dispose();
+    _videoController?.dispose();
+    _chewieController = null;
+    _videoController = null;
+  }
+
   // ───────────────────── Network handling ─────────────────────
   void _initNetworkHandlers() {
     _connSub = Connectivity().onConnectivityChanged.listen((event) async {
       bool connected;
       if (event is ConnectivityResult) {
         connected = event != ConnectivityResult.none;
-      } else
+      } else {
         connected = event.any((r) => r != ConnectivityResult.none);
+      }
 
       if (!connected && !_lostNetwork) {
         _lostNetwork = true;
-        if (_videoController.value.isPlaying) await _videoController.pause();
+        if (_videoController?.value.isPlaying == true) {
+          await _videoController!.pause();
+        }
         if (mounted) setState(() {});
       } else if (connected && _lostNetwork) {
         _lostNetwork = false;
@@ -185,14 +249,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   Future<void> _castToChromecast() async {
     if (!_hasHttpUrl) return;
-    final url = widget.url!;
+    final url = _currentUrl;
     final info = GoogleCastMediaInformation(
       contentId: url,
       contentUrl: Uri.parse(url),
       contentType: _guessMime(url),
       streamType: _guessStreamType(url),
       metadata: GoogleCastGenericMediaMetadata(
-        title: widget.title,
+        title: _currentTitle,
         subtitle: 'Archive.org',
         images: [
           GoogleCastImage(
@@ -206,13 +270,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       ),
     );
     try {
-      if (_videoController.value.isPlaying) {
-        await _videoController.pause();
+      if (_videoController?.value.isPlaying == true) {
+        await _videoController!.pause();
       }
       await GoogleCastRemoteMediaClient.instance.loadMedia(
         info,
         autoPlay: true,
-        playPosition: _videoController.value.position,
+        playPosition: _videoController?.value.position ?? Duration.zero,
       );
     } catch (e) {
       if (!mounted) return;
@@ -278,18 +342,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   Future<void> _castToDlna(DlnaDevice device) async {
     if (!_hasHttpUrl) return;
-    final url = widget.url!;
+    final url = _currentUrl;
     final udn = device.udn;
     final meta = VideoMetadata(
-      title: widget.title,
+      title: _currentTitle,
       upnpClass: 'object.item.videoItem',
       resolution: null,
       duration: null,
       genre: null,
     );
     try {
-      if (_videoController.value.isPlaying) {
-        await _videoController.pause();
+      if (_videoController?.value.isPlaying == true) {
+        await _videoController!.pause();
       }
       await _dlna.setMediaUri(udn, Url(value: url), meta);
       await _dlna.play(udn);
@@ -318,56 +382,65 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
-  // ───────────────────── Local Player ─────────────────────
-  Future<void> _initializePlayer() async {
-    if (widget.file != null) {
+  // ───────────────────── Local Player (with queue) ─────────────────────
+  Future<void> _initializePlayerForCurrent() async {
+    _disposePlayers();
+
+    // Pick source: local file when provided & no queue URL available; otherwise current URL
+    if (widget.file != null && _urls.isEmpty) {
       _videoController = VideoPlayerController.file(widget.file!);
-    } else {
+    } else if (_currentUrl.isNotEmpty) {
       _videoController = VideoPlayerController.networkUrl(
-        Uri.parse(widget.url!),
+        Uri.parse(_currentUrl),
         httpHeaders: Net.headers,
+      );
+    } else {
+      // Should not happen due to runtime assert; guard anyway.
+      throw StateError('No video source available.');
+    }
+
+    _videoController!.addListener(_onTick);
+    await _videoController!.initialize();
+
+    // Make sure isBuffering transitions clear reliably on some platforms
+    await _videoController!.setLooping(false);
+
+    // Seek to resume point only on first load if provided
+    if (widget.startPositionMs != null && widget.startPositionMs! > 0) {
+      await _videoController!.seekTo(
+        Duration(milliseconds: widget.startPositionMs!),
       );
     }
 
-    _videoController.addListener(_onTick);
-    await _videoController.initialize();
-
-    // Force initial state
-    _wasBuffering = _videoController.value.isBuffering;
-    _wasPlaying = _videoController.value.isPlaying;
-
-    // Ensure listener is attached
-    _videoController.removeListener(_onTick);
-    _videoController.addListener(_onTick);
-
-    // Make sure isBuffering transitions clear reliably on some platforms
-    await _videoController.setLooping(false);
-
-    // Seek to resume point if provided
-    final resumeMs = widget.startPositionMs ?? 0;
-    if (resumeMs > 0) {
-      await _videoController.seekTo(Duration(milliseconds: resumeMs));
-    }
-
-    // Initialize state for overlay control
-    _wasBuffering = _videoController.value.isBuffering;
-    _wasPlaying = _videoController.value.isPlaying;
-
     _chewieController = ChewieController(
-      videoPlayerController: _videoController,
+      videoPlayerController: _videoController!,
       autoPlay: true,
       looping: false,
       allowFullScreen: true,
       allowMuting: true,
       showControls: true,
     );
+
     if (mounted) setState(() {});
   }
 
   void _onTick() {
-    final v = _videoController.value;
+    final v = _videoController!.value;
     _lastPosMs = v.position.inMilliseconds;
     _lastDurMs = v.duration.inMilliseconds;
+
+    // Detect "ended" and advance if we have more in the queue
+    final ended =
+        v.isInitialized &&
+        !v.isPlaying &&
+        !v.isBuffering &&
+        v.position >= v.duration &&
+        _queueIndex < _urls.length - 1;
+
+    if (ended) {
+      _playNextInQueue();
+      return;
+    }
 
     // Rebuild only when buffering/playing flips to avoid excessive setState.
     if (_wasBuffering != v.isBuffering || _wasPlaying != v.isPlaying) {
@@ -376,6 +449,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         _wasPlaying = v.isPlaying;
       });
     }
+  }
+
+  Future<void> _playNextInQueue() async {
+    if (_queueIndex >= _urls.length - 1) return;
+    _queueIndex++;
+    await _initializePlayerForCurrent();
+  }
+
+  Future<void> _playPrevInQueue() async {
+    if (_queueIndex == 0) return;
+    _queueIndex--;
+    await _initializePlayerForCurrent();
   }
 
   // ───────────────────── UI ─────────────────────
@@ -387,19 +472,26 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     final showBuffering =
         isInitialized &&
         !isCasting &&
-        _videoController.value.isBuffering &&
-        !_videoController.value.isPlaying;
+        (_videoController?.value.isBuffering ?? false) &&
+        !(_videoController?.value.isPlaying ?? false);
 
     return WillPopScope(
       onWillPop: _handlePopWithProgress,
       child: Scaffold(
         appBar: AppBar(
-          title: Text(widget.title),
+          title: Text(_currentTitle),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: () => _handlePopWithProgress(),
           ),
           actions: [
+            if (_urls.length > 1)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Text('${_idx(_queueIndex) + 1}/${_urls.length}'),
+                ),
+              ),
             IconButton(
               tooltip: 'Cast',
               icon: Icon(isCasting ? Icons.cast_connected : Icons.cast),
@@ -443,7 +535,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             else
               Chewie(
                 key: ValueKey(
-                  widget.url ?? widget.file?.path ?? widget.identifier,
+                  _currentUrl.isNotEmpty
+                      ? _currentUrl
+                      : widget.file?.path ?? widget.identifier,
                 ),
                 controller: _chewieController!,
               ),
@@ -478,6 +572,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               ),
           ],
         ),
+        // Optional manual prev/next (hidden; wire to your UI if desired)
+        // floatingActionButton: (_urls.length > 1)
+        //     ? Row(
+        //         mainAxisSize: MainAxisSize.min,
+        //         children: [
+        //           FloatingActionButton.small(
+        //             onPressed: _playPrevInQueue,
+        //             child: const Icon(Icons.skip_previous),
+        //           ),
+        //           const SizedBox(width: 12),
+        //           FloatingActionButton.small(
+        //             onPressed: _playNextInQueue,
+        //             child: const Icon(Icons.skip_next),
+        //           ),
+        //         ],
+        //       )
+        //     : null,
       ),
     );
   }
@@ -504,7 +615,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      useRootNavigator: true, // ← isolate from nested/tab navigators
+      useRootNavigator: true, // isolate from nested/tab navigators
       builder: (ctx) {
         return SafeArea(
           child: Padding(
@@ -558,7 +669,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                       }
                       return ListView.separated(
                         itemCount: devices.length,
-                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        separatorBuilder: (_, __) => const Divider(height: 1),
                         itemBuilder: (_, i) {
                           final d = devices[i];
                           return ListTile(
@@ -620,7 +731,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                               : ListView.separated(
                                 itemCount: _dlnaDevices.length,
                                 separatorBuilder:
-                                    (_, _) => const Divider(height: 1),
+                                    (_, __) => const Divider(height: 1),
                                 itemBuilder: (_, i) {
                                   final dev = _dlnaDevices[i];
                                   return ListTile(

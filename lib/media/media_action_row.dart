@@ -1,8 +1,8 @@
 // lib/media/media_action_row.dart
 import 'package:flutter/material.dart';
 
-import '../services/downloads_service.dart'; // your updated DownloadsService
-import '../services/media_service.dart'; // your ArchiveMediaInfo + fetchInfo
+import '../services/downloads_service.dart'; // your DownloadsService
+import '../services/media_service.dart'; // ArchiveMediaInfo + MediaService + MediaType
 import 'media_player_ops.dart';
 
 class MediaActionRow extends StatefulWidget {
@@ -24,7 +24,8 @@ class MediaActionRow extends StatefulWidget {
 }
 
 class _MediaActionRowState extends State<MediaActionRow> {
-  final _media = MediaService();
+  final _svc = MediaService.instance;
+
   ArchiveMediaInfo? _info;
   bool _loading = true;
   String? _status;
@@ -37,8 +38,8 @@ class _MediaActionRowState extends State<MediaActionRow> {
 
   Future<void> _load() async {
     try {
-      final info =
-          widget.preloaded ?? await _media.fetchInfo(widget.identifier);
+      // If parent provided info, use it; otherwise fetch (which also primes queues)
+      final info = widget.preloaded ?? await _svc.fetchInfo(widget.identifier);
       setState(() {
         _info = info;
         _loading = false;
@@ -80,25 +81,58 @@ class _MediaActionRowState extends State<MediaActionRow> {
           ElevatedButton.icon(
             icon: const Icon(Icons.play_circle),
             label: const Text('Play Video'),
-            onPressed:
-                () => MediaPlayerOps.playVideo(
-                  context,
-                  url: bestVideo,
-                  identifier: info.identifier,
-                  title: widget.title,
-                ),
+            onPressed: () async {
+              // Prefer a cached queue (primed by fetchInfo); else build from info.
+              final q =
+                  _svc.getQueue(
+                    info.identifier,
+                    MediaType.video,
+                    startUrl: bestVideo,
+                  ) ??
+                  _svc.buildQueueForInfo(
+                    info,
+                    type: MediaType.video,
+                    startUrl: bestVideo,
+                  );
+
+              await MediaPlayerOps.playVideoQueue(
+                context,
+                queue: q,
+                identifier: info.identifier,
+                title: widget.title,
+              );
+            },
           ),
         if (bestAudio != null)
           OutlinedButton.icon(
             icon: const Icon(Icons.audiotrack),
             label: const Text('Play Audio'),
-            onPressed:
-                () => MediaPlayerOps.playAudio(
-                  context,
-                  url: bestAudio,
-                  identifier: info.identifier,
-                  title: widget.title,
-                ),
+            onPressed: () async {
+              // Prefer a cached queue (primed by fetchInfo); else build from info.
+              final q =
+                  _svc.getQueue(
+                    info.identifier,
+                    MediaType.audio,
+                    startUrl: bestAudio,
+                  ) ??
+                  _svc.buildQueueForInfo(
+                    info,
+                    type: MediaType.audio,
+                    startUrl: bestAudio,
+                  );
+
+              // Use the item poster as artwork in the audio UI
+              final itemThumb =
+                  'https://archive.org/services/img/${info.identifier}';
+
+              await MediaPlayerOps.playAudioQueue(
+                context,
+                queue: q,
+                identifier: info.identifier,
+                title: widget.title,
+                itemThumb: itemThumb,
+              );
+            },
           ),
         if (canDownload && (bestVideo != null || bestAudio != null))
           TextButton.icon(

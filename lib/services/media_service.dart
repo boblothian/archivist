@@ -1,123 +1,186 @@
 // lib/services/media_service.dart
 import 'dart:convert';
 
-import 'package:dio/dio.dart';
+import 'package:http/http.dart' as http;
 
-class ArchiveMediaInfo {
-  final String identifier;
-  final String? title;
-  final String? license;
-  final String? rights;
-  final List<String> videoUrls; // mp4/m3u8
-  final List<String> audioUrls; // mp3/ogg
-  final Map<String, String> displayNames; // url -> "480p MP4", etc.
+enum MediaType { audio, video }
 
-  ArchiveMediaInfo({
-    required this.identifier,
-    required this.title,
-    required this.license,
-    required this.rights,
-    required this.videoUrls,
-    required this.audioUrls,
-    required this.displayNames,
+class Playable {
+  final String url;
+  final String title;
+  const Playable({required this.url, required this.title});
+}
+
+class MediaQueue {
+  final List<Playable> items;
+  final MediaType type;
+  final int startIndex;
+  const MediaQueue({
+    required this.items,
+    required this.type,
+    this.startIndex = 0,
   });
 }
 
-class MediaService {
-  final Dio _dio = Dio(
-    BaseOptions(connectTimeout: const Duration(seconds: 15)),
-  );
+class ArchiveMediaInfo {
+  final String identifier;
+  final List<String> audioUrls;
+  final List<String> videoUrls;
+  final Map<String, String> displayNames;
+  final String? license;
+  final String? rights;
 
-  Future<ArchiveMediaInfo> fetchInfo(String identifier) async {
-    // Archive item metadata JSON
-    final url = 'https://archive.org/metadata/$identifier';
-    final resp = await _dio.get(url);
-    final data = resp.data is String ? json.decode(resp.data) : resp.data;
+  ArchiveMediaInfo({
+    required this.identifier,
+    required this.audioUrls,
+    required this.videoUrls,
+    required this.displayNames,
+    this.license,
+    this.rights,
+  });
 
-    final meta = data['metadata'] ?? {};
-    final files = (data['files'] as List?) ?? [];
+  factory ArchiveMediaInfo.fromJson(String id, Map<String, dynamic> json) {
+    final files = json['files'] as List? ?? [];
+    final audio = <String>[];
+    final video = <String>[];
+    final names = <String, String>{};
 
-    final title = (meta['title'] as String?)?.trim();
-    final license = (meta['license'] as String?)?.trim();
-    final rights = (meta['rights'] as String?)?.trim();
-
-    final List<String> videoUrls = [];
-    final List<String> audioUrls = [];
-    final Map<String, String> labels = {};
-
-    // Prefer direct MP4/WEBM/M3U8 and MP3/OGG
     for (final f in files) {
-      final name = (f['name'] as String?) ?? '';
+      final name = f['name'] as String? ?? '';
       if (name.isEmpty) continue;
       final lower = name.toLowerCase();
-
-      final fileUrl = 'https://archive.org/download/$identifier/$name';
-
-      if (lower.endsWith('.mp4') ||
-          lower.endsWith('.webm') ||
-          lower.endsWith('.m3u8')) {
-        videoUrls.add(fileUrl);
-        labels[fileUrl] = _prettyLabel(name);
-      } else if (lower.endsWith('.mp3') ||
+      final url = 'https://archive.org/download/$id/$name';
+      names[url] = name;
+      if (lower.endsWith('.mp3') ||
           lower.endsWith('.ogg') ||
           lower.endsWith('.flac') ||
+          lower.endsWith('.m4a')) {
+        audio.add(url);
+      } else if (lower.endsWith('.mp4') ||
+          lower.endsWith('.webm') ||
+          lower.endsWith('.mkv') ||
           lower.endsWith('.m3u8')) {
-        audioUrls.add(fileUrl);
-        labels[fileUrl] = _prettyLabel(name);
+        video.add(url);
       }
     }
 
-    // Fallback: some items only expose <identifier>.mp4/<identifier>.mp3
-    if (videoUrls.isEmpty) {
-      final fallbackMp4 =
-          'https://archive.org/download/$identifier/$identifier.mp4';
-      videoUrls.add(fallbackMp4);
-      labels[fallbackMp4] = 'Video (fallback MP4)';
-    }
-    if (audioUrls.isEmpty) {
-      final fallbackMp3 =
-          'https://archive.org/download/$identifier/$identifier.mp3';
-      audioUrls.add(fallbackMp3);
-      labels[fallbackMp3] = 'Audio (fallback MP3)';
-    }
-
     return ArchiveMediaInfo(
-      identifier: identifier,
-      title: title,
-      license: license,
-      rights: rights,
-      videoUrls: videoUrls,
-      audioUrls: audioUrls,
-      displayNames: labels,
+      identifier: id,
+      audioUrls: audio,
+      videoUrls: video,
+      displayNames: names,
+      license: json['metadata']?['licenseurl'] ?? '',
+      rights: json['metadata']?['rights'] ?? '',
     );
   }
 
-  bool isDownloadAllowed(ArchiveMediaInfo info) {
-    final l = (info.license ?? info.rights ?? '').toLowerCase();
-    if (l.isEmpty) return false;
-    // Heuristics that safely allow PD/CC
-    return l.contains('public domain') ||
-        l.contains('cc-by') ||
-        l.contains('cc by') ||
-        l.contains('creative commons') ||
-        l.contains('cc0') ||
-        l.contains('cc-by-sa') ||
-        l.contains('cc-sa') ||
-        l.contains(
-          'cc-nc',
-        ) || // NC still allows downloading with attribution (non-commercial)
-        l.contains('cc-'); // generic CC catch
+  String get thumbnailUrl => 'https://archive.org/services/img/$identifier';
+}
+
+// Internal cache entry for both media types
+class _ItemQueues {
+  final List<Playable> audio;
+  final List<Playable> video;
+  const _ItemQueues({required this.audio, required this.video});
+  List<Playable> byType(MediaType t) => t == MediaType.audio ? audio : video;
+}
+
+class MediaService {
+  MediaService._();
+  static final MediaService instance = MediaService._();
+
+  final Map<String, _ItemQueues> _queues = {};
+
+  /// Fetch archive.org item info
+  Future<ArchiveMediaInfo> fetchInfo(String identifier) async {
+    final res = await http.get(
+      Uri.parse('https://archive.org/metadata/$identifier'),
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Failed to load metadata');
+    }
+    final jsonData = json.decode(res.body) as Map<String, dynamic>;
+    final info = ArchiveMediaInfo.fromJson(identifier, jsonData);
+    primeQueues(info);
+    return info;
   }
 
-  String _prettyLabel(String filename) {
-    final lower = filename.toLowerCase();
-    if (lower.contains('360')) return '360p';
-    if (lower.contains('480')) return '480p';
-    if (lower.contains('720')) return '720p';
-    if (lower.contains('1080')) return '1080p';
-    if (lower.endsWith('.m3u8')) return 'HLS stream';
-    if (lower.endsWith('.mp3')) return 'MP3';
-    if (lower.endsWith('.ogg')) return 'OGG';
-    return filename;
+  // ---------- QUEUE LOGIC ----------
+
+  /// Cache the queue lists for a given item.
+  void primeQueues(ArchiveMediaInfo info) {
+    _queues[info.identifier] = _ItemQueues(
+      audio: _buildPlayableList(info, MediaType.audio),
+      video: _buildPlayableList(info, MediaType.video),
+    );
+  }
+
+  /// Build a MediaQueue for this item and media type.
+  MediaQueue buildQueueForInfo(
+    ArchiveMediaInfo info, {
+    required MediaType type,
+    String? startUrl,
+  }) {
+    final items = _buildPlayableList(info, type);
+    final idx = _startIndex(items, startUrl);
+    return MediaQueue(items: items, type: type, startIndex: idx);
+  }
+
+  /// Return a cached queue if available.
+  MediaQueue? getQueue(String identifier, MediaType type, {String? startUrl}) {
+    final cached = _queues[identifier];
+    if (cached == null) return null;
+    final items = cached.byType(type);
+    if (items.isEmpty) return null;
+    return MediaQueue(
+      items: items,
+      type: type,
+      startIndex: _startIndex(items, startUrl),
+    );
+  }
+
+  /// Return a queue matching a given URL.
+  MediaQueue? getQueueByUrl(String url, MediaType type) {
+    for (final entry in _queues.entries) {
+      final items = entry.value.byType(type);
+      final idx = items.indexWhere((p) => p.url == url);
+      if (idx >= 0) {
+        return MediaQueue(items: items, type: type, startIndex: idx);
+      }
+    }
+    return null;
+  }
+
+  // ---------- HELPERS ----------
+
+  List<Playable> _buildPlayableList(ArchiveMediaInfo info, MediaType type) {
+    final urls = (type == MediaType.video) ? info.videoUrls : info.audioUrls;
+
+    final sorted = [...urls]..sort((a, b) {
+      final A =
+          Uri.parse(a).pathSegments.isNotEmpty
+              ? Uri.parse(a).pathSegments.last.toLowerCase()
+              : a.toLowerCase();
+      final B =
+          Uri.parse(b).pathSegments.isNotEmpty
+              ? Uri.parse(b).pathSegments.last.toLowerCase()
+              : b.toLowerCase();
+      return A.compareTo(B);
+    });
+
+    String pretty(String u) {
+      final mapped = info.displayNames[u];
+      if (mapped != null && mapped.trim().isNotEmpty) return mapped;
+      final segs = Uri.parse(u).pathSegments;
+      return segs.isNotEmpty ? segs.last : u;
+    }
+
+    return sorted.map((u) => Playable(url: u, title: pretty(u))).toList();
+  }
+
+  int _startIndex(List<Playable> items, String? startUrl) {
+    if (startUrl == null) return 0;
+    final i = items.indexWhere((p) => p.url == startUrl);
+    return i >= 0 ? i : 0;
   }
 }

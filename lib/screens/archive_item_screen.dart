@@ -10,12 +10,14 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../archive_api.dart';
-import '../media/media_player_ops.dart'; // ← use in-app audio player
+import '../media/media_player_ops.dart'; // in-app media players
 import '../net.dart';
 import '../services/favourites_service.dart';
-import '../utils.dart'; // For downloadWithCache
+// 🔽 NEW: central queue support
+import '../services/media_service.dart'; // MediaService, MediaType, Playable, MediaQueue
+import '../utils.dart'; // downloadWithCache
 import 'cbz_viewer_screen.dart';
-import 'image_viewer_screen.dart'; // for image galleries
+import 'image_viewer_screen.dart';
 import 'pdf_viewer_screen.dart';
 
 class ArchiveItemScreen extends StatefulWidget {
@@ -44,10 +46,13 @@ class ArchiveItemScreen extends StatefulWidget {
 class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
   final Map<String, double> _downloadProgress = {};
 
-  // NEW: collection support
+  // Collection support
   bool _checkedMetadata = false;
   bool _isCollection = false;
   String? _detailsUrl; // https://archive.org/details/<identifier>
+
+  // 🔽 NEW: track if we primed MediaService queues
+  bool _primedQueues = false;
 
   @override
   void initState() {
@@ -55,6 +60,9 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
 
     // Precompute details URL
     _detailsUrl = 'https://archive.org/details/${widget.identifier}';
+
+    // Prime queues ASAP (does a lightweight metadata fetch and caches queues).
+    _primeItemQueues();
 
     // If we have exactly one file, auto-open it
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -79,6 +87,19 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
     }
     if (widget.files.isEmpty && !_isCollection) {
       _fetchFiles();
+    }
+  }
+
+  // 🔽 NEW: prime queues in MediaService so auto-next has data
+  Future<void> _primeItemQueues() async {
+    try {
+      final info = await MediaService.instance.fetchInfo(
+        widget.identifier,
+      ); // also primes
+      ifMounted(this, () => _primedQueues = true);
+    } catch (_) {
+      // If fetch failed, we’ll build a local queue from files on demand.
+      ifMounted(this, () => _primedQueues = false);
     }
   }
 
@@ -164,16 +185,8 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
         fileName: fileName,
       );
 
-      // Always use in-app audio player
-      await MediaPlayerOps.playAudio(
-        context,
-        url: fileUrl,
-        identifier: widget.identifier,
-        title: widget.title,
-        // You can also pass startPositionMs if you track it elsewhere
-        thumb: widget.parentThumbUrl ?? thumbUrl,
-        fileName: fileName,
-      );
+      // 🔽 NEW: Always try to play via QUEUE so auto-next works.
+      await _playAudioViaQueue(fileName, fileUrl, thumbUrl);
       return;
     } else {
       ifMounted(this, () {
@@ -246,6 +259,78 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
     }
   }
 
+  // 🔽 NEW: centralised audio queue playback (with fallback if not primed)
+  Future<void> _playAudioViaQueue(
+    String fileName,
+    String fileUrl,
+    String thumbUrl,
+  ) async {
+    final itemThumb = widget.parentThumbUrl ?? thumbUrl;
+
+    // 1) Prefer a primed/cached queue from MediaService
+    MediaQueue? q =
+        MediaService.instance.getQueue(
+          widget.identifier,
+          MediaType.audio,
+          startUrl: fileUrl,
+        ) ??
+        MediaService.instance.getQueueByUrl(fileUrl, MediaType.audio);
+
+    // 2) Fallback: build a queue from on-screen audio files if needed
+    if (q == null) {
+      final audioFiles =
+          widget.files
+              .map((f) => f['name'])
+              .whereType<String>()
+              .where((n) => isAudioFile(p.extension(n).toLowerCase()))
+              .toList();
+
+      final urls =
+          audioFiles
+              .map(
+                (n) =>
+                    'https://archive.org/download/${widget.identifier}/${Uri.encodeComponent(n)}',
+              )
+              .toList();
+
+      // Sort naturally (same as grid)
+      audioFiles.sort((a, b) => _naturalCompare(a, b));
+      urls.sort(
+        (a, b) => _naturalCompare(
+          Uri.parse(a).pathSegments.last,
+          Uri.parse(b).pathSegments.last,
+        ),
+      );
+
+      final items =
+          urls
+              .map(
+                (u) => Playable(
+                  url: u,
+                  title: _prettifyFilename(Uri.parse(u).pathSegments.last),
+                ),
+              )
+              .toList();
+
+      final start = items.indexWhere((p) => p.url == fileUrl);
+      q = MediaQueue(
+        items: items,
+        type: MediaType.audio,
+        startIndex: start >= 0 ? start : 0,
+      );
+    }
+
+    // 3) Launch the queue-enabled audio player
+    await MediaPlayerOps.playAudioQueue(
+      context,
+      queue: q,
+      identifier: widget.identifier,
+      title: widget.title,
+      startPositionMs: 0,
+      itemThumb: itemThumb,
+    );
+  }
+
   Future<void> _fetchFiles() async {
     try {
       final files = await ArchiveApi.fetchFilesForIdentifier(widget.identifier);
@@ -254,6 +339,11 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
           // Rebuild with files
           widget.files.addAll(files.map((f) => {'name': f['name']!}).toList());
         });
+      }
+      // If queues weren’t primed by network, ensure we have *some* queue soon after files arrive.
+      if (!_primedQueues && mounted) {
+        // No-op here; we build fallback queues on demand in _playAudioViaQueue.
+        // You could optionally trigger _primeItemQueues() again if desired.
       }
     } catch (e) {
       if (mounted) {
@@ -437,7 +527,7 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
       ...audioFiles,
     ];
 
-    // --- NEW: Collection-friendly empty state
+    // --- Collection-friendly empty state
     if (displayFiles.isEmpty) {
       // If we haven't finished checking metadata yet, show a spinner.
       if (!_checkedMetadata) {

@@ -12,15 +12,25 @@ class AppTheme {
   static final ThemeData dark = _build(Brightness.dark);
 
   // -----------------------------------------------------------------------
-  // Private builder – everything that was inside _buildTheme()
+  // Private builder
   // -----------------------------------------------------------------------
   static ThemeData _build(Brightness brightness) {
     final isDark = brightness == Brightness.dark;
 
-    final scheme = ColorScheme.fromSeed(
+    // Custom surface colour from app_colours.dart
+    final customSurface = isDark ? AppColours.darkBg : AppColours.lightBg;
+
+    // Base M3 colour scheme
+    final baseScheme = ColorScheme.fromSeed(
       seedColor: AppColours.seed,
       brightness: brightness,
-    ).copyWith(surface: isDark ? const Color(0xFF121217) : Colors.white);
+    );
+
+    // Override only the surface colour (background is deprecated)
+    final scheme = baseScheme.copyWith(
+      surface: customSurface,
+      // surfaceContainer can stay the generated one – it will be a shade above customSurface
+    );
 
     final inter = GoogleFonts.interTextTheme();
     final merri = GoogleFonts.merriweatherTextTheme();
@@ -28,7 +38,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      scaffoldBackgroundColor: scheme.surface,
+      scaffoldBackgroundColor: customSurface, // matches AppBar surface
       textTheme: inter
           .merge(merri)
           .apply(bodyColor: scheme.onSurface, displayColor: scheme.onSurface),
@@ -37,18 +47,24 @@ class AppTheme {
         displayColor: scheme.onPrimary,
       ),
       iconTheme: IconThemeData(color: scheme.onSurface),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: Colors.transparent,
+      appBarTheme: AppBarTheme(
+        backgroundColor: customSurface,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: true,
+        titleTextStyle: GoogleFonts.inter(
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+          color: scheme.onSurface,
+        ),
       ),
       listTileTheme: ListTileThemeData(
         iconColor: scheme.onSurfaceVariant,
         textColor: scheme.onSurface,
         subtitleTextStyle: inter.bodySmall?.copyWith(
-          color: scheme.onSurface.withOpacity(0.75),
+          // withOpacity → withValues
+          color: scheme.onSurface.withValues(alpha: 0.75),
         ),
       ),
       chipTheme: ChipThemeData(

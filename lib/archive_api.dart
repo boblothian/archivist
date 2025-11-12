@@ -167,8 +167,9 @@ class ArchiveApi {
             'name': name,
             'url':
                 'https://archive.org/download/$identifier/${Uri.encodeComponent(name)}',
-            'size': _formatSize(sizeStr),
-            'fmt': format,
+            'size': sizeStr, // ← Change: raw bytes as string (e.g., '9234567')
+            'format':
+                format, // ← Change: 'format' key for consistency with raw metadata
             'pretty': _prettyName(name),
           });
         }

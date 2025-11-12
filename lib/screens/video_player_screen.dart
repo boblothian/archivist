@@ -14,19 +14,20 @@ import '../net.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
   final File? file;
-  final String? url; // nullable
+  final String? url; // nullable if playing via queue
   final String identifier;
   final String title;
 
-  /// If provided, the player seeks here after init (milliseconds).
+  /// Seek here on first load (milliseconds)
   final int? startPositionMs;
 
-  // Optional queue support
-  final List<String>? queue; // nullable
-  final Map<String, String>? queueTitles; // url -> display title (optional)
-  final int? startIndex; // nullable
+  // Queue support (all optional)
+  final List<String>? queue; // URLs
+  final Map<String, String>? queueTitles; // url -> title
+  final int? startIndex; // index into `queue`
 
-  const VideoPlayerScreen({
+  // NOTE: do NOT make this constructor const. We rely on runtime asserts.
+  VideoPlayerScreen({
     super.key,
     this.file,
     this.url,
@@ -36,14 +37,17 @@ class VideoPlayerScreen extends StatefulWidget {
     this.queue,
     this.queueTitles,
     this.startIndex,
-  });
+  }) : assert(
+         file != null || url != null || ((queue ?? const []).isNotEmpty),
+         'Provide a file, a url, or a non-empty queue',
+       );
 
   @override
   State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
 }
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
-  // ───────── Local player ─────────
+  // Local player
   VideoPlayerController? _videoController;
   ChewieController? _chewieController;
 
@@ -52,16 +56,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   Map<String, String> _titles = const {};
   int _queueIndex = 0;
 
-  // Typed index helper (avoid num from clamp)
-  int _idx(int i) {
-    if (_urls.isEmpty) return 0;
-    if (i < 0) return 0;
-    if (i >= _urls.length) return _urls.length - 1;
-    return i;
+  String get _currentUrl {
+    if (_urls.isNotEmpty) {
+      final i = _queueIndex.clamp(0, _urls.length - 1);
+      return _urls[i];
+    }
+    return widget.url ?? '';
   }
 
-  String get _currentUrl =>
-      _urls.isNotEmpty ? _urls[_idx(_queueIndex)] : (widget.url ?? '');
   String get _currentTitle => _titles[_currentUrl] ?? widget.title;
 
   bool get _hasHttpUrl => _currentUrl.toLowerCase().startsWith('http');
@@ -75,16 +77,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   int _lastDurMs = 0;
   bool _popped = false;
 
-  // Track buffering/playing to control our overlay
+  // Track buffering/playing to control overlay
   bool _wasBuffering = false;
   bool _wasPlaying = false;
 
-  // ───────── Chromecast (Google Cast) ─────────
+  // Chromecast
   StreamSubscription<GoogleCastSession?>? _gcSessionSub;
   StreamSubscription? _gcMediaStatusSub;
   bool _isCastingChromecast = false;
 
-  // ───────── DLNA/UPnP (Android only) ─────────
+  // DLNA (Android only)
   final MediaCastDlnaApi _dlna = MediaCastDlnaApi();
   List<DlnaDevice> _dlnaDevices = [];
   bool _dlnaReady = false;
@@ -95,17 +97,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   @override
   void initState() {
     super.initState();
-
-    // Runtime validation (debug only)
-    assert(
-      widget.file != null ||
-          widget.url != null ||
-          (widget.queue != null && widget.queue!.isNotEmpty),
-      'Provide a file, a url, or a non-empty queue',
-    );
-
     _initQueueState();
-    _initializePlayerForCurrent();
+    _initializePlayerForCurrent(initial: true);
     _initNetworkHandlers();
     _initChromecast();
     _initDlna();
@@ -113,18 +106,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   void _initQueueState() {
-    // Decide queue vs single
     if (widget.queue != null && widget.queue!.isNotEmpty) {
       _urls = List<String>.from(widget.queue!);
       _titles = Map<String, String>.from(widget.queueTitles ?? const {});
-      final raw = widget.startIndex ?? 0;
-      _queueIndex = _idx(raw);
+      _queueIndex = (widget.startIndex ?? 0).clamp(0, _urls.length - 1);
     } else if (widget.url != null) {
       _urls = [widget.url!];
-      _titles = const {};
+      _titles = Map<String, String>.from(widget.queueTitles ?? const {});
       _queueIndex = 0;
     } else {
-      // local file only mode — no URLs
+      // local file-only mode — no URLs
       _urls = const [];
       _titles = const {};
       _queueIndex = 0;
@@ -133,7 +124,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   @override
   void dispose() {
-    // Local player
     _disposePlayers();
 
     // Network
@@ -219,8 +209,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
       // Observe session + media status
       _gcSessionSub = GoogleCastSessionManager.instance.currentSessionStream
-          .listen((session) {
-            if (session != null) {
+          .listen((s) {
+            if (s != null) {
               _gcMediaStatusSub?.cancel();
               _gcMediaStatusSub = GoogleCastRemoteMediaClient
                   .instance
@@ -383,7 +373,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   // ───────────────────── Local Player (with queue) ─────────────────────
-  Future<void> _initializePlayerForCurrent() async {
+  Future<void> _initializePlayerForCurrent({bool initial = false}) async {
     _disposePlayers();
 
     // Pick source: local file when provided & no queue URL available; otherwise current URL
@@ -395,22 +385,26 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         httpHeaders: Net.headers,
       );
     } else {
-      // Should not happen due to runtime assert; guard anyway.
       throw StateError('No video source available.');
     }
 
     _videoController!.addListener(_onTick);
     await _videoController!.initialize();
 
-    // Make sure isBuffering transitions clear reliably on some platforms
+    // Make sure isBuffering transitions clear reliably
     await _videoController!.setLooping(false);
 
-    // Seek to resume point only on first load if provided
-    if (widget.startPositionMs != null && widget.startPositionMs! > 0) {
+    // Seek to resume point only on very first load if provided
+    if (initial &&
+        widget.startPositionMs != null &&
+        widget.startPositionMs! > 0) {
       await _videoController!.seekTo(
         Duration(milliseconds: widget.startPositionMs!),
       );
     }
+
+    _wasBuffering = _videoController!.value.isBuffering;
+    _wasPlaying = _videoController!.value.isPlaying;
 
     _chewieController = ChewieController(
       videoPlayerController: _videoController!,
@@ -434,6 +428,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         v.isInitialized &&
         !v.isPlaying &&
         !v.isBuffering &&
+        v.duration.inMilliseconds > 0 &&
         v.position >= v.duration &&
         _queueIndex < _urls.length - 1;
 
@@ -475,6 +470,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         (_videoController?.value.isBuffering ?? false) &&
         !(_videoController?.value.isPlaying ?? false);
 
+    final hasQueue = _urls.length > 1;
+
     return WillPopScope(
       onWillPop: _handlePopWithProgress,
       child: Scaffold(
@@ -485,11 +482,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             onPressed: () => _handlePopWithProgress(),
           ),
           actions: [
-            if (_urls.length > 1)
+            if (hasQueue)
               Center(
                 child: Padding(
                   padding: const EdgeInsets.only(right: 8),
-                  child: Text('${_idx(_queueIndex) + 1}/${_urls.length}'),
+                  child: Text('${_queueIndex + 1}/${_urls.length}'),
                 ),
               ),
             IconButton(
@@ -572,8 +569,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               ),
           ],
         ),
-        // Optional manual prev/next (hidden; wire to your UI if desired)
-        // floatingActionButton: (_urls.length > 1)
+        // Optional manual prev/next controls (uncomment if you want visible buttons)
+        // floatingActionButton: hasQueue
         //     ? Row(
         //         mainAxisSize: MainAxisSize.min,
         //         children: [
@@ -600,7 +597,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     Navigator.of(
       context,
     ).pop(<String, int>{'positionMs': _lastPosMs, 'durationMs': _lastDurMs});
-    return false; // we've handled the pop
+    return false; // handled
   }
 
   // Combined picker (Chromecast + DLNA)
@@ -615,7 +612,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      useRootNavigator: true, // isolate from nested/tab navigators
+      useRootNavigator: true,
       builder: (ctx) {
         return SafeArea(
           child: Padding(
@@ -640,7 +637,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 ),
                 const Divider(height: 1),
 
-                // Chromecast section
+                // Chromecast
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
                   child: Row(
@@ -697,7 +694,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
                 const Divider(height: 1),
 
-                // DLNA section
+                // DLNA
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
                   child: Row(

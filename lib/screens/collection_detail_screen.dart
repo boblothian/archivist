@@ -1,4 +1,4 @@
-// lib/screens/collection_detail_screen.dart
+// path: lib/screens/collection_detail_screen.dart
 import 'dart:async';
 import 'dart:convert';
 
@@ -19,10 +19,10 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
-import '../media/media_player_ops.dart';
+import '../archive_api.dart'; // fetch files when adding to favourites
 import '../net.dart';
 import '../utils/archive_helpers.dart';
-import '../utils/external_launch.dart';
+import '../widgets/video_chooser.dart'; // shared video chooser
 import 'archive_item_screen.dart';
 import 'image_viewer_screen.dart';
 import 'pdf_viewer_screen.dart';
@@ -112,6 +112,37 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   bool _showScrollTop = false;
   bool _isDisposed = false;
 
+  // WHY: Used to cache files with correct formats when saving favourites.
+  String _inferFormatFrom(String name, String? fmt) {
+    final f = (fmt ?? '').trim();
+    if (f.isNotEmpty) return f;
+    final m = RegExp(r'\.([a-z0-9]+)$', caseSensitive: false).firstMatch(name);
+    return (m?.group(1) ?? '').toLowerCase();
+  }
+
+  String? _toStr(dynamic v) {
+    if (v == null) return null;
+    final s = '$v'.trim();
+    return s.isEmpty ? null : s;
+  }
+
+  List<Map<String, String>> _mapFilesForCache(List<Map<String, String>> files) {
+    return files
+        .where((f) => (f['name'] ?? '').toString().trim().isNotEmpty)
+        .map((f) {
+          final name = (f['name'] ?? '').toString();
+          final fmt = _inferFormatFrom(name, f['format']);
+          return <String, String>{
+            'name': name,
+            'format': fmt,
+            if (_toStr(f['size']) != null) 'size': _toStr(f['size'])!,
+            if (_toStr(f['width']) != null) 'width': _toStr(f['width'])!,
+            if (_toStr(f['height']) != null) 'height': _toStr(f['height'])!,
+          };
+        })
+        .toList(growable: false);
+  }
+
   Route<T> _sharedAxisRoute<T>(
     Widget page, {
     SharedAxisTransitionType type = SharedAxisTransitionType.scaled,
@@ -119,7 +150,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     return PageRouteBuilder<T>(
       transitionDuration: const Duration(milliseconds: 300),
       reverseTransitionDuration: const Duration(milliseconds: 250),
-      pageBuilder: (_, _, _) => page,
+      pageBuilder: (_, __, ___) => page,
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
         return SharedAxisTransition(
           animation: animation,
@@ -176,32 +207,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     }
   }
 
-  String _prettyFilename(String raw) {
-    var s = raw;
-    s = s.replaceFirst(
-      RegExp(r'\.(mp4|mkv|webm|pdf|epub|cbz|cbr|txt)$', caseSensitive: false),
-      '',
-    );
-    s = s.replaceFirst(RegExp(r'\.ia$', caseSensitive: false), '');
-    s = s.replaceAll('_', ' ');
-    s = s.replaceAll(RegExp(r'\s+'), ' ').trim();
-    return s;
-  }
-
-  String _humanBytes(int? b) {
-    if (b == null || b <= 0) return '—';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    double size = b.toDouble();
-    int u = 0;
-    while (size >= 1024 && u < units.length - 1) {
-      size /= 1024;
-      u++;
-    }
-    return u == 0
-        ? '$b ${units[u]}'
-        : '${size.toStringAsFixed(size < 10 ? 1 : 0)} ${units[u]}';
-  }
-
   String _buildQuery(String searchQuery) {
     final String baseQuery =
         (widget.customQuery != null && widget.customQuery!.trim().isNotEmpty)
@@ -219,8 +224,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       final orClause = fields.map((f) => '$f:"$phrase"').join(' OR ');
       full = '($baseQuery) AND ($orClause)';
     }
-    if (_sfwOnlyNotifier.value)
+    if (_sfwOnlyNotifier.value) {
       full = '($full)${sfw.SfwFilter.serverExclusionSuffix()}';
+    }
     return full;
   }
 
@@ -296,7 +302,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       if (mounted) setState(() => _loadingMore = true);
     }
 
-    // Ensure we have a target (collection or customQuery)
     if ((widget.collectionName == null ||
             widget.collectionName!.trim().isEmpty) &&
         (widget.customQuery == null || widget.customQuery!.trim().isEmpty)) {
@@ -382,7 +387,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
       await ThumbOverrideService.instance.applyToItemMaps(batch);
 
-      // de-dup identifiers across pages
       final existingIds = _items.map((m) => m['identifier']).toSet();
       batch =
           batch.where((m) {
@@ -397,7 +401,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         });
       }
 
-      // kick off smart thumbnails without blocking
       unawaited(_unblockSmartThumbs(batch, currentToken: token));
     } catch (e) {
       if (mounted && token == _requestToken) {
@@ -422,9 +425,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
   void _runSearch() => _fetch(reset: true);
 
-  // lib/screens/collection_detail_screen.dart
-  // Patch focused on _handleLongPressItem only. Rest of the file unchanged.
-
   Future<void> _handleLongPressItem(Map<String, String> item) async {
     if (_isDisposed) return;
 
@@ -433,7 +433,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
     final messenger = ScaffoldMessenger.maybeOf(context);
     final id = item['identifier']!;
-    final title = (item['title'] ?? id).trim().isEmpty ? id : (item['title']!);
+    final title = (item['title'] ?? id).trim().isNotEmpty ? item['title']! : id;
     final mediatype = item['mediatype'] ?? '';
     final year = item['year'] ?? '';
     final safeThumb =
@@ -441,7 +441,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             ? item['thumb']!.trim()
             : archiveThumbUrl(id); // why: FavoriteItem.thumb can be null
 
-    // ✅ Ensure service is ready before any call that touches Hive.
     final svc = FavoritesService.instance;
     try {
       await svc.init();
@@ -537,7 +536,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               setDialogState(() => isSearching = true);
               try {
                 final chosen = await ThumbnailService().choosePosterRich(
-                  context, // parent context; avoids nested navigator issues
+                  context,
                   query,
                   year: year.isNotEmpty ? year : null,
                   currentTitle: title,
@@ -664,9 +663,27 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
     if (result == DialogResult.addToFolder) {
       try {
-        final folder = await showAddToFavoritesDialog(context, item: fav);
+        // Fetch files if not already available; cache with inferred format.
+        List<Map<String, String>> cachedFiles = fav.files ?? const [];
+        if (cachedFiles.isEmpty) {
+          try {
+            final fetched = await ArchiveApi.fetchFilesForIdentifier(id);
+            cachedFiles = _mapFilesForCache(
+              fetched.map((e) => Map<String, String>.from(e)).toList(),
+            );
+          } catch (_) {
+            cachedFiles = const [];
+          }
+        }
+
+        final favWithFiles = fav.copyWith(files: cachedFiles);
+
+        final folder = await showAddToFavoritesDialog(
+          context,
+          item: favWithFiles,
+        );
         if (folder != null) {
-          await svc.addToFolder(folder, fav);
+          await svc.addToFolder(folder, favWithFiles);
           messenger?.showSnackBar(
             SnackBar(content: Text('Added to "$folder"')),
           );
@@ -711,7 +728,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       if (mediatype == 'texts') {
         final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
 
-        // ---- Gather supported types ----
         final pdfFiles = <Map<String, dynamic>>[];
         final imgFiles = <Map<String, dynamic>>[];
         final txtFiles = <Map<String, dynamic>>[];
@@ -723,9 +739,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           final name = (map['name'] ?? '').toString().toLowerCase();
           final fmt = (map['format'] ?? '').toString().toLowerCase();
 
-          if (name.endsWith('.pdf') || fmt.contains('pdf'))
+          if (name.endsWith('.pdf') || fmt.contains('pdf')) {
             pdfFiles.add(map);
-          else if (name.endsWith('.jpg') ||
+          } else if (name.endsWith('.jpg') ||
               name.endsWith('.jpeg') ||
               name.endsWith('.png') ||
               name.endsWith('.gif') ||
@@ -733,23 +749,22 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               fmt.contains('jpeg') ||
               fmt.contains('png') ||
               fmt.contains('gif') ||
-              fmt.contains('webp'))
+              fmt.contains('webp')) {
             imgFiles.add(map);
-          else if (name.endsWith('.txt') ||
+          } else if (name.endsWith('.txt') ||
               name.endsWith('.md') ||
               name.endsWith('.log') ||
               name.endsWith('.csv') ||
               fmt.contains('text') ||
-              fmt.contains('plain'))
+              fmt.contains('plain')) {
             txtFiles.add(map);
-          else if (name.endsWith('.epub'))
+          } else if (name.endsWith('.epub')) {
             epubFiles.add(map);
+          }
         }
 
-        // ---- Build UI options ----
         final options = <String, VoidCallback>{};
 
-        // PDF
         if (pdfFiles.isNotEmpty) {
           options['PDF Document${pdfFiles.length > 1 ? ' (${pdfFiles.length})' : ''}'] =
               () async {
@@ -796,7 +811,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               };
         }
 
-        // Images
         if (imgFiles.isNotEmpty) {
           options['Image Gallery${imgFiles.length > 1 ? ' (${imgFiles.length})' : ''}'] =
               () async {
@@ -820,7 +834,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               };
         }
 
-        // Text
         if (txtFiles.isNotEmpty) {
           options['Text File${txtFiles.length > 1 ? ' (${txtFiles.length})' : ''}'] =
               () async {
@@ -850,7 +863,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               };
         }
 
-        // ---- Show UI or fallback ----
         if (options.isEmpty) {
           final list =
               rawFiles
@@ -887,7 +899,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           return;
         }
 
-        // Bottom sheet with icons
         if (!mounted || _isDisposed) return;
         _dismissKeyboard();
 
@@ -1035,7 +1046,12 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       if (videoFiles.isNotEmpty) {
         if (!mounted || _isDisposed) return;
         _dismissKeyboard();
-        await _openVideoChooser(context, id, item['title'] ?? id, videoFiles);
+        await showVideoChooser(
+          context,
+          identifier: id,
+          title: item['title'] ?? id,
+          files: videoFiles,
+        );
         return;
       }
 
@@ -1514,207 +1530,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       child: KeyedSubtree(key: ValueKey(_viewMode), child: view),
     );
   }
-
-  Future<void> _openVideoChooser(
-    BuildContext context,
-    String identifier,
-    String title,
-    List<Map<String, dynamic>> videoFiles,
-  ) async {
-    if (_isDisposed) return;
-
-    final options =
-        videoFiles.map<Map<String, String>>((f) {
-          final name = (f['name'] ?? '').toString();
-          final fmt = (f['format'] ?? '').toString();
-          final w = int.tryParse('${f['width'] ?? ''}');
-          final h = int.tryParse('${f['height'] ?? ''}');
-          final size = int.tryParse('${f['size'] ?? ''}');
-
-          final nameRes = RegExp(r'(\d{3,4})p').firstMatch(name)?.group(1);
-          final resLabel =
-              (w != null && h != null)
-                  ? '${w}x$h'
-                  : (nameRes != null ? '${nameRes}p' : 'Unknown');
-
-          final sizeLabel = _humanBytes(size);
-          final pretty = _prettyFilename(name);
-          final url =
-              'https://archive.org/download/$identifier/${Uri.encodeComponent(name)}';
-
-          return {
-            'url': url,
-            'fmt': fmt.toLowerCase(),
-            'name': name,
-            'pretty': pretty,
-            'res': resLabel,
-            'size': sizeLabel,
-          };
-        }).toList();
-
-    if (!mounted) return;
-
-    _dismissKeyboard();
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (ctx) {
-        final height = MediaQuery.of(ctx).size.height * 0.85;
-        return SafeArea(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: height),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  title: Text(
-                    title,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: const Text('Choose a file and how to open it'),
-                ),
-                const Divider(height: 1),
-                Expanded(
-                  child: ListView.separated(
-                    itemCount: options.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (_, i) {
-                      final op = options[i];
-                      final icon =
-                          op['fmt']!.contains('mp4') ||
-                                  op['fmt']!.contains('h.264')
-                              ? Icons.movie
-                              : Icons.video_file;
-
-                      return ListTile(
-                        leading: Icon(icon),
-                        title: Text(
-                          op['pretty']!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          '${(op['fmt'] ?? '').toUpperCase()}  •  ${op['res']}  •  ${op['size']}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        onTap: () async {
-                          if (!mounted || _isDisposed) return;
-
-                          final uri = Uri.parse(op['url']!);
-
-                          final fmtUp = (op['fmt'] ?? '').toUpperCase();
-                          final size = op['size'] ?? '';
-                          final pretty = op['pretty'] ?? '';
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              behavior: SnackBarBehavior.floating,
-                              duration: const Duration(seconds: 2),
-                              content: Text(' $pretty • $fmtUp • $size'),
-                            ),
-                          );
-
-                          final choice = await showDialog<String>(
-                            context: context,
-                            builder:
-                                (dCtx) => AlertDialog(
-                                  title: const Text('Open video'),
-                                  content: const SingleChildScrollView(
-                                    child: Text(
-                                      'Choose how you’d like to open this video:',
-                                    ),
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed:
-                                          () => Navigator.pop(dCtx, 'browser'),
-                                      child: const Text('Browser'),
-                                    ),
-                                    TextButton(
-                                      onPressed:
-                                          () => Navigator.pop(dCtx, 'app'),
-                                      child: const Text('Installed app'),
-                                    ),
-                                    ElevatedButton(
-                                      onPressed:
-                                          () => Navigator.pop(dCtx, 'inapp'),
-                                      child: const Text('In-app player'),
-                                    ),
-                                  ],
-                                ),
-                          );
-                          if (choice == null) return;
-
-                          if (mounted) Navigator.pop(context);
-
-                          final name = op['name'] as String;
-                          final videoUrl =
-                              'https://archive.org/download/$identifier/$name';
-
-                          await RecentProgressService.instance.updateVideo(
-                            id: identifier,
-                            title: title,
-                            thumb: archiveThumbUrl(identifier),
-                            percent: 0.0,
-                            fileUrl: videoUrl,
-                            fileName: name,
-                          );
-
-                          String mime = 'video/*';
-                          final fmt =
-                              (op['fmt'] ?? '').toString().toLowerCase();
-                          final nameLower = name.toLowerCase();
-                          if (fmt.contains('webm') ||
-                              nameLower.endsWith('.webm')) {
-                            mime = 'video/webm';
-                          } else if (fmt.contains('mp4') ||
-                              fmt.contains('h.264') ||
-                              nameLower.endsWith('.mp4') ||
-                              nameLower.endsWith('.m4v')) {
-                            mime = 'video/mp4';
-                          } else if (fmt.contains('matroska') ||
-                              nameLower.endsWith('.mkv')) {
-                            mime = 'video/x-matroska';
-                          } else if (nameLower.endsWith('.m3u8')) {
-                            mime = 'application/vnd.apple.mpegurl';
-                          }
-
-                          if (!mounted || _isDisposed) return;
-                          _dismissKeyboard();
-
-                          if (choice == 'inapp') {
-                            await MediaPlayerOps.playVideo(
-                              context,
-                              url: videoUrl,
-                              identifier: identifier,
-                              title: title,
-                            );
-                          } else if (choice == 'browser') {
-                            await launchUrl(
-                              uri,
-                              mode: LaunchMode.externalApplication,
-                            );
-                          } else {
-                            await openExternallyWithChooser(
-                              url: uri.toString(),
-                              mimeType: mime,
-                              chooserTitle: 'Open with',
-                            );
-                          }
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
 }
 
 // UI HELPERS
@@ -2036,7 +1851,7 @@ class _CollectionQuickPick extends StatelessWidget {
               child: ListView.separated(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 itemCount: items.length,
-                separatorBuilder: (_, _) => const Divider(height: 1),
+                separatorBuilder: (_, __) => const Divider(height: 1),
                 itemBuilder: (context, i) {
                   final it = items[i];
                   final id = it['identifier']!;
@@ -2055,7 +1870,7 @@ class _CollectionQuickPick extends StatelessWidget {
                         height: 64,
                         fit: BoxFit.cover,
                         errorWidget:
-                            (_, _, _) => Image.network(
+                            (_, __, ___) => Image.network(
                               archiveFallbackThumbUrl(id),
                               width: 48,
                               height: 64,

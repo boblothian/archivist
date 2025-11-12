@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../archive_api.dart';
 import '../media/media_player_ops.dart';
 import '../utils/archive_helpers.dart';
+import '../widgets/video_chooser.dart';
 
 class FavoritesScreen extends StatelessWidget {
   final String? initialFolder;
@@ -23,7 +24,7 @@ class FavoritesScreen extends StatelessWidget {
 
     return ValueListenableBuilder<int>(
       valueListenable: svc.version,
-      builder: (context, _, _) {
+      builder: (context, _, __) {
         final folders = svc.folders();
         final selectedFolder = initialFolder ?? folders.firstOrNull ?? 'All';
 
@@ -92,7 +93,7 @@ class _GridBodyState extends State<_GridBody>
     );
   }
 
-  /// Resolve real mediatype from Archive.org and persist it
+  /// Resolve real mediatype from Archive.org and persist it (once).
   Future<String?> _resolveAndPersistMediaType(
     String id,
     FavoriteItem fav,
@@ -118,6 +119,58 @@ class _GridBodyState extends State<_GridBody>
     }
   }
 
+  // ---------- Helpers for file enrichment ----------
+  String _inferFormat(String name, String? fmt) {
+    final f = (fmt ?? '').trim();
+    if (f.isNotEmpty) return f;
+    final m = RegExp(r'\.([a-z0-9]+)$', caseSensitive: false).firstMatch(name);
+    return (m?.group(1) ?? '').toLowerCase(); // why: IA often omits 'format'
+  }
+
+  int? _toInt(dynamic v) {
+    if (v == null) return null;
+    if (v is int) return v;
+    return int.tryParse('$v');
+  }
+
+  bool _needsEnrichment(List<Map<String, String>> files) {
+    // why: many old favourites cached only "name" — enrich if most entries lack format/size or size is non-numeric.
+    if (files.isEmpty) return true;
+    int weak = 0;
+    for (final f in files) {
+      final name = (f['name'] ?? '').trim();
+      final fmt =
+          (f['format'] ?? f['fmt'] ?? '')
+              .trim(); // ← Add: support legacy 'fmt' key
+      final size = (f['size'] ?? '').trim();
+      final isSizeInvalid =
+          size.isEmpty ||
+          int.tryParse(size) == null; // ← Add: detect non-numeric size
+      if (name.isEmpty || fmt.isEmpty || isSizeInvalid) weak++;
+    }
+    return weak > (files.length / 2);
+  }
+
+  List<Map<String, String>> _mapFilesForCache(List<Map<String, String>> files) {
+    return files
+        .where((f) => (f['name'] ?? '').toString().trim().isNotEmpty)
+        .map((f) {
+          final name = (f['name'] ?? '').toString();
+          final fmt = _inferFormat(name, f['format']);
+          final size = (f['size'] ?? '').toString();
+          final width = (f['width'] ?? '').toString();
+          final height = (f['height'] ?? '').toString();
+          return <String, String>{
+            'name': name,
+            'format': fmt,
+            if (size.trim().isNotEmpty) 'size': size,
+            if (width.trim().isNotEmpty) 'width': width,
+            if (height.trim().isNotEmpty) 'height': height,
+          };
+        })
+        .toList(growable: false);
+  }
+
   Future<void> _handleTap(FavoriteItem fav) async {
     final id = _sanitizeArchiveId(fav.id);
     final title = fav.title.trim().isEmpty ? id : fav.title.trim();
@@ -135,73 +188,80 @@ class _GridBodyState extends State<_GridBody>
       kind:
           mediatype == 'collection' || mediatype == 'audio'
               ? 'collection'
-              : 'item', // FIX: Treat audio as collection for progress
+              : 'item',
     );
     if (!mounted) return;
 
-    // LOAD FILES FIRST (for all types)
+    // 1) Load cached files (if any)
     List<Map<String, String>> files = fav.files ?? [];
-    if (files.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Loading files...')));
+
+    // 2) Enrich if missing file info (or empty)
+    if (_needsEnrichment(files)) {
       try {
-        files = await ArchiveApi.fetchFilesForIdentifier(id);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Fetching file info…')));
+        final fetched = await ArchiveApi.fetchFilesForIdentifier(id);
+        // Normalize to Map<String,String> then map with format/size/wh.
+        final normalized = fetched
+            .map((e) => Map<String, String>.from(e))
+            .toList(growable: false);
+        files = _mapFilesForCache(normalized);
+
+        // Persist back into the favourite so future opens are fast.
         final updated = fav.copyWith(files: files, mediatype: mediatype);
         await FavoritesService.instance.addToFolder(widget.folderName, updated);
       } catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed: ${e.toString().split('\n').first}'),
+            content: Text(
+              'Couldn’t fetch files: ${e.toString().split('\n').first}',
+            ),
             backgroundColor: Colors.red,
           ),
         );
       }
     }
 
-    // VIDEO AUTOPLAY (if any videos found)
-    final videoUrls =
-        files
-            .map((f) => f['name'] ?? '')
-            .where((n) => n.isNotEmpty)
-            .map(
-              (n) =>
-                  'https://archive.org/download/$id/${Uri.encodeComponent(n)}',
-            )
-            .where(MediaPlayerOps.isVideoUrl)
-            .toList();
-    final bestVideo = MediaPlayerOps.pickBestVideoUrl(videoUrls);
-    if (bestVideo != null) {
-      await MediaPlayerOps.playVideo(
+    // 3) Video chooser
+    final List<Map<String, dynamic>> videoFiles = files
+        .where((f) {
+          final name = (f['name'] ?? '').toString();
+          final url =
+              'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
+          return name.isNotEmpty && MediaPlayerOps.isVideoUrl(url);
+        })
+        .map((f) {
+          final name = (f['name'] ?? '').toString();
+          final fmt = _inferFormat(name, (f['format'] ?? '').toString());
+          return {
+            'name': name,
+            'format': fmt, // shown in chooser
+            'size': _toInt(f['size']),
+            'width': _toInt(f['width']),
+            'height': _toInt(f['height']),
+          };
+        })
+        .toList(growable: false);
+
+    if (videoFiles.isNotEmpty) {
+      await showVideoChooser(
         context,
-        url: bestVideo,
         identifier: id,
         title: title,
+        files: videoFiles,
       );
       return;
     }
 
-    // ROUTE TO RIGHT SCREEN
-    if (mediatype == 'collection' || mediatype == 'audio') {
-      // FIX: Include 'audio'
-      // For collections/audio: Use ArchiveItemScreen with files (shows MP3 grid)
-      await _openItemScreen(
-        context,
-        id: id,
-        title: title,
-        files: files, // Already loaded — shows MP3s!
-        thumb: thumb,
-      );
-    } else {
-      // Single items (PDFs, etc.): Same screen
-      await _openItemScreen(
-        context,
-        id: id,
-        title: title,
-        files: files,
-        thumb: thumb,
-      );
-    }
+    // 4) Route to ArchiveItemScreen for non-video (and for audio/collections grid)
+    await _openItemScreen(
+      context,
+      id: id,
+      title: title,
+      files: files,
+      thumb: thumb,
+    );
   }
 
   Future<void> _openItemScreen(
@@ -399,7 +459,6 @@ class _DeleteChip extends StatelessWidget {
   }
 }
 
-// FIXED: No more duplicate 'All', no unused param
 class _FolderSelector extends StatelessWidget {
   final String currentFolder;
   final ValueChanged<String> onChanged;
@@ -431,7 +490,7 @@ class _FolderSelector extends StatelessWidget {
   }
 }
 
-// ── Metadata Sheet (unchanged) ────────────────────────────
+// ── Metadata Sheet (unchanged UI) ────────────────────────────
 class _FavoriteMetadataSheet extends StatefulWidget {
   final FavoriteItem item;
   const _FavoriteMetadataSheet({required this.item});
@@ -560,21 +619,16 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                       : 'https://archive.org/details/$cleanId';
 
               final infoChips = <Widget>[];
-              if (mediatype.isNotEmpty) {
+              if (mediatype.isNotEmpty)
                 infoChips.add(_buildInfoChip(theme, mediatype));
-              }
-              if (year.isNotEmpty) {
+              if (year.isNotEmpty)
                 infoChips.add(_buildInfoChip(theme, 'Year $year'));
-              }
-              if (language.isNotEmpty) {
+              if (language.isNotEmpty)
                 infoChips.add(_buildInfoChip(theme, language));
-              }
-              if (runtime.isNotEmpty) {
+              if (runtime.isNotEmpty)
                 infoChips.add(_buildInfoChip(theme, runtime));
-              }
-              if (downloads.isNotEmpty) {
+              if (downloads.isNotEmpty)
                 infoChips.add(_buildInfoChip(theme, '$downloads downloads'));
-              }
               if (cachedFilesCount > 0) {
                 final label =
                     'Cached $cachedFilesCount file${cachedFilesCount == 1 ? '' : 's'}';
@@ -672,7 +726,7 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                       SizedBox(
                         width: 120,
                         child: CapsuleThumbCard(
-                          heroTag: 'fav-meta:$cleanId',
+                          heroTag: 'fav-meta:${widget.item.id}',
                           imageUrl: thumb,
                           fit: BoxFit.cover,
                         ),

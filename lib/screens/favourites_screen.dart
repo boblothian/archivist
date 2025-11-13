@@ -312,9 +312,9 @@ class _GridBodyState extends State<_GridBody>
           padding: const EdgeInsets.all(8),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            childAspectRatio: 0.72,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
+            childAspectRatio: 0.6,
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
           ),
           itemCount: widget.items.length,
           itemBuilder: (context, i) {

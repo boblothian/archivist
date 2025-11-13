@@ -59,10 +59,19 @@ class AppTheme {
       scaffoldBackgroundColor: isLight ? AppColours.lightBg : AppColours.darkBg,
       textTheme: textTheme,
       appBarTheme: AppBarTheme(
-        backgroundColor: colorScheme.surface,
+        backgroundColor: // match your real scaffold background
+            isLight ? AppColours.lightBg : AppColours.darkBg,
+
+        surfaceTintColor: Colors.transparent, // prevent M3 tinting
         foregroundColor: colorScheme.onSurface,
         elevation: 0,
         centerTitle: true,
+
+        titleTextStyle: GoogleFonts.merriweatherSans(
+          fontSize: 20,
+          fontWeight: FontWeight.w300,
+          color: colorScheme.onSurface,
+        ),
       ),
       // Your Flutter version wants CardThemeData here.
       cardTheme: CardThemeData(

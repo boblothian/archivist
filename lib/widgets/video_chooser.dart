@@ -208,36 +208,10 @@ Future<void> showVideoChooser(
                   overflow: TextOverflow.ellipsis,
                 ),
                 onTap: () async {
-                  final mime = _guessMime(op.name, op.format);
-                  final choice = await showDialog<String>(
-                    context: context,
-                    builder:
-                        (dCtx) => AlertDialog(
-                          title: const Text('Open video'),
-                          content: const Text(
-                            'Choose how you’d like to open this video.',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed:
-                                  () => Navigator.of(dCtx).pop('internal'),
-                              child: const Text('In app'),
-                            ),
-                            TextButton(
-                              onPressed:
-                                  () => Navigator.of(dCtx).pop('external'),
-                              child: const Text('External app'),
-                            ),
-                            TextButton(
-                              onPressed: () => Navigator.of(dCtx).pop('cancel'),
-                              child: const Text('Cancel'),
-                            ),
-                          ],
-                        ),
-                  );
+                  final url =
+                      'https://archive.org/download/$identifier/${Uri.encodeComponent(op.name)}';
 
-                  if (choice == 'cancel' || choice == null) return;
-
+                  // Save to recent
                   try {
                     await RecentProgressService.instance.touch(
                       id: identifier,
@@ -249,22 +223,18 @@ Future<void> showVideoChooser(
                     );
                   } catch (_) {}
 
-                  FocusScope.of(context).unfocus();
-                  if (choice == 'external') {
-                    await launchUrl(
-                      Uri.parse(url),
-                      mode: LaunchMode.externalApplication,
-                    );
-                  } else {
-                    await MediaPlayerOps.playVideo(
-                      context,
-                      url: url,
-                      identifier: identifier,
-                      title: title,
-                    );
-                  }
+                  // Play in the in-app video player
+                  await MediaPlayerOps.playVideo(
+                    context,
+                    url: url,
+                    identifier: identifier,
+                    title: title,
+                  );
 
-                  if (Navigator.canPop(sheetCtx)) Navigator.pop(sheetCtx);
+                  // Close the bottom sheet after starting playback
+                  if (Navigator.canPop(sheetCtx)) {
+                    Navigator.pop(sheetCtx);
+                  }
                 },
               );
             },

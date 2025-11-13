@@ -417,7 +417,7 @@ class _TopContinueColumns extends StatelessWidget {
             const BigSectionHeader('Last viewed'),
             const SizedBox(height: 8),
             SizedBox(
-              height: 220,
+              height: 200, // or 250 if you want extra breathing room
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -507,28 +507,31 @@ class _ContinueStripCard extends StatelessWidget {
     }
 
     return SizedBox(
-      width: 200,
-      child: FutureBuilder<String>(
-        future: _resolveThumb(id, initialThumb),
-        initialData: initialThumb,
-        builder: (context, snap) {
-          final thumbToUse = snap.data ?? initialThumb;
+      width: 150,
+      child: Align(
+        alignment: Alignment.topCenter, // or Alignment.center if you prefer
+        child: FutureBuilder<String>(
+          future: _resolveThumb(id, initialThumb),
+          initialData: initialThumb,
+          builder: (context, snap) {
+            final thumbToUse = snap.data ?? initialThumb;
 
-          return _ResumeMediaCard(
-            id: id,
-            title: title,
-            thumb: thumbToUse,
-            progress: percent.clamp(0.0, 1.0),
-            progressLabel: label,
-            onTap:
-                () => _ContinueSectionColumn.handleResumeTap(
-                  context,
-                  kind,
-                  entry,
-                ),
-            onDelete: () => RecentProgressService.instance.remove(id),
-          );
-        },
+            return _ResumeMediaCard(
+              id: id,
+              title: title,
+              thumb: thumbToUse,
+              progress: percent.clamp(0.0, 1.0),
+              progressLabel: label,
+              onTap:
+                  () => _ContinueSectionColumn.handleResumeTap(
+                    context,
+                    kind,
+                    entry,
+                  ),
+              onDelete: () => RecentProgressService.instance.remove(id),
+            );
+          },
+        ),
       ),
     );
   }

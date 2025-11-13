@@ -180,7 +180,14 @@ class MediaService {
 
   int _startIndex(List<Playable> items, String? startUrl) {
     if (startUrl == null) return 0;
-    final i = items.indexWhere((p) => p.url == startUrl);
+
+    final startName = Uri.parse(startUrl).pathSegments.last.toLowerCase();
+
+    final i = items.indexWhere((p) {
+      final name = Uri.parse(p.url).pathSegments.last.toLowerCase();
+      return name == startName;
+    });
+
     return i >= 0 ? i : 0;
   }
 }

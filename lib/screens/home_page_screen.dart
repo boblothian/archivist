@@ -213,25 +213,36 @@ class _GlobalArchiveSearchBarState extends State<_GlobalArchiveSearchBar> {
       decoration: InputDecoration(
         hintText: 'Search Archive.org',
         prefixIcon: const Icon(Icons.search),
-        suffixIcon: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (_searching)
-              const Padding(
-                padding: EdgeInsets.only(right: 8),
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ),
-            IconButton(
-              tooltip: 'Clear',
-              icon: const Icon(Icons.close),
-              onPressed: () => _ctrl.clear(),
-            ),
-          ],
+
+        // Fixed suffixIcon to avoid tiny overflow
+        suffixIconConstraints: const BoxConstraints(
+          minWidth: 72,
+          maxWidth: 80,
+          minHeight: 48,
         ),
+        suffixIcon: SizedBox(
+          width: 72,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              if (_searching)
+                const Padding(
+                  padding: EdgeInsets.only(right: 4),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              IconButton(
+                tooltip: 'Clear',
+                icon: const Icon(Icons.close),
+                onPressed: () => _ctrl.clear(),
+              ),
+            ],
+          ),
+        ),
+
         filled: true,
         fillColor: cs.surfaceContainerHigh,
         border: OutlineInputBorder(
@@ -243,7 +254,6 @@ class _GlobalArchiveSearchBarState extends State<_GlobalArchiveSearchBar> {
   }
 }
 
-// ===== Unified resume card =====
 class _ResumeMediaCard extends StatelessWidget {
   final String id;
   final String title;
@@ -266,114 +276,105 @@ class _ResumeMediaCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
 
-    return SizedBox(
-      width: double.infinity,
-      height: 220,
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: cs.shadow.withValues(alpha: 0.15),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Card(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: cs.shadow.withValues(alpha: 0.15),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
-          elevation: 0,
-          margin: EdgeInsets.zero,
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: onTap,
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: CachedNetworkImage(
-                    imageUrl: thumb,
-                    fit: BoxFit.cover,
-                    placeholder: (_, __) => Container(color: Colors.grey[300]),
-                    errorWidget:
-                        (_, __, ___) =>
-                            const Icon(Icons.play_circle_outline, size: 40),
-                  ),
-                ),
-                Positioned.fill(
-                  child: Container(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Colors.transparent, Colors.black54],
-                      ),
+        ],
+      ),
+      child: Card(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Big, clean thumbnail – no gradient
+              Stack(
+                children: [
+                  AspectRatio(
+                    aspectRatio: 16 / 10, // nice chonky thumbnail
+                    child: CachedNetworkImage(
+                      imageUrl: thumb,
+                      fit: BoxFit.cover,
+                      placeholder:
+                          (_, __) => Container(color: Colors.grey[300]),
+                      errorWidget:
+                          (_, __, ___) =>
+                              const Icon(Icons.broken_image, size: 40),
                     ),
                   ),
-                ),
-                Positioned(
-                  left: 8,
-                  right: 8,
-                  bottom: 8,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+                  if (onDelete != null)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Material(
+                        color: Colors.black54,
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: onDelete,
+                          child: const Padding(
+                            padding: EdgeInsets.all(6),
+                            child: Icon(
+                              Icons.close,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+
+              // Text + progress
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (progressLabel != null) ...[
+                      const SizedBox(height: 4),
                       Text(
-                        title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
+                        progressLabel!,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: cs.onSurface.withOpacity(0.75),
                         ),
                       ),
-                      if (progressLabel != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          progressLabel!,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        LinearProgressIndicator(
+                      const SizedBox(height: 6),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(999),
+                        child: LinearProgressIndicator(
                           value: progress,
-                          backgroundColor: Colors.white24,
-                          valueColor: const AlwaysStoppedAnimation(
-                            Colors.white,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                if (onDelete != null)
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: Material(
-                      color: Colors.black54,
-                      shape: const CircleBorder(),
-                      child: InkWell(
-                        customBorder: const CircleBorder(),
-                        onTap: onDelete,
-                        child: const Padding(
-                          padding: EdgeInsets.all(6),
-                          child: Icon(
-                            Icons.close,
-                            color: Colors.white,
-                            size: 16,
-                          ),
+                          backgroundColor: cs.onSurface.withOpacity(0.12),
+                          valueColor: AlwaysStoppedAnimation<Color>(cs.primary),
+                          minHeight: 4,
                         ),
                       ),
-                    ),
-                  ),
-              ],
-            ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -382,100 +383,54 @@ class _ResumeMediaCard extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3 fixed columns. Headings open bottom-sheet pop-out only if > 1 item.
+// "Continue" strip – horizontal cards with big thumbnails
 // ─────────────────────────────────────────────────────────────────────────────
-// Drop-in replacement for your current _TopContinueColumns
 class _TopContinueColumns extends StatelessWidget {
   const _TopContinueColumns();
 
-  static const double _capsuleHeight = 44;
-  static const double _gap = 8;
-
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, c) {
-        final isNarrow = c.maxWidth < 560;
+    return ValueListenableBuilder<int>(
+      valueListenable: RecentProgressService.instance.version,
+      builder: (context, _, __) {
+        final recent = RecentProgressService.instance.recent(limit: 30);
 
-        return ValueListenableBuilder<int>(
-          valueListenable: RecentProgressService.instance.version,
-          builder: (context, _, __) {
-            final recent = RecentProgressService.instance.recent(limit: 60);
-
-            final reading = recent.where(_isReadingEntry).toList();
-            final watching =
-                recent.where((e) => (e['kind'] as String?) == 'video').toList();
-            final listening =
-                recent.where((e) => (e['kind'] as String?) == 'audio').toList();
-
-            final sections = <_SectionModel>[
-              if (reading.isNotEmpty)
-                _SectionModel(
-                  'Continue reading',
-                  reading,
-                  _SectionKind.reading,
+        if (recent.isEmpty) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              BigSectionHeader('Continue'),
+              SizedBox(height: 8),
+              Center(
+                child: Text(
+                  'No recent items',
+                  style: TextStyle(color: Colors.grey),
                 ),
-              if (watching.isNotEmpty)
-                _SectionModel(
-                  'Continue watching',
-                  watching,
-                  _SectionKind.watching,
-                ),
-              if (listening.isNotEmpty)
-                _SectionModel(
-                  'Continue listening',
-                  listening,
-                  _SectionKind.listening,
-                ),
-            ];
+              ),
+            ],
+          );
+        }
 
-            if (sections.isEmpty) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  BigSectionHeader('Continue'),
-                  SizedBox(height: 8),
-                  Center(
-                    child: Text(
-                      'No recent items',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  ),
-                ],
-              );
-            }
-
-            final pills =
-                sections.map((s) => _MiniCapsuleButton(section: s)).toList();
-
-            if (isNarrow) {
-              // Mobile: short horizontal pills
-              return SizedBox(
-                height: _capsuleHeight,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  itemCount: pills.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: _gap),
-                  itemBuilder: (_, i) => pills[i],
-                ),
-              );
-            }
-
-            // Wide: 3 equal short capsules
-            return Row(
-              children: List.generate(3, (i) {
-                final w =
-                    (i < pills.length) ? pills[i] : const SizedBox.shrink();
-                return Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.only(right: i == 2 ? 0 : _gap),
-                    child: w,
-                  ),
-                );
-              }),
-            );
-          },
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const BigSectionHeader('Last viewed'),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 220,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                itemCount: recent.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemBuilder: (context, i) {
+                  final e = recent[i];
+                  final kind = _sectionKindForEntry(e);
+                  return _ContinueStripCard(entry: e, kind: kind);
+                },
+              ),
+            ),
+          ],
         );
       },
     );
@@ -491,122 +446,89 @@ class _TopContinueColumns extends StatelessWidget {
   }
 }
 
-class _MiniCapsuleButton extends StatelessWidget {
-  final _SectionModel section;
-  const _MiniCapsuleButton({required this.section});
+/// Map the raw "kind" field into our [_SectionKind] for reuse with resume logic.
+_SectionKind _sectionKindForEntry(Map<String, dynamic> e) {
+  final kind = (e['kind'] as String?)?.toLowerCase();
+  if (kind == 'video') return _SectionKind.watching;
+  if (kind == 'audio') return _SectionKind.listening;
+  if (_TopContinueColumns._isReadingEntry(e)) return _SectionKind.reading;
+  // Fallback: treat as reading
+  return _SectionKind.reading;
+}
 
-  IconData get _icon {
-    switch (section.kind) {
-      case _SectionKind.reading:
-        return Icons.menu_book_rounded;
-      case _SectionKind.watching:
-        return Icons.movie_rounded;
-      case _SectionKind.listening:
-        return Icons.headphones_rounded;
-    }
-  }
+class _ContinueStripCard extends StatelessWidget {
+  final Map<String, dynamic> entry;
+  final _SectionKind kind;
+
+  const _ContinueStripCard({required this.entry, required this.kind});
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final id = entry['id'] as String? ?? '';
+    final rawTitle = (entry['title'] as String?) ?? id;
+    final fileName = entry['fileName'] as String?;
+    final title =
+        kind == _SectionKind.reading && fileName != null
+            ? _prettify(fileName)
+            : rawTitle;
 
-    final latest = section.entries.first;
-    final id = latest['id'] as String? ?? '';
-    final thumb =
-        (latest['thumb'] as String?) ?? 'https://archive.org/services/img/$id';
+    final fallbackThumb = 'https://archive.org/services/img/$id';
+    final initialThumb = (entry['thumb'] as String?) ?? fallbackThumb;
 
-    Future<void> open() async {
-      if (section.entries.length == 1) {
-        // Direct resume if only one entry.
-        await _ContinueSectionColumn.handleResumeTap(
-          context,
-          section.kind,
-          section.entries.first,
-        );
+    // Compute progress & label (same rules as _ContinueSectionColumn)
+    double percent = 0.0;
+    String? label;
+
+    if (kind == _SectionKind.watching || kind == _SectionKind.listening) {
+      final positionMs = (entry['positionMs'] as int?) ?? 0;
+      final durationMs = (entry['durationMs'] as int?) ?? 0;
+      if (durationMs > 0 && positionMs >= 0) {
+        percent = positionMs / durationMs;
       } else {
-        // Pop-out sheet over existing UI.
-        await _ContinueSectionColumn(
-          title: section.title,
-          entries: section.entries,
-          kind: section.kind,
-        )._showSectionSheet(
-          context,
-          title: section.title,
-          entries: section.entries,
-          kind: section.kind,
-        );
+        percent = (entry['percent'] as double?) ?? 0.0;
+      }
+      label =
+          percent > 0
+              ? '${(percent * 100).toStringAsFixed(0)}% ${kind == _SectionKind.watching ? 'watched' : 'listened'}'
+              : 'Tap to play';
+    } else {
+      if ((entry['kind'] as String?) == 'pdf') {
+        final page = entry['page'] as int?;
+        final total = entry['total'] as int?;
+        if (page != null && total != null && total > 0) {
+          percent = page / total;
+          label = 'Page $page of $total';
+        }
+      } else {
+        final p = (entry['percent'] as double?) ?? 0.0;
+        percent = p;
+        label = p > 0 ? '${(p * 100).toStringAsFixed(0)}%' : null;
       }
     }
 
-    // FIX: wrap in IntrinsicWidth + add clipBehavior so the stadium-shaped Material
-    // has a finite width in horizontal ListView constraints.
-    return IntrinsicWidth(
-      child: Material(
-        color: cs.surfaceContainerHigh,
-        shape: const StadiumBorder(),
-        elevation: 0,
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(999),
-          onTap: open,
-          child: Container(
-            height: _TopContinueColumns._capsuleHeight,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                Icon(_icon, size: 18, color: cs.primary),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    section.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13, // tighter
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                _CountBadge(count: section.entries.length),
-                const SizedBox(width: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(999),
-                  child: CachedNetworkImage(
-                    imageUrl: thumb,
-                    width: 28, // smaller preview
-                    height: 28,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
+    return SizedBox(
+      width: 200,
+      child: FutureBuilder<String>(
+        future: _resolveThumb(id, initialThumb),
+        initialData: initialThumb,
+        builder: (context, snap) {
+          final thumbToUse = snap.data ?? initialThumb;
 
-class _CountBadge extends StatelessWidget {
-  final int count;
-  const _CountBadge({required this.count});
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: cs.primary.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        '$count',
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: cs.primary,
-          fontWeight: FontWeight.w700,
-          fontSize: 11, // compact
-        ),
+          return _ResumeMediaCard(
+            id: id,
+            title: title,
+            thumb: thumbToUse,
+            progress: percent.clamp(0.0, 1.0),
+            progressLabel: label,
+            onTap:
+                () => _ContinueSectionColumn.handleResumeTap(
+                  context,
+                  kind,
+                  entry,
+                ),
+            onDelete: () => RecentProgressService.instance.remove(id),
+          );
+        },
       ),
     );
   }
@@ -906,8 +828,9 @@ class _ContinueSectionColumn extends StatelessWidget {
                       } else if ((e['kind'] as String?) == 'pdf') {
                         final page = e['page'] as int?;
                         final total = e['total'] as int?;
-                        if (page != null && total != null && total > 0)
+                        if (page != null && total != null && total > 0) {
                           sub = 'Page $page of $total';
+                        }
                       }
 
                       return ListTile(
@@ -1056,12 +979,26 @@ class RecommendedCollectionsSection extends StatefulWidget {
 class _RecommendedCollectionsSectionState
     extends State<RecommendedCollectionsSection> {
   late Future<List<CollectionRec>> _future;
+  late VoidCallback _versionListener;
 
-  // simple in-memory cache during widget lifetime
   @override
   void initState() {
     super.initState();
     _future = _buildRecommendations();
+
+    // When recent progress changes, recompute recommendations
+    _versionListener = () {
+      setState(() {
+        _future = _buildRecommendations();
+      });
+    };
+    RecentProgressService.instance.version.addListener(_versionListener);
+  }
+
+  @override
+  void dispose() {
+    RecentProgressService.instance.version.removeListener(_versionListener);
+    super.dispose();
   }
 
   Future<List<CollectionRec>> _buildRecommendations() async {
@@ -1078,11 +1015,9 @@ class _RecommendedCollectionsSectionState
     }
     if (ids.isEmpty) return const <CollectionRec>[];
 
-    // 2) fetch metadata, tally collections
+    // 2) fetch metadata for all ids in PARALLEL, tally collections
     final counts = <String, int>{};
-    final titles = <String, String>{};
 
-    // collections that are too generic/noisy
     const noisy = {
       'opensource_movies',
       'opensource_audio',
@@ -1096,56 +1031,51 @@ class _RecommendedCollectionsSectionState
       'software',
     };
 
-    for (final id in ids) {
-      try {
-        final meta = await ArchiveApi.getMetadata(id);
-        final md = Map<String, dynamic>.from(
-          (meta['metadata'] as Map?) ?? const {},
-        );
-        final col = md['collection'];
-        final title = (md['title'] ?? '').toString().trim();
-        if (title.isNotEmpty && !titles.containsKey(id)) titles[id] = title;
-
-        List<String> cols = [];
-        if (col is String) {
-          cols = [col];
-        } else if (col is List) {
-          cols = col.where((e) => e != null).map((e) => e.toString()).toList();
+    // Run getMetadata for all ids at once; max 24 so this is safe.
+    final metas = await Future.wait(
+      ids.map((id) async {
+        try {
+          final meta = await ArchiveApi.getMetadata(id);
+          return (id: id, meta: meta);
+        } catch (_) {
+          return null; // ignore failures
         }
+      }),
+    );
 
-        for (final c in cols) {
-          final cid = c.trim();
-          if (cid.isEmpty) continue;
-          if (noisy.contains(cid.toLowerCase())) continue;
-          counts[cid] = (counts[cid] ?? 0) + 1;
-        }
-      } catch (_) {
-        // ignore failures; keep things resilient
+    for (final entry in metas) {
+      if (entry == null) continue;
+      final meta = entry.meta as Map;
+      final md = Map<String, dynamic>.from(
+        (meta['metadata'] as Map?) ?? const {},
+      );
+      final col = md['collection'];
+
+      List<String> cols = [];
+      if (col is String) {
+        cols = [col];
+      } else if (col is List) {
+        cols = col.where((e) => e != null).map((e) => e.toString()).toList();
+      }
+
+      for (final c in cols) {
+        final cid = c.trim();
+        if (cid.isEmpty) continue;
+        if (noisy.contains(cid.toLowerCase())) continue;
+        counts[cid] = (counts[cid] ?? 0) + 1;
       }
     }
 
     if (counts.isEmpty) return const <CollectionRec>[];
 
-    // 3) sort and take top K
     final top =
         counts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
     final topIds = top.take(8).map((e) => e.key).toList();
 
-    // 4) try to resolve human titles for collections (best-effort)
+    // 3) Build recommendations WITHOUT another round of network calls.
     final recs = <CollectionRec>[];
     for (final cid in topIds) {
-      String title = _prettifyCollectionId(cid);
-      try {
-        final meta = await ArchiveApi.getMetadata(cid);
-        final md = Map<String, dynamic>.from(
-          (meta['metadata'] as Map?) ?? const {},
-        );
-        final t = (md['title'] ?? '').toString().trim();
-        if (t.isNotEmpty) title = t;
-      } catch (_) {
-        // ignore
-      }
-
+      final title = _prettifyCollectionId(cid); // local prettifier only
       recs.add(
         CollectionRec(
           id: cid,
@@ -1154,6 +1084,7 @@ class _RecommendedCollectionsSectionState
         ),
       );
     }
+
     return recs;
   }
 
@@ -1261,7 +1192,7 @@ class ExploreByCategory extends StatelessWidget {
             separatorBuilder: (_, __) => const SizedBox(width: 8),
             itemBuilder: (context, i) {
               final c = categories[i];
-              // FIX: IntrinsicWidth + clipBehavior for stadium-shaped Material
+              // Stadium pill for each category
               return IntrinsicWidth(
                 child: Material(
                   color: cs.surfaceContainerHigh,
@@ -1276,20 +1207,25 @@ class ExploreByCategory extends StatelessWidget {
                         horizontal: 14,
                         vertical: 10,
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(c.icon, size: 18, color: cs.primary),
-                          const SizedBox(width: 8),
-                          Text(
-                            c.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: textTheme.labelLarge?.copyWith(
-                              fontWeight: FontWeight.w600,
+                      // Wrap Row in FittedBox so it can shrink
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(c.icon, size: 18, color: cs.primary),
+                            const SizedBox(width: 6),
+                            Text(
+                              c.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: textTheme.labelLarge?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -1334,9 +1270,9 @@ class FeaturedCollectionsCarousel extends StatelessWidget {
   Widget build(BuildContext context) {
     final featured = [
       {
-        'title': 'Classic Literature',
-        'collection': 'gutenberg',
-        'image': 'https://archive.org/services/img/gutenberg',
+        'title': 'Internet Archive Books',
+        'collection': 'internetarchivebooks',
+        'image': 'https://archive.org/services/img/internetarchivebooks',
       },
       {
         'title': 'Magazines',
@@ -1347,6 +1283,16 @@ class FeaturedCollectionsCarousel extends StatelessWidget {
         'title': 'Film Archives',
         'collection': 'movies',
         'image': 'https://archive.org/services/img/movies',
+      },
+      {
+        'title': 'Classic TV',
+        'collection': 'classic_tv',
+        'image': 'https://archive.org/services/img/classic_tv',
+      },
+      {
+        'title': 'Old Time Radio',
+        'collection': 'oldtimeradio',
+        'image': 'https://archive.org/services/img/oldtimeradio',
       },
       {
         'title': 'Comics',

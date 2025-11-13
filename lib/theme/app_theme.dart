@@ -2,141 +2,90 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import 'app_colours.dart' as AppColours;
+import 'app_colours.dart';
 
+/// Builds the light / dark [ThemeData] for the app, driven by a seed colour.
+/// The seed colour is chosen by an index provided via [setSeedIndex].
 class AppTheme {
-  // -----------------------------------------------------------------------
-  // Public entry points – used by the root MaterialApp
-  // -----------------------------------------------------------------------
-  static final ThemeData light = _build(Brightness.light);
-  static final ThemeData dark = _build(Brightness.dark);
+  AppTheme._();
 
-  // -----------------------------------------------------------------------
-  // Private builder
-  // -----------------------------------------------------------------------
+  /// Index into [AppColours.themeSeeds] for the actively selected seed.
+  static int _seedIndex = 0;
+
+  static int get seedIndex => _seedIndex;
+
+  /// Set the active seed index (defensive clamp to valid range).
+  static void setSeedIndex(int index) {
+    if (AppColours.themeSeeds.isEmpty) {
+      _seedIndex = 0;
+      return;
+    }
+    if (index < 0) index = 0;
+    if (index >= AppColours.themeSeeds.length) {
+      index = AppColours.themeSeeds.length - 1;
+    }
+    _seedIndex = index;
+  }
+
+  /// Light theme getter.
+  static ThemeData get light => _build(Brightness.light);
+
+  /// Dark theme getter.
+  static ThemeData get dark => _build(Brightness.dark);
+
   static ThemeData _build(Brightness brightness) {
-    final isDark = brightness == Brightness.dark;
+    final bool isLight = brightness == Brightness.light;
 
-    // Custom surface colour from app_colours.dart
-    final customSurface = isDark ? AppColours.darkBg : AppColours.lightBg;
+    final seedColor =
+        AppColours.themeSeeds.isEmpty
+            ? const Color(0xFF0B1644)
+            : AppColours.themeSeeds[_seedIndex];
 
-    // Base M3 colour scheme
-    final baseScheme = ColorScheme.fromSeed(
-      seedColor: AppColours.seed,
+    final ColorScheme colorScheme = ColorScheme.fromSeed(
+      seedColor: seedColor,
       brightness: brightness,
     );
 
-    // Override only the surface colour (background is deprecated)
-    final scheme = baseScheme.copyWith(
-      surface: customSurface,
-      // surfaceContainer can stay the generated one – it will be a shade above customSurface
+    final baseTextTheme = GoogleFonts.interTextTheme();
+    final textTheme = baseTextTheme.apply(
+      bodyColor: colorScheme.onBackground,
+      displayColor: colorScheme.onBackground,
     );
-
-    final inter = GoogleFonts.interTextTheme();
-    final merri = GoogleFonts.merriweatherTextTheme();
 
     return ThemeData(
       useMaterial3: true,
-      colorScheme: scheme,
-      scaffoldBackgroundColor: customSurface, // matches AppBar surface
-      textTheme: inter
-          .merge(merri)
-          .apply(bodyColor: scheme.onSurface, displayColor: scheme.onSurface),
-      primaryTextTheme: inter.apply(
-        bodyColor: scheme.onPrimary,
-        displayColor: scheme.onPrimary,
-      ),
-      iconTheme: IconThemeData(color: scheme.onSurface),
+      brightness: brightness,
+      colorScheme: colorScheme,
+      scaffoldBackgroundColor: isLight ? AppColours.lightBg : AppColours.darkBg,
+      textTheme: textTheme,
       appBarTheme: AppBarTheme(
-        backgroundColor: customSurface,
-        surfaceTintColor: Colors.transparent,
+        backgroundColor: colorScheme.surface,
+        foregroundColor: colorScheme.onSurface,
         elevation: 0,
-        scrolledUnderElevation: 0,
         centerTitle: true,
-        titleTextStyle: GoogleFonts.inter(
-          fontSize: 20,
-          fontWeight: FontWeight.w600,
-          color: scheme.onSurface,
-        ),
       ),
-      listTileTheme: ListTileThemeData(
-        iconColor: scheme.onSurfaceVariant,
-        textColor: scheme.onSurface,
-        subtitleTextStyle: inter.bodySmall?.copyWith(
-          // withOpacity → withValues
-          color: scheme.onSurface.withValues(alpha: 0.75),
-        ),
-      ),
-      chipTheme: ChipThemeData(
-        backgroundColor: scheme.surfaceContainerHighest,
-        selectedColor: scheme.primaryContainer,
-        labelStyle: TextStyle(color: scheme.onSurface),
-        secondaryLabelStyle: TextStyle(color: scheme.onSurface),
-        iconTheme: IconThemeData(color: scheme.onSurface),
-      ),
+      // Your Flutter version wants CardThemeData here.
       cardTheme: CardThemeData(
-        elevation: 1,
-        margin: const EdgeInsets.all(8),
+        color: colorScheme.surface,
+        elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        clipBehavior: Clip.antiAlias,
-        color: scheme.surface,
+        margin: const EdgeInsets.symmetric(vertical: 6.0),
       ),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          foregroundColor: scheme.onPrimary,
-          backgroundColor: scheme.primary,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-          textStyle: GoogleFonts.inter(
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.1,
-          ),
-        ),
+      listTileTheme: ListTileThemeData(iconColor: colorScheme.primary),
+      switchTheme: const SwitchThemeData(),
+      radioTheme: const RadioThemeData(),
+      dividerTheme: DividerThemeData(
+        color: colorScheme.outlineVariant,
+        thickness: 0.5,
+        space: 0,
       ),
-      textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(
-          foregroundColor: scheme.primary,
-          textStyle: GoogleFonts.inter(fontWeight: FontWeight.w600),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: colorScheme.primary,
+        foregroundColor: colorScheme.onPrimary,
+        shape: const StadiumBorder(),
       ),
       inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: scheme.surface,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 14,
-          vertical: 12,
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: scheme.outlineVariant),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: scheme.primary, width: 2),
-        ),
-        labelStyle: TextStyle(color: scheme.onSurfaceVariant),
-        hintStyle: TextStyle(color: scheme.onSurfaceVariant),
-      ),
-      navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: scheme.surface,
-        indicatorColor: scheme.primaryContainer,
-        elevation: 0,
-        iconTheme: WidgetStateProperty.all(
-          IconThemeData(color: scheme.onSurface),
-        ),
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        labelTextStyle: WidgetStateProperty.all(
-          GoogleFonts.inter(
-            fontWeight: FontWeight.w600,
-            fontSize: 12,
-            color: scheme.onSurface,
-          ),
-        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }

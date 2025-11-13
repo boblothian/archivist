@@ -181,14 +181,20 @@ class _GridBodyState extends State<_GridBody>
 
     final mediatype = await _resolveAndPersistMediaType(id, fav);
 
+    final mt = (mediatype ?? '').toLowerCase();
+
+    final kindForProgress =
+        mt == 'collection'
+            ? 'collection' // collections are *not* shown in "Last viewed"
+            : (mt == 'audio' || mt == 'etree')
+            ? 'audio' // this will show up as listening
+            : 'item'; // text/images/etc are treated as a generic item
+
     await RecentProgressService.instance.touch(
       id: id,
       title: title,
       thumb: thumb,
-      kind:
-          mediatype == 'collection' || mediatype == 'audio'
-              ? 'collection'
-              : 'item',
+      kind: kindForProgress,
     );
     if (!mounted) return;
 
@@ -619,16 +625,21 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                       : 'https://archive.org/details/$cleanId';
 
               final infoChips = <Widget>[];
-              if (mediatype.isNotEmpty)
+              if (mediatype.isNotEmpty) {
                 infoChips.add(_buildInfoChip(theme, mediatype));
-              if (year.isNotEmpty)
+              }
+              if (year.isNotEmpty) {
                 infoChips.add(_buildInfoChip(theme, 'Year $year'));
-              if (language.isNotEmpty)
+              }
+              if (language.isNotEmpty) {
                 infoChips.add(_buildInfoChip(theme, language));
-              if (runtime.isNotEmpty)
+              }
+              if (runtime.isNotEmpty) {
                 infoChips.add(_buildInfoChip(theme, runtime));
-              if (downloads.isNotEmpty)
+              }
+              if (downloads.isNotEmpty) {
                 infoChips.add(_buildInfoChip(theme, '$downloads downloads'));
+              }
               if (cachedFilesCount > 0) {
                 final label =
                     'Cached $cachedFilesCount file${cachedFilesCount == 1 ? '' : 's'}';

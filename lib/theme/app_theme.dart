@@ -46,10 +46,10 @@ class AppTheme {
       brightness: brightness,
     );
 
-    final baseTextTheme = GoogleFonts.interTextTheme();
+    final baseTextTheme = GoogleFonts.didactGothicTextTheme();
     final textTheme = baseTextTheme.apply(
-      bodyColor: colorScheme.onBackground,
-      displayColor: colorScheme.onBackground,
+      bodyColor: colorScheme.onSurface,
+      displayColor: colorScheme.onSurface,
     );
 
     return ThemeData(
@@ -67,7 +67,7 @@ class AppTheme {
         elevation: 0,
         centerTitle: true,
 
-        titleTextStyle: GoogleFonts.merriweatherSans(
+        titleTextStyle: GoogleFonts.imFellEnglish(
           fontSize: 20,
           fontWeight: FontWeight.w300,
           color: colorScheme.onSurface,

@@ -243,12 +243,8 @@ class _GlobalArchiveSearchBarState extends State<_GlobalArchiveSearchBar> {
           ),
         ),
 
-        filled: true,
-        fillColor: cs.surfaceContainerHigh,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
+        filled: false,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }

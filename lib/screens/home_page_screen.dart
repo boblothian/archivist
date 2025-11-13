@@ -279,16 +279,7 @@ class _ResumeMediaCard extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
 
     return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: cs.shadow.withValues(alpha: 0.15),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(12)),
       child: Card(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         elevation: 0,
@@ -296,85 +287,108 @@ class _ResumeMediaCard extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onTap,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Big, clean thumbnail – no gradient
-              Stack(
-                children: [
-                  AspectRatio(
-                    aspectRatio: 16 / 10, // nice chonky thumbnail
-                    child: CachedNetworkImage(
-                      imageUrl: thumb,
-                      fit: BoxFit.cover,
-                      placeholder:
-                          (_, __) => Container(color: Colors.grey[300]),
-                      errorWidget:
-                          (_, __, ___) =>
-                              const Icon(Icons.broken_image, size: 40),
+          child: AspectRatio(
+            aspectRatio: 2 / 3,
+            child: Stack(
+              children: [
+                // Full-bleed thumbnail
+                Positioned.fill(
+                  child: CachedNetworkImage(
+                    imageUrl: thumb,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(color: Colors.grey[300]),
+                    errorWidget:
+                        (_, __, ___) =>
+                            const Icon(Icons.broken_image, size: 40),
+                  ),
+                ),
+
+                // Gradient that fades to white at the bottom where info sits
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          const Color(
+                            0xFFFFFFFF,
+                          ).withValues(alpha: 0.85), // strong fade
+                          const Color(0xFFFFFFFF), // pure white bottom
+                        ],
+                        stops: const [0.4, 0.65, 1.0],
+                      ),
                     ),
                   ),
-                  if (onDelete != null)
-                    Positioned(
-                      top: 6,
-                      right: 6,
-                      child: Material(
-                        color: Colors.black54,
-                        shape: const CircleBorder(),
-                        child: InkWell(
-                          customBorder: const CircleBorder(),
-                          onTap: onDelete,
-                          child: const Padding(
-                            padding: EdgeInsets.all(6),
-                            child: Icon(
-                              Icons.close,
-                              color: Colors.white,
-                              size: 16,
-                            ),
+                ),
+
+                // Close (X) button
+                if (onDelete != null)
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Material(
+                      color: Colors.black54,
+                      shape: const CircleBorder(),
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: onDelete,
+                        child: const Padding(
+                          padding: EdgeInsets.all(6),
+                          child: Icon(
+                            Icons.close,
+                            color: Colors.white,
+                            size: 16,
                           ),
                         ),
                       ),
                     ),
-                ],
-              ),
+                  ),
 
-              // Text + progress
-              Padding(
-                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    if (progressLabel != null) ...[
-                      const SizedBox(height: 4),
+                // Title + progress over the gradient
+                Positioned(
+                  left: 10,
+                  right: 10,
+                  bottom: 4,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                       Text(
-                        progressLabel!,
-                        style: textTheme.bodySmall?.copyWith(
-                          color: cs.onSurface.withOpacity(0.75),
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(999),
-                        child: LinearProgressIndicator(
-                          value: progress,
-                          backgroundColor: cs.onSurface.withOpacity(0.12),
-                          valueColor: AlwaysStoppedAnimation<Color>(cs.primary),
-                          minHeight: 4,
+                      if (progressLabel != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          progressLabel!,
+                          style: textTheme.bodySmall?.copyWith(
+                            color: cs.onSurface.withOpacity(0.75),
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 6),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(999),
+                          child: LinearProgressIndicator(
+                            value: progress,
+                            backgroundColor: cs.onSurface.withOpacity(0.12),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              cs.primary,
+                            ),
+                            minHeight: 4,
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

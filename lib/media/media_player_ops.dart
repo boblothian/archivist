@@ -98,7 +98,7 @@ class MediaPlayerOps {
               if (canOpenExternally)
                 TextButton(
                   onPressed: () => Navigator.of(ctx).pop('external'),
-                  child: const Text('Open in external player (VLC/MX/etc.)'),
+                  child: const Text('Open in externally'),
                 ),
               FilledButton(
                 onPressed: () => Navigator.of(ctx).pop('internal'),

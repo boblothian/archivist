@@ -122,10 +122,10 @@ class _GridBodyState extends State<_GridBody>
 
   // ---------- Helpers for file enrichment ----------
   String _inferFormat(String name, String? fmt) {
-    final f = (fmt ?? '').trim();
+    final f = (fmt ?? '').trim().toLowerCase();
     if (f.isNotEmpty) return f;
     final m = RegExp(r'\.([a-z0-9]+)$', caseSensitive: false).firstMatch(name);
-    return (m?.group(1) ?? '').toLowerCase(); // why: IA often omits 'format'
+    return (m?.group(1) ?? '').toLowerCase();
   }
 
   int? _toInt(dynamic v) {
@@ -135,21 +135,25 @@ class _GridBodyState extends State<_GridBody>
   }
 
   bool _needsEnrichment(List<Map<String, String>> files) {
-    // why: many old favourites cached only "name" — enrich if most entries lack format/size or size is non-numeric.
     if (files.isEmpty) return true;
-    int weak = 0;
+
+    int valid = 0;
     for (final f in files) {
       final name = (f['name'] ?? '').trim();
-      final fmt =
-          (f['format'] ?? f['fmt'] ?? '')
-              .trim(); // ← Add: support legacy 'fmt' key
+      final fmt = (f['format'] ?? '').trim();
       final size = (f['size'] ?? '').trim();
-      final isSizeInvalid =
-          size.isEmpty ||
-          int.tryParse(size) == null; // ← Add: detect non-numeric size
-      if (name.isEmpty || fmt.isEmpty || isSizeInvalid) weak++;
+
+      if (name.isEmpty) continue;
+
+      final hasFormat =
+          fmt.isNotEmpty ||
+          RegExp(r'\.[a-z0-9]+$', caseSensitive: false).hasMatch(name);
+      final hasSize = size.isEmpty || int.tryParse(size) != null;
+
+      if (hasFormat && hasSize) valid++;
     }
-    return weak > (files.length / 2);
+
+    return valid < (files.length * 0.5);
   }
 
   List<Map<String, String>> _mapFilesForCache(List<Map<String, String>> files) {
@@ -180,15 +184,14 @@ class _GridBodyState extends State<_GridBody>
             ? fav.thumb!.trim()
             : archiveThumbUrl(id);
 
-    // Resolve & cache mediatype (for info + progress)
+    // Resolve & cache mediatype
     final mediatype = await _resolveAndPersistMediaType(id, fav);
     final mt = (mediatype ?? '').toLowerCase();
 
-    // 🔍 Use the same logic as the rest of the app
-    //     (this treats “audio meta items” like Discworld as collections)
+    // Check if collection
     final isCollection = await ArchiveApi.isCollection(id);
 
-    // Decide how to log in RecentProgress
+    // Log progress
     final kindForProgress =
         isCollection
             ? 'collection'
@@ -205,7 +208,7 @@ class _GridBodyState extends State<_GridBody>
     if (!mounted) return;
 
     // ────────────────────────────────────────────────
-    // 0) COLLECTION PATH (Discworld etc.)
+    // 0) COLLECTION PATH
     // ────────────────────────────────────────────────
     if (isCollection) {
       await Navigator.of(context).push(
@@ -217,15 +220,15 @@ class _GridBodyState extends State<_GridBody>
               ),
         ),
       );
-      return; // ✅ don’t try to fetch files or open ArchiveItemScreen
+      return;
     }
 
     // ────────────────────────────────────────────────
-    // 1) Load cached files for non-collections
+    // 1) Load cached files
     // ────────────────────────────────────────────────
     List<Map<String, String>> files = fav.files ?? [];
 
-    // 2) Enrich if files are missing / weak
+    // 2) Enrich if needed
     if (_needsEnrichment(files)) {
       try {
         ScaffoldMessenger.of(
@@ -252,7 +255,9 @@ class _GridBodyState extends State<_GridBody>
       }
     }
 
-    // 3) Video chooser
+    // ────────────────────────────────────────────────
+    // 3) VIDEO CHOOSER
+    // ────────────────────────────────────────────────
     final List<Map<String, dynamic>> videoFiles = files
         .where((f) {
           final name = (f['name'] ?? '').toString();
@@ -283,7 +288,42 @@ class _GridBodyState extends State<_GridBody>
       return;
     }
 
-    // 4) Default path: archive item (text, audio album, etc.)
+    // ────────────────────────────────────────────────
+    // 4) AUDIO CHOOSER
+    // ────────────────────────────────────────────────
+    final List<Map<String, dynamic>> audioFiles = files
+        .where((f) {
+          final name = (f['name'] ?? '').toString();
+          final url =
+              'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
+          return name.isNotEmpty && MediaPlayerOps.isAudioUrl(url);
+        })
+        .map((f) {
+          final name = (f['name'] ?? '').toString();
+          final fmt = _inferFormat(name, (f['format'] ?? '').toString());
+          return {
+            'name': name,
+            'format': fmt,
+            'size': _toInt(f['size']),
+            'length': f['length'],
+          };
+        })
+        .toList(growable: false);
+
+    if (audioFiles.isNotEmpty) {
+      await _playAudioItem(
+        context,
+        identifier: id,
+        title: title,
+        files: audioFiles,
+        thumb: thumb,
+      );
+      return;
+    }
+
+    // ────────────────────────────────────────────────
+    // 5) FALLBACK: ArchiveItemScreen
+    // ────────────────────────────────────────────────
     await _openItemScreen(
       context,
       id: id,
@@ -291,6 +331,42 @@ class _GridBodyState extends State<_GridBody>
       files: files,
       thumb: thumb,
     );
+  }
+
+  // ────────────────────────────────────────────────
+  // AUDIO PLAYER LAUNCHER
+  // ────────────────────────────────────────────────
+  Future<void> _playAudioItem(
+    BuildContext context, {
+    required String identifier,
+    required String title,
+    required List<Map<String, dynamic>> files,
+    required String thumb,
+  }) async {
+    if (files.length == 1) {
+      final file = files.first;
+      final url =
+          'https://archive.org/download/$identifier/${Uri.encodeComponent(file['name'])}';
+      await MediaPlayerOps.playAudio(
+        context,
+        url: url,
+        identifier: identifier,
+        title: title,
+        thumb: thumb,
+        fileName: file['name'],
+      );
+    } else {
+      await showDialog(
+        context: context,
+        builder:
+            (ctx) => _AudioFileChooser(
+              identifier: identifier,
+              title: title,
+              files: files,
+              thumb: thumb,
+            ),
+      );
+    }
   }
 
   Future<void> _openItemScreen(
@@ -355,6 +431,16 @@ class _GridBodyState extends State<_GridBody>
                     ? fav.thumb!.trim()
                     : archiveThumbUrl(id);
 
+            // Check for playable media (audio or video)
+            final hasMedia = (fav.files ?? []).any((f) {
+              final name = f['name'] ?? '';
+              if (name.isEmpty) return false;
+              final url =
+                  'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
+              return MediaPlayerOps.isVideoUrl(url) ||
+                  MediaPlayerOps.isAudioUrl(url);
+            });
+
             return Material(
               type: MaterialType.transparency,
               child: InkWell(
@@ -375,7 +461,7 @@ class _GridBodyState extends State<_GridBody>
                               fillParent: true,
                             ),
                           ),
-                          if (fav.files != null && fav.files!.isNotEmpty)
+                          if (hasMedia)
                             Positioned(
                               top: 6,
                               left: 6,
@@ -457,6 +543,81 @@ class _GridBodyState extends State<_GridBody>
     );
   }
 }
+
+// ──────────────────────── AUDIO FILE CHOOSER ────────────────────────
+class _AudioFileChooser extends StatelessWidget {
+  final String identifier;
+  final String title;
+  final List<Map<String, dynamic>> files;
+  final String thumb;
+
+  const _AudioFileChooser({
+    required this.identifier,
+    required this.title,
+    required this.files,
+    required this.thumb,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Play Audio', style: Theme.of(context).textTheme.titleMedium),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: ListView.builder(
+          shrinkWrap: true,
+          itemCount: files.length,
+          itemBuilder: (ctx, i) {
+            final f = files[i];
+            final name = f['name'] as String;
+            final size = f['size'] as int?;
+            final fmt = (f['format'] as String?)?.toUpperCase() ?? '';
+            final duration = f['length']?.toString();
+
+            return ListTile(
+              leading: const Icon(Icons.audiotrack),
+              title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(
+                [
+                  if (fmt.isNotEmpty) fmt,
+                  if (size != null) _formatBytes(size),
+                  if (duration != null) duration,
+                ].join(' • '),
+              ),
+              onTap: () {
+                final url =
+                    'https://archive.org/download/$identifier/${Uri.encodeComponent(name)}';
+                Navigator.pop(ctx);
+                MediaPlayerOps.playAudio(
+                  ctx,
+                  url: url,
+                  identifier: identifier,
+                  title: title,
+                  thumb: thumb,
+                  fileName: name,
+                );
+              },
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+      ],
+    );
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+}
+
+// ──────────────────────── REST OF FILE (UNCHANGED) ────────────────────────
 
 class _DeleteChip extends StatelessWidget {
   final VoidCallback onDelete;

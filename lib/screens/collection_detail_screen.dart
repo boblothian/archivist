@@ -1278,147 +1278,150 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 8,
-        title: Text(widget.categoryName),
-        actions: [
-          IconButton(
-            tooltip: 'Sort',
-            icon: const Icon(Icons.sort),
-            onPressed: _openSortSheet,
-          ),
-          IconButton(
-            tooltip: _viewMode == ViewMode.grid ? 'List view' : 'Grid view',
-            icon: Icon(
-              _viewMode == ViewMode.grid
-                  ? Icons.view_list_rounded
-                  : Icons.grid_view_rounded,
+    return GestureDetector(
+      onTap: () => _dismissKeyboard(), // ← Dismiss keyboard on any tap
+      behavior: HitTestBehavior.translucent,
+      child: Scaffold(
+        appBar: AppBar(
+          titleSpacing: 8,
+          title: Text(widget.categoryName),
+          actions: [
+            IconButton(
+              tooltip: 'Sort',
+              icon: const Icon(Icons.sort),
+              onPressed: _openSortSheet,
             ),
-            onPressed:
-                () => setState(
-                  () =>
-                      _viewMode =
-                          _viewMode == ViewMode.grid
-                              ? ViewMode.list
-                              : ViewMode.grid,
-                ),
-          ),
-        ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(56),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    key: const ValueKey('collection_search_field'),
-                    controller: _searchCtrl,
-                    enabled: !_isDisposed,
-                    onSubmitted: (_) => _runSearch(),
-                    textInputAction: TextInputAction.search,
-                    decoration: InputDecoration(
-                      hintText: 'Search in ${widget.categoryName}',
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: IconButton(
-                        onPressed: () {
-                          _searchCtrl.clear();
-                          _runSearch();
-                        },
-                        icon: const Icon(Icons.clear),
-                        tooltip: 'Clear',
+            IconButton(
+              tooltip: _viewMode == ViewMode.grid ? 'List view' : 'Grid view',
+              icon: Icon(
+                _viewMode == ViewMode.grid
+                    ? Icons.view_list_rounded
+                    : Icons.grid_view_rounded,
+              ),
+              onPressed:
+                  () => setState(() {
+                    _viewMode =
+                        _viewMode == ViewMode.grid
+                            ? ViewMode.list
+                            : ViewMode.grid;
+                  }),
+            ),
+          ],
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(56),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      key: const ValueKey('collection_search_field'),
+                      controller: _searchCtrl,
+                      enabled: !_isDisposed,
+                      onSubmitted: (_) => _runSearch(),
+                      textInputAction: TextInputAction.search,
+                      decoration: InputDecoration(
+                        hintText: 'Search in ${widget.categoryName}',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: IconButton(
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            _runSearch();
+                          },
+                          icon: const Icon(Icons.clear),
+                          tooltip: 'Clear',
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Theme.of(context).dividerColor),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<SearchScope>(
-                      value: _searchScope,
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setState(() => _searchScope = value);
-                        _runSearch();
-                      },
-                      items: const [
-                        DropdownMenuItem(
-                          value: SearchScope.metadata,
-                          child: Text('Metadata'),
-                        ),
-                        DropdownMenuItem(
-                          value: SearchScope.title,
-                          child: Text('Title'),
-                        ),
-                      ],
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Theme.of(context).dividerColor),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<SearchScope>(
+                        value: _searchScope,
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setState(() => _searchScope = value);
+                          _runSearch();
+                        },
+                        items: const [
+                          DropdownMenuItem(
+                            value: SearchScope.metadata,
+                            child: Text('Metadata'),
+                          ),
+                          DropdownMenuItem(
+                            value: SearchScope.title,
+                            child: Text('Title'),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: _onRefresh,
-              child: _buildBody(cs),
+        body: Column(
+          children: [
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: _onRefresh,
+                child: _buildBody(cs),
+              ),
             ),
-          ),
-        ],
-      ),
-      bottomNavigationBar:
-          (!_loading && _hasMore)
-              ? SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                  child: SizedBox(
-                    height: 44,
-                    child: ElevatedButton.icon(
-                      onPressed:
-                          _loadingMore
-                              ? null
-                              : () {
-                                _page += 1;
-                                _fetch(reset: false);
-                              },
-                      icon:
-                          _loadingMore
-                              ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                              : const Icon(Icons.unfold_more),
-                      label: Text(_loadingMore ? 'Loading…' : 'Load more'),
+          ],
+        ),
+        bottomNavigationBar:
+            (!_loading && _hasMore)
+                ? SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+                    child: SizedBox(
+                      height: 44,
+                      child: ElevatedButton.icon(
+                        onPressed:
+                            _loadingMore
+                                ? null
+                                : () {
+                                  _page += 1;
+                                  _fetch(reset: false);
+                                },
+                        icon:
+                            _loadingMore
+                                ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Icon(Icons.unfold_more),
+                        label: Text(_loadingMore ? 'Loading…' : 'Load more'),
+                      ),
                     ),
                   ),
-                ),
-              )
-              : null,
-      floatingActionButton:
-          _showScrollTop
-              ? FloatingActionButton(
-                tooltip: 'Scroll to top',
-                onPressed:
-                    () => _scrollCtrl.animateTo(
-                      0,
-                      duration: const Duration(milliseconds: 350),
-                      curve: Curves.easeOut,
-                    ),
-                child: const Icon(Icons.arrow_upward),
-              )
-              : null,
+                )
+                : null,
+        floatingActionButton:
+            _showScrollTop
+                ? FloatingActionButton(
+                  tooltip: 'Scroll to top',
+                  onPressed:
+                      () => _scrollCtrl.animateTo(
+                        0,
+                        duration: const Duration(milliseconds: 350),
+                        curve: Curves.easeOut,
+                      ),
+                  child: const Icon(Icons.arrow_upward),
+                )
+                : null,
+      ),
     );
   }
 
@@ -1472,6 +1475,8 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               key: const ValueKey('list'),
               controller: _scrollCtrl,
               padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              // ← Dismiss on scroll
               itemCount: _items.length,
               itemBuilder: (context, index) {
                 final it = _items[index];
@@ -1497,6 +1502,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                 return GridView.builder(
                   controller: _scrollCtrl,
                   padding: const EdgeInsets.all(8),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  // ← Dismiss on scroll
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: cross,
                     childAspectRatio: 0.72,

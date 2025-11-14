@@ -142,20 +142,28 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 24.0),
-      children: const <Widget>[
-        _GlobalArchiveSearchBar(),
-        SizedBox(height: 16.0),
-        ExploreByCategory(),
-        SizedBox(height: 24.0),
-        _TopContinueColumns(),
-        SizedBox(height: 24.0),
-        RecommendedCollectionsSection(), // <-- NEW
-        SizedBox(height: 24.0),
-        FeaturedCollectionsCarousel(),
-      ],
+    return GestureDetector(
+      // ← Add this
+      onTap: () => FocusScope.of(context).unfocus(),
+      behavior: HitTestBehavior.translucent,
+      child: ListView(
+        physics: const BouncingScrollPhysics(),
+        keyboardDismissBehavior:
+            ScrollViewKeyboardDismissBehavior
+                .onDrag, // ← Optional: dismiss on scroll
+        padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 24.0),
+        children: const <Widget>[
+          _GlobalArchiveSearchBar(),
+          SizedBox(height: 16.0),
+          ExploreByCategory(),
+          SizedBox(height: 24.0),
+          _TopContinueColumns(),
+          SizedBox(height: 24.0),
+          RecommendedCollectionsSection(),
+          SizedBox(height: 24.0),
+          FeaturedCollectionsCarousel(),
+        ],
+      ),
     );
   }
 }

@@ -12,6 +12,7 @@ import '../archive_api.dart';
 import '../media/media_player_ops.dart';
 import '../utils/archive_helpers.dart';
 import '../widgets/video_chooser.dart';
+import 'collection_detail_screen.dart';
 
 class FavoritesScreen extends StatelessWidget {
   final String? initialFolder;
@@ -173,22 +174,27 @@ class _GridBodyState extends State<_GridBody>
 
   Future<void> _handleTap(FavoriteItem fav) async {
     final id = _sanitizeArchiveId(fav.id);
-    final title = fav.title.trim().isEmpty ? id : fav.title.trim();
+    final title = fav.title.trim().isNotEmpty ? fav.title.trim() : id;
     final thumb =
         fav.thumb?.trim().isNotEmpty == true
             ? fav.thumb!.trim()
             : archiveThumbUrl(id);
 
+    // Resolve & cache mediatype (for info + progress)
     final mediatype = await _resolveAndPersistMediaType(id, fav);
-
     final mt = (mediatype ?? '').toLowerCase();
 
+    // 🔍 Use the same logic as the rest of the app
+    //     (this treats “audio meta items” like Discworld as collections)
+    final isCollection = await ArchiveApi.isCollection(id);
+
+    // Decide how to log in RecentProgress
     final kindForProgress =
-        mt == 'collection'
-            ? 'collection' // collections are *not* shown in "Last viewed"
+        isCollection
+            ? 'collection'
             : (mt == 'audio' || mt == 'etree')
-            ? 'audio' // this will show up as listening
-            : 'item'; // text/images/etc are treated as a generic item
+            ? 'audio'
+            : 'item';
 
     await RecentProgressService.instance.touch(
       id: id,
@@ -198,23 +204,40 @@ class _GridBodyState extends State<_GridBody>
     );
     if (!mounted) return;
 
-    // 1) Load cached files (if any)
+    // ────────────────────────────────────────────────
+    // 0) COLLECTION PATH (Discworld etc.)
+    // ────────────────────────────────────────────────
+    if (isCollection) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder:
+              (_) => CollectionDetailScreen(
+                categoryName: title,
+                customQuery: 'collection:$id',
+              ),
+        ),
+      );
+      return; // ✅ don’t try to fetch files or open ArchiveItemScreen
+    }
+
+    // ────────────────────────────────────────────────
+    // 1) Load cached files for non-collections
+    // ────────────────────────────────────────────────
     List<Map<String, String>> files = fav.files ?? [];
 
-    // 2) Enrich if missing file info (or empty)
+    // 2) Enrich if files are missing / weak
     if (_needsEnrichment(files)) {
       try {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('Fetching file info…')));
+
         final fetched = await ArchiveApi.fetchFilesForIdentifier(id);
-        // Normalize to Map<String,String> then map with format/size/wh.
         final normalized = fetched
             .map((e) => Map<String, String>.from(e))
             .toList(growable: false);
         files = _mapFilesForCache(normalized);
 
-        // Persist back into the favourite so future opens are fast.
         final updated = fav.copyWith(files: files, mediatype: mediatype);
         await FavoritesService.instance.addToFolder(widget.folderName, updated);
       } catch (e) {
@@ -242,7 +265,7 @@ class _GridBodyState extends State<_GridBody>
           final fmt = _inferFormat(name, (f['format'] ?? '').toString());
           return {
             'name': name,
-            'format': fmt, // shown in chooser
+            'format': fmt,
             'size': _toInt(f['size']),
             'width': _toInt(f['width']),
             'height': _toInt(f['height']),
@@ -260,7 +283,7 @@ class _GridBodyState extends State<_GridBody>
       return;
     }
 
-    // 4) Route to ArchiveItemScreen for non-video (and for audio/collections grid)
+    // 4) Default path: archive item (text, audio album, etc.)
     await _openItemScreen(
       context,
       id: id,

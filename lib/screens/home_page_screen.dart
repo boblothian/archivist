@@ -273,6 +273,7 @@ class _ResumeMediaCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Container(
       decoration: BoxDecoration(borderRadius: BorderRadius.circular(12)),
@@ -299,20 +300,25 @@ class _ResumeMediaCard extends StatelessWidget {
                   ),
                 ),
 
-                // Gradient that fades to white at the bottom where info sits
+                // Gradient that fades to white (light) or black (dark)
                 Positioned.fill(
                   child: Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          const Color(
-                            0xFFFFFFFF,
-                          ).withValues(alpha: 0.85), // strong fade
-                          const Color(0xFFFFFFFF), // pure white bottom
-                        ],
+                        colors:
+                            isDark
+                                ? [
+                                  Colors.transparent,
+                                  Colors.black.withOpacity(0.85),
+                                  Colors.black,
+                                ]
+                                : [
+                                  Colors.transparent,
+                                  const Color(0xFFFFFFFF).withOpacity(0.85),
+                                  const Color(0xFFFFFFFF),
+                                ],
                         stops: const [0.4, 0.65, 1.0],
                       ),
                     ),
@@ -325,7 +331,7 @@ class _ResumeMediaCard extends StatelessWidget {
                     top: 6,
                     right: 6,
                     child: Material(
-                      color: Colors.black54,
+                      color: isDark ? Colors.white24 : Colors.black54,
                       shape: const CircleBorder(),
                       child: InkWell(
                         customBorder: const CircleBorder(),
@@ -357,6 +363,10 @@ class _ResumeMediaCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: textTheme.bodyMedium?.copyWith(
                           fontWeight: FontWeight.w700,
+                          color:
+                              isDark
+                                  ? Colors.white
+                                  : null, // Better contrast in dark
                         ),
                       ),
                       if (progressLabel != null) ...[
@@ -364,7 +374,8 @@ class _ResumeMediaCard extends StatelessWidget {
                         Text(
                           progressLabel!,
                           style: textTheme.bodySmall?.copyWith(
-                            color: cs.onSurface.withOpacity(0.75),
+                            color: (isDark ? Colors.white : cs.onSurface)
+                                .withOpacity(0.75),
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -372,7 +383,10 @@ class _ResumeMediaCard extends StatelessWidget {
                           borderRadius: BorderRadius.circular(999),
                           child: LinearProgressIndicator(
                             value: progress,
-                            backgroundColor: cs.onSurface.withOpacity(0.12),
+                            backgroundColor:
+                                (isDark
+                                    ? Colors.white24
+                                    : cs.onSurface.withOpacity(0.12)),
                             valueColor: AlwaysStoppedAnimation<Color>(
                               cs.primary,
                             ),

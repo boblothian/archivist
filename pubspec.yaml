@@ -23,7 +23,6 @@ dependencies:
   chewie: ^1.12.1
   video_player: ^2.10.0
   flutter_chrome_cast: ^1.2.2
-  open_filex: ^4.3.5
   android_intent_plus: ^6.0.0
   flutter_secure_storage: ^9.2.2
   archive: any
@@ -42,6 +41,8 @@ dependencies:
   connectivity_plus: ^7.0.0
   dio: ^5.7.0
   wakelock_plus: ^1.2.7
+  flutter_to_airplay: ^2.1.0
+  open_filex: ^4.7.0
 
 dev_dependencies:
   flutter_test:

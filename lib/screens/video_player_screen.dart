@@ -3,9 +3,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:chewie/chewie.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_chrome_cast/flutter_chrome_cast.dart';
+import 'package:flutter_to_airplay/flutter_to_airplay.dart';
 import 'package:media_cast_dlna/media_cast_dlna.dart'; // DLNA (Android only)
 import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -47,10 +47,6 @@ class VideoPlayerScreen extends StatefulWidget {
 }
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
-  // Local player
-  VideoPlayerController? _videoController;
-  ChewieController? _chewieController;
-
   // Queue state
   List<String> _urls = const [];
   Map<String, String> _titles = const {};
@@ -68,18 +64,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   bool get _hasHttpUrl => _currentUrl.toLowerCase().startsWith('http');
 
-  // Network resiliency
-  StreamSubscription<dynamic>? _connSub;
-  bool _lostNetwork = false;
-
   // Track progress to return on pop
   int _lastPosMs = 0;
   int _lastDurMs = 0;
   bool _popped = false;
 
-  // Track buffering/playing to control overlay
+  // Track buffering/playing
   bool _wasBuffering = false;
   bool _wasPlaying = false;
+
+  // Local player
+  VideoPlayerController? _videoController;
+  ChewieController? _chewieController;
 
   // Chromecast
   StreamSubscription<GoogleCastSession?>? _gcSessionSub;
@@ -99,7 +95,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     super.initState();
     _initQueueState();
     _initializePlayerForCurrent(initial: true);
-    _initNetworkHandlers();
     _initChromecast();
     _initDlna();
     WakelockPlus.enable();
@@ -126,8 +121,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   void dispose() {
     _disposePlayers();
 
-    // Network
-    _connSub?.cancel();
+    // Wakelock / power
     WakelockPlus.disable();
 
     // Chromecast cleanup
@@ -155,36 +149,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     _videoController = null;
   }
 
-  // ───────────────────── Network handling ─────────────────────
-  void _initNetworkHandlers() {
-    _connSub = Connectivity().onConnectivityChanged.listen((event) async {
-      bool connected;
-      if (event is ConnectivityResult) {
-        connected = event != ConnectivityResult.none;
-      } else {
-        connected = event.any((r) => r != ConnectivityResult.none);
-      }
-
-      if (!connected && !_lostNetwork) {
-        _lostNetwork = true;
-        if (_videoController?.value.isPlaying == true) {
-          await _videoController!.pause();
-        }
-        if (mounted) setState(() {});
-      } else if (connected && _lostNetwork) {
-        _lostNetwork = false;
-        if (mounted) setState(() {}); // Force rebuild
-
-        // Resume playback if it was playing
-        if (_chewieController != null &&
-            !_chewieController!.videoPlayerController.value.isPlaying) {
-          await _chewieController!.play();
-        }
-      }
-    });
-  }
-
-  // ───────────────────── CAST: Chromecast ─────────────────────
+  // ───────────────────── Chromecast ─────────────────────
   Future<void> _initChromecast() async {
     try {
       const appId = GoogleCastDiscoveryCriteria.kDefaultApplicationId;
@@ -237,9 +202,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
+  Duration get _currentPositionForCast {
+    if (_videoController != null) {
+      return _videoController!.value.position;
+    }
+    return Duration(milliseconds: _lastPosMs);
+  }
+
   Future<void> _castToChromecast() async {
-    if (!_hasHttpUrl) return;
+    if (!_hasHttpUrl) {
+      debugPrint('Cast: abort — current URL is not HTTP: $_currentUrl');
+      return;
+    }
+
     final url = _currentUrl;
+    debugPrint('Cast: preparing to cast $url');
+
     final info = GoogleCastMediaInformation(
       contentId: url,
       contentUrl: Uri.parse(url),
@@ -259,16 +237,24 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         ],
       ),
     );
+
     try {
       if (_videoController?.value.isPlaying == true) {
         await _videoController!.pause();
       }
+
+      final pos = _currentPositionForCast;
+      debugPrint('Cast: loading media at position $pos');
+
       await GoogleCastRemoteMediaClient.instance.loadMedia(
         info,
         autoPlay: true,
-        playPosition: _videoController?.value.position ?? Duration.zero,
+        playPosition: pos,
       );
+
+      debugPrint('Cast: loadMedia sent successfully');
     } catch (e) {
+      debugPrint('Cast: error while casting: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -276,7 +262,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
-  // ───────────────────── CAST: DLNA ─────────────────────
+  // ───────────────────── DLNA ─────────────────────
   Future<void> _initDlna() async {
     if (!Platform.isAndroid) return; // plugin is Android-only
     try {
@@ -331,27 +317,63 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   Future<void> _castToDlna(DlnaDevice device) async {
-    if (!_hasHttpUrl) return;
+    if (!_hasHttpUrl) {
+      debugPrint('DLNA: abort — current URL is not HTTP: $_currentUrl');
+      return;
+    }
+
     final url = _currentUrl;
     final udn = device.udn;
+
+    // Try to give the TV proper metadata (may help with aspect ratio / zoom).
+    String? resolution;
+    TimeDuration? duration;
+
+    if (_videoController != null && _videoController!.value.isInitialized) {
+      final size = _videoController!.value.size;
+      if (size.width > 0 && size.height > 0) {
+        resolution =
+            '${size.width.toInt()}x${size.height.toInt()}'; // e.g. 1920x1080
+      }
+      final d = _videoController!.value.duration;
+      if (d.inMilliseconds > 0) {
+        duration = TimeDuration(seconds: d.inSeconds);
+      }
+    }
+
     final meta = VideoMetadata(
       title: _currentTitle,
-      upnpClass: 'object.item.videoItem',
-      resolution: null,
-      duration: null,
+      upnpClass: 'object.item.videoItem.movie',
+      resolution: resolution,
+      duration: duration,
       genre: null,
     );
+
     try {
+      debugPrint('DLNA: casting $url to ${device.friendlyName}');
+
       if (_videoController?.value.isPlaying == true) {
         await _videoController!.pause();
       }
+
       await _dlna.setMediaUri(udn, Url(value: url), meta);
       await _dlna.play(udn);
-      setState(() {
-        _isCastingDlna = true;
-        _activeDlnaUdn = udn;
-      });
+
+      // Stop discovery once we are casting so we don't keep pinging the network.
+      await _stopDlnaDiscovery();
+      _dlnaRefreshTimer?.cancel();
+      _dlnaRefreshTimer = null;
+
+      if (mounted) {
+        setState(() {
+          _isCastingDlna = true;
+          _activeDlnaUdn = udn;
+        });
+      }
+
+      debugPrint('DLNA: playback started on ${device.friendlyName}');
     } catch (e) {
+      debugPrint('DLNA: cast error: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -372,7 +394,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
-  // ───────────────────── Local Player (with queue) ─────────────────────
+  // ───────────────────── Local player ─────────────────────
   Future<void> _initializePlayerForCurrent({bool initial = false}) async {
     _disposePlayers();
 
@@ -419,6 +441,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   void _onTick() {
+    if (_videoController == null) return;
+
     final v = _videoController!.value;
     _lastPosMs = v.position.inMilliseconds;
     _lastDurMs = v.duration.inMilliseconds;
@@ -461,16 +485,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   // ───────────────────── UI ─────────────────────
   @override
   Widget build(BuildContext context) {
-    final isInitialized =
+    final bool isInitialized =
         _chewieController?.videoPlayerController.value.isInitialized ?? false;
-    final isCasting = _isCastingChromecast || _isCastingDlna;
-    final showBuffering =
+
+    final bool isCasting = _isCastingChromecast || _isCastingDlna;
+
+    final bool showBuffering =
         isInitialized &&
         !isCasting &&
         (_videoController?.value.isBuffering ?? false) &&
         !(_videoController?.value.isPlaying ?? false);
 
-    final hasQueue = _urls.length > 1;
+    final bool hasQueue = _urls.length > 1;
 
     return WillPopScope(
       onWillPop: _handlePopWithProgress,
@@ -487,6 +513,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 child: Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: Text('${_queueIndex + 1}/${_urls.length}'),
+                ),
+              ),
+            // Native AirPlay button on iOS
+            if (Platform.isIOS)
+              const Padding(
+                padding: EdgeInsets.only(right: 4),
+                child: SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: AirPlayRoutePickerView(
+                    tintColor: Colors.white,
+                    activeTintColor: Colors.white,
+                    backgroundColor: Colors.transparent,
+                  ),
                 ),
               ),
             IconButton(
@@ -547,45 +587,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
             // Buffering spinner (only when truly buffering)
             if (showBuffering) const Center(child: CircularProgressIndicator()),
-
-            // Network lost banner
-            if (_lostNetwork)
-              Positioned(
-                left: 12,
-                right: 12,
-                top: 12,
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.black87,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: const Text(
-                    'Connection lost. Reconnecting…',
-                    style: TextStyle(color: Colors.white),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
           ],
         ),
-        // Optional manual prev/next controls (uncomment if you want visible buttons)
-        // floatingActionButton: hasQueue
-        //     ? Row(
-        //         mainAxisSize: MainAxisSize.min,
-        //         children: [
-        //           FloatingActionButton.small(
-        //             onPressed: _playPrevInQueue,
-        //             child: const Icon(Icons.skip_previous),
-        //           ),
-        //           const SizedBox(width: 12),
-        //           FloatingActionButton.small(
-        //             onPressed: _playNextInQueue,
-        //             child: const Icon(Icons.skip_next),
-        //           ),
-        //         ],
-        //       )
-        //     : null,
       ),
     );
   }
@@ -594,6 +597,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (_popped) return false;
     _popped = true;
     if (!mounted) return false;
+
     Navigator.of(
       context,
     ).pop(<String, int>{'positionMs': _lastPosMs, 'durationMs': _lastDurMs});

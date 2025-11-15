@@ -1,5 +1,4 @@
 // path: lib/screens/favourites_screen.dart
-import 'package:animations/animations.dart';
 import 'package:archivereader/screens/archive_item_screen.dart';
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
@@ -13,6 +12,7 @@ import '../archive_api.dart';
 import '../media/media_player_ops.dart';
 import '../utils/archive_helpers.dart';
 import '../widgets/video_chooser.dart';
+import 'collection_detail_screen.dart';
 
 class FavoritesScreen extends StatelessWidget {
   final String? initialFolder;
@@ -176,25 +176,6 @@ class _GridBodyState extends State<_GridBody>
         .toList(growable: false);
   }
 
-  Route<T> _sharedAxisRoute<T>(
-    Widget page, {
-    SharedAxisTransitionType type = SharedAxisTransitionType.scaled,
-  }) {
-    return PageRouteBuilder<T>(
-      transitionDuration: const Duration(milliseconds: 300),
-      reverseTransitionDuration: const Duration(milliseconds: 250),
-      pageBuilder: (_, __, ___) => page,
-      transitionsBuilder: (context, animation, secondaryAnimation, child) {
-        return SharedAxisTransition(
-          animation: animation,
-          secondaryAnimation: secondaryAnimation,
-          transitionType: type,
-          child: child,
-        );
-      },
-    );
-  }
-
   Future<void> _handleTap(FavoriteItem fav) async {
     final id = _sanitizeArchiveId(fav.id);
     final title = fav.title.trim().isNotEmpty ? fav.title.trim() : id;
@@ -230,31 +211,13 @@ class _GridBodyState extends State<_GridBody>
     // 0) COLLECTION PATH
     // ────────────────────────────────────────────────
     if (isCollection) {
-      // Fetch files once and go straight to ArchiveItemScreen
-      final files = await ArchiveApi.fetchFilesForIdentifier(id);
-      final fileMaps =
-          files
-              .where((f) => (f['name'] as String?)?.trim().isNotEmpty == true)
-              .map<Map<String, String>>(
-                (f) => {'name': (f['name'] as String).trim()},
-              )
-              .toList();
-
-      await RecentProgressService.instance.touch(
-        id: id,
-        title: title,
-        thumb: thumb,
-        kind: 'audio',
-      );
-
       await Navigator.of(context).push(
-        _sharedAxisRoute(
-          ArchiveItemScreen(
-            title: title,
-            identifier: id,
-            files: fileMaps,
-            parentThumbUrl: thumb,
-          ),
+        MaterialPageRoute(
+          builder:
+              (_) => CollectionDetailScreen(
+                categoryName: title,
+                customQuery: 'collection:$id',
+              ),
         ),
       );
       return;
@@ -293,7 +256,7 @@ class _GridBodyState extends State<_GridBody>
     }
 
     // ────────────────────────────────────────────────
-    // 3) VIDEO CHOOSER
+    // 3) VIDEO: Open with toast (unchanged)
     // ────────────────────────────────────────────────
     final List<Map<String, dynamic>> videoFiles = files
         .where((f) {
@@ -326,40 +289,7 @@ class _GridBodyState extends State<_GridBody>
     }
 
     // ────────────────────────────────────────────────
-    // 4) AUDIO CHOOSER
-    // ────────────────────────────────────────────────
-    final List<Map<String, dynamic>> audioFiles = files
-        .where((f) {
-          final name = (f['name'] ?? '').toString();
-          final url =
-              'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
-          return name.isNotEmpty && MediaPlayerOps.isAudioUrl(url);
-        })
-        .map((f) {
-          final name = (f['name'] ?? '').toString();
-          final fmt = _inferFormat(name, (f['format'] ?? '').toString());
-          return {
-            'name': name,
-            'format': fmt,
-            'size': _toInt(f['size']),
-            'length': f['length'],
-          };
-        })
-        .toList(growable: false);
-
-    if (audioFiles.isNotEmpty) {
-      await _playAudioItem(
-        context,
-        identifier: id,
-        title: title,
-        files: audioFiles,
-        thumb: thumb,
-      );
-      return;
-    }
-
-    // ────────────────────────────────────────────────
-    // 5) FALLBACK: ArchiveItemScreen
+    // 4) DEFAULT: File Browser (audio, PDF, text, etc.)
     // ────────────────────────────────────────────────
     await _openItemScreen(
       context,
@@ -368,42 +298,6 @@ class _GridBodyState extends State<_GridBody>
       files: files,
       thumb: thumb,
     );
-  }
-
-  // ────────────────────────────────────────────────
-  // AUDIO PLAYER LAUNCHER
-  // ────────────────────────────────────────────────
-  Future<void> _playAudioItem(
-    BuildContext context, {
-    required String identifier,
-    required String title,
-    required List<Map<String, dynamic>> files,
-    required String thumb,
-  }) async {
-    if (files.length == 1) {
-      final file = files.first;
-      final url =
-          'https://archive.org/download/$identifier/${Uri.encodeComponent(file['name'])}';
-      await MediaPlayerOps.playAudio(
-        context,
-        url: url,
-        identifier: identifier,
-        title: title,
-        thumb: thumb,
-        fileName: file['name'],
-      );
-    } else {
-      await showDialog(
-        context: context,
-        builder:
-            (ctx) => _AudioFileChooser(
-              identifier: identifier,
-              title: title,
-              files: files,
-              thumb: thumb,
-            ),
-      );
-    }
   }
 
   Future<void> _openItemScreen(
@@ -577,6 +471,55 @@ class _GridBodyState extends State<_GridBody>
           },
         );
       },
+    );
+  }
+}
+
+// ──────────────────────── FILE TYPE CHOOSER ────────────────────────
+class _FileTypeChooser extends StatelessWidget {
+  final bool hasVideo;
+  final bool hasAudio;
+  final bool hasFiles;
+
+  const _FileTypeChooser({
+    required this.hasVideo,
+    required this.hasAudio,
+    required this.hasFiles,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Open with'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (hasVideo)
+            ListTile(
+              leading: const Icon(Icons.videocam),
+              title: const Text('Video Player'),
+              onTap: () => Navigator.pop(context, 'video'),
+            ),
+          if (hasAudio)
+            ListTile(
+              leading: const Icon(Icons.audiotrack),
+              title: const Text('Audio Player'),
+              onTap: () => Navigator.pop(context, 'audio'),
+            ),
+          if (hasFiles)
+            ListTile(
+              leading: const Icon(Icons.folder_open),
+              title: const Text('File Browser'),
+              onTap: () => Navigator.pop(context, 'files'),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+      ],
     );
   }
 }

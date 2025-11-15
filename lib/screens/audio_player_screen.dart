@@ -70,20 +70,9 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
 
   // Convenience getters
   String get _currentUrl {
-    final idx = _player.currentIndex ?? _startIndex;
-    if (_urls.isNotEmpty && idx >= 0 && idx < _urls.length) {
-      return _urls[idx];
-    }
-    return widget.url;
+    final index = _player.currentIndex ?? _startIndex;
+    return _urls[index.clamp(0, _urls.length - 1)];
   }
-
-  String get _currentTitle {
-    final t = _titles[_currentUrl];
-    if (t != null && t.trim().isNotEmpty) return t;
-    return widget.title ?? Uri.parse(_currentUrl).pathSegments.last;
-  }
-
-  String? get _currentThumb => _thumbs[_currentUrl];
 
   @override
   void initState() {
@@ -209,7 +198,19 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
       onWillPop: _handlePopWithProgress,
       child: Scaffold(
         appBar: AppBar(
-          title: Text(_currentTitle),
+          title: StreamBuilder<SequenceState?>(
+            stream: _player.sequenceStateStream,
+            builder: (context, snapshot) {
+              final state = snapshot.data;
+              final index = state?.currentIndex ?? _startIndex;
+              final currentUrl = _urls[index.clamp(0, _urls.length - 1)];
+              final title =
+                  _titles[currentUrl] ??
+                  widget.title ??
+                  Uri.parse(currentUrl).pathSegments.last;
+              return Text(title);
+            },
+          ),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: () async => _handlePopWithProgress(),
@@ -223,38 +224,54 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
 
             return Column(
               children: [
-                // Artwork (if provided)
-                if (_currentThumb != null && _currentThumb!.isNotEmpty)
-                  AspectRatio(
-                    aspectRatio: 1,
-                    child: Padding(
-                      padding: const EdgeInsets.only(
-                        top: 12,
-                        left: 12,
-                        right: 12,
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
-                          _currentThumb!,
-                          fit: BoxFit.cover,
-                          errorBuilder:
-                              (_, __, ___) => Container(
-                                color: Colors.black12,
-                                alignment: Alignment.center,
-                                child: const Icon(Icons.music_note, size: 48),
-                              ),
+                // ────────────────────── ARTWORK (updates on track change) ──────────────────────
+                StreamBuilder<SequenceState?>(
+                  stream: _player.sequenceStateStream,
+                  builder: (context, snapshot) {
+                    final state = snapshot.data;
+                    final index = state?.currentIndex ?? _startIndex;
+                    final currentUrl = _urls[index.clamp(0, _urls.length - 1)];
+                    final thumb = _thumbs[currentUrl];
+
+                    if (thumb != null && thumb.isNotEmpty) {
+                      return AspectRatio(
+                        aspectRatio: 1,
+                        child: Padding(
+                          padding: const EdgeInsets.only(
+                            top: 12,
+                            left: 12,
+                            right: 12,
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Image.network(
+                              thumb,
+                              fit: BoxFit.cover,
+                              errorBuilder:
+                                  (_, __, ___) => Container(
+                                    color: Colors.black12,
+                                    alignment: Alignment.center,
+                                    child: const Icon(
+                                      Icons.music_note,
+                                      size: 48,
+                                    ),
+                                  ),
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                  ),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  },
+                ),
+
                 if (_lostNetwork)
                   const Padding(
                     padding: EdgeInsets.all(8.0),
                     child: Text('Connection lost. Reconnecting…'),
                   ),
 
-                // Position / Slider
+                // ────────────────────── POSITION / SLIDER ──────────────────────
                 StreamBuilder<Duration?>(
                   stream: _player.durationStream,
                   builder: (c, dSnap) {
@@ -297,7 +314,7 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
                   },
                 ),
 
-                // Controls
+                // ────────────────────── CONTROLS ──────────────────────
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -334,7 +351,7 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
                   ],
                 ),
 
-                // Queue nav + label
+                // ────────────────────── QUEUE NAV ──────────────────────
                 if (hasQueue)
                   Padding(
                     padding: const EdgeInsets.only(top: 6, bottom: 2),
@@ -362,7 +379,6 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
                           try {
                             await _player.seekToPrevious();
                             await _player.play();
-                            setState(() {}); // update artwork/title
                           } catch (_) {}
                         },
                       ),
@@ -373,7 +389,6 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
                           try {
                             await _player.seekToNext();
                             await _player.play();
-                            setState(() {});
                           } catch (_) {}
                         },
                       ),

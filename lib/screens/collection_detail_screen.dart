@@ -1096,14 +1096,91 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   }
 
   Future<void> _openCollectionSmart(String collectionId, String title) async {
-    final children = await _fetchCollectionChildren(
-      collectionId,
-      enrich: false,
-    );
-    if (!mounted || _isDisposed) return;
+    // -----------------------------------------------------------------
+    // Cancellation handling – no PopListener API needed
+    // -----------------------------------------------------------------
+    bool _canceled = false;
+    final navigator = Navigator.of(context);
 
-    if (children.isEmpty) {
-      Navigator.of(context).push(
+    // If the user presses back while we are loading, cancel everything
+    void _checkCancel() {
+      if (!navigator.canPop()) return;
+      final currentRoute = ModalRoute.of(context);
+      if (currentRoute == null || !currentRoute.isCurrent) {
+        _canceled = true;
+      }
+    }
+
+    // Run a periodic check (cheap) while the future is pending
+    Timer? _timer;
+    _timer = Timer.periodic(
+      const Duration(milliseconds: 100),
+      (_) => _checkCancel(),
+    );
+
+    try {
+      final children = await _fetchCollectionChildren(
+        collectionId,
+        enrich: false,
+        isCancelled: () => _canceled || !mounted || _isDisposed,
+      );
+
+      // Stop the timer as soon as we have a result
+      _timer?.cancel();
+
+      if (!mounted || _isDisposed || _canceled) return;
+
+      // -----------------------------------------------------------------
+      // No children → open the full collection screen
+      // -----------------------------------------------------------------
+      if (children.isEmpty) {
+        navigator.push(
+          _sharedAxisRoute(
+            CollectionDetailScreen(
+              categoryName: title,
+              collectionName: collectionId,
+            ),
+          ),
+        );
+        return;
+      }
+
+      // -----------------------------------------------------------------
+      // Small collection → quick-pick bottom sheet
+      // -----------------------------------------------------------------
+      if (children.length <= _QUICK_PICK_LIMIT) {
+        final selected = await showModalBottomSheet<Map<String, String>>(
+          context: context,
+          showDragHandle: true,
+          isScrollControlled: true,
+          builder:
+              (_) => _CollectionQuickPick(
+                title: title,
+                items: children,
+                onSeeAll: () {
+                  Navigator.of(context).pop();
+                  navigator.push(
+                    _sharedAxisRoute(
+                      CollectionDetailScreen(
+                        categoryName: title,
+                        collectionName: collectionId,
+                      ),
+                    ),
+                  );
+                },
+              ),
+        );
+
+        if (selected != null && mounted && !_isDisposed) {
+          await _openItem(selected);
+        }
+        return;
+      }
+
+      // -----------------------------------------------------------------
+      // Large collection → go straight to the detail screen
+      // -----------------------------------------------------------------
+      navigator.push(
         _sharedAxisRoute(
           CollectionDetailScreen(
             categoryName: title,
@@ -1111,48 +1188,20 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           ),
         ),
       );
-      return;
+    } catch (_) {
+      _timer?.cancel();
+      if (mounted && !_isDisposed && !_canceled) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to load collection preview.')),
+        );
+      }
     }
-
-    if (children.length <= _QUICK_PICK_LIMIT) {
-      final selected = await showModalBottomSheet<Map<String, String>>(
-        context: context,
-        showDragHandle: true,
-        isScrollControlled: true,
-        builder:
-            (_) => _CollectionQuickPick(
-              title: title,
-              items: children,
-              onSeeAll: () {
-                Navigator.of(context).pop();
-                Navigator.of(context).push(
-                  _sharedAxisRoute(
-                    CollectionDetailScreen(
-                      categoryName: title,
-                      collectionName: collectionId,
-                    ),
-                  ),
-                );
-              },
-            ),
-      );
-      if (selected != null) await _openItem(selected);
-      return;
-    }
-
-    Navigator.of(context).push(
-      _sharedAxisRoute(
-        CollectionDetailScreen(
-          categoryName: title,
-          collectionName: collectionId,
-        ),
-      ),
-    );
   }
 
   Future<List<Map<String, String>>> _fetchCollectionChildren(
     String collectionId, {
     bool enrich = false,
+    required bool Function() isCancelled,
   }) async {
     final q = 'collection:$collectionId';
     final flParams = <String>[
@@ -1175,11 +1224,18 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       final resp = await _client
           .get(Uri.parse(url), headers: _HEADERS)
           .timeout(_netTimeout);
+
+      // Cancel as early as possible
+      if (isCancelled()) return const <Map<String, String>>[];
+
       if (resp.statusCode != 200) return const <Map<String, String>>[];
 
       final data = await _decodeJson(resp.body);
+      if (isCancelled()) return const <Map<String, String>>[];
+
       final List docs = (data['response']?['docs'] as List?) ?? const [];
 
+      // ----- Parsing (only reached when not cancelled) -----
       String flat(dynamic v) {
         if (v == null) return '';
         if (v is List) {
@@ -1188,7 +1244,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         return v.toString();
       }
 
-      List<Map<String, String>> items =
+      var items =
           docs.map<Map<String, String>>((doc) {
             final id = (doc['identifier'] ?? '').toString();
             final title = flat(doc['title']).trim();
@@ -1205,12 +1261,15 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
             };
           }).toList();
 
+      // SFW filter
       if (_sfwOnlyNotifier.value) {
         items = items.where(sfw.SfwFilter.isClean).toList();
       }
 
+      // Apply thumb overrides
       await ThumbOverrideService.instance.applyToItemMaps(items);
 
+      // Dedupe
       final seen = <String>{};
       items =
           items.where((m) {
@@ -1507,7 +1566,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                   // ← Dismiss on scroll
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: cross,
-                    childAspectRatio: 0.72,
+                    childAspectRatio: 0.62,
                     crossAxisSpacing: 8,
                     mainAxisSpacing: 8,
                   ),
@@ -1690,6 +1749,7 @@ class _GridCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // FIXED HEIGHT CAPSULE
             Expanded(
               child: CapsuleThumbCard(
                 heroTag: 'thumb:$id',
@@ -1702,12 +1762,16 @@ class _GridCard extends StatelessWidget {
                         : null,
               ),
             ),
+            // FIXED HEIGHT TITLE (2 lines max)
             const SizedBox(height: 8),
-            Text(
-              title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: textTheme.titleSmall,
+            SizedBox(
+              height: 40, // 2 lines of titleSmall
+              child: Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.titleSmall,
+              ),
             ),
           ],
         ),

@@ -602,7 +602,7 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
           crossAxisCount: 3,
           crossAxisSpacing: 8,
           mainAxisSpacing: 8,
-          childAspectRatio: 0.7,
+          childAspectRatio: 0.55,
         ),
         itemCount: displayFiles.length,
         itemBuilder: (context, index) {

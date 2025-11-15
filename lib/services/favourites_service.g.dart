@@ -24,10 +24,9 @@ class FavoriteItemAdapter extends TypeAdapter<FavoriteItem> {
       author: fields[4] as String?,
       mediatype: fields[5] as String?,
       formats: (fields[6] as List).cast<String>(),
-      files:
-          (fields[7] as List?)
-              ?.map((dynamic e) => (e as Map).cast<String, String>())
-              .toList(),
+      files: (fields[7] as List?)
+          ?.map((dynamic e) => (e as Map).cast<String, String>())
+          ?.toList(),
     );
   }
 

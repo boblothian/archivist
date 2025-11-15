@@ -128,10 +128,9 @@ class ArchiveApi {
       final mediatype = _flat(meta['metadata']?['mediatype']) ?? '';
       final mt = mediatype.toLowerCase();
 
-      // Force 'audio' to be treated as collection-like (shows child files)
-      if (mt == 'audio') return true;
+      // Only TRUE collections (no downloadable files)
+      if (mt == 'collection') return true;
 
-      // For real collections: no files
       final files = (meta['files'] as List?) ?? [];
       return files.isEmpty || !_isDownloadableFormatForItem(files);
     } catch (_) {
@@ -239,6 +238,7 @@ class ArchiveApi {
   }
 
   static bool _isDownloadableFormat(String format, String name) {
+    final f = format.toUpperCase();
     final allowedFormats = {
       'PDF',
       'EPUB',
@@ -246,15 +246,20 @@ class ArchiveApi {
       'CBR',
       'MPEG4',
       'H.264',
-      'WebM',
-      'Matroska',
-      'Text',
-      'DjVu',
-      'Kindle',
-      'Comic Book ZIP',
-      'Comic Book RAR',
+      'WEBM',
+      'MATROSKA',
+      'MP3',
+      'OGG',
+      'FLAC',
+      'WAV',
+      'M4A',
+      'TEXT',
+      'DJVU',
+      'KINDLE',
+      'COMIC BOOK ZIP',
+      'COMIC BOOK RAR',
     };
-    if (allowedFormats.contains(format)) return true;
+    if (allowedFormats.contains(f)) return true;
 
     final ext = name.split('.').lastOrNull?.toLowerCase() ?? '';
     return [
@@ -265,6 +270,11 @@ class ArchiveApi {
       'mp4',
       'mkv',
       'webm',
+      'mp3',
+      'ogg',
+      'flac',
+      'wav',
+      'm4a',
       'txt',
       'djvu',
     ].contains(ext);

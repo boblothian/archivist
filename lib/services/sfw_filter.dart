@@ -60,8 +60,17 @@ class SfwFilter {
   /// Server-side exclusion for Archive advancedsearch:
   /// Filter by **subject** only (not title/description) to keep results.
   static String serverExclusionSuffix() {
-    // Only use exact/clear tags on the server side.
-    final quoted = _blockedExact.map((t) => '"$t"').join(' OR ');
+    // Only block explicit adult content
+    final blocked = <String>[
+      'nsfw',
+      'xxx',
+      'porn',
+      'pornography',
+      'hentai',
+      'r18',
+      'r-18',
+    ];
+    final quoted = blocked.map((t) => '"$t"').join(' OR ');
     return ' AND -subject:($quoted)';
   }
 

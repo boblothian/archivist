@@ -1,4 +1,5 @@
 // path: lib/screens/favourites_screen.dart
+import 'package:animations/animations.dart';
 import 'package:archivereader/screens/archive_item_screen.dart';
 import 'package:archivereader/services/favourites_service.dart';
 import 'package:archivereader/services/recent_progress_service.dart';
@@ -12,7 +13,6 @@ import '../archive_api.dart';
 import '../media/media_player_ops.dart';
 import '../utils/archive_helpers.dart';
 import '../widgets/video_chooser.dart';
-import 'collection_detail_screen.dart';
 
 class FavoritesScreen extends StatelessWidget {
   final String? initialFolder;
@@ -176,6 +176,25 @@ class _GridBodyState extends State<_GridBody>
         .toList(growable: false);
   }
 
+  Route<T> _sharedAxisRoute<T>(
+    Widget page, {
+    SharedAxisTransitionType type = SharedAxisTransitionType.scaled,
+  }) {
+    return PageRouteBuilder<T>(
+      transitionDuration: const Duration(milliseconds: 300),
+      reverseTransitionDuration: const Duration(milliseconds: 250),
+      pageBuilder: (_, __, ___) => page,
+      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        return SharedAxisTransition(
+          animation: animation,
+          secondaryAnimation: secondaryAnimation,
+          transitionType: type,
+          child: child,
+        );
+      },
+    );
+  }
+
   Future<void> _handleTap(FavoriteItem fav) async {
     final id = _sanitizeArchiveId(fav.id);
     final title = fav.title.trim().isNotEmpty ? fav.title.trim() : id;
@@ -211,13 +230,31 @@ class _GridBodyState extends State<_GridBody>
     // 0) COLLECTION PATH
     // ────────────────────────────────────────────────
     if (isCollection) {
+      // Fetch files once and go straight to ArchiveItemScreen
+      final files = await ArchiveApi.fetchFilesForIdentifier(id);
+      final fileMaps =
+          files
+              .where((f) => (f['name'] as String?)?.trim().isNotEmpty == true)
+              .map<Map<String, String>>(
+                (f) => {'name': (f['name'] as String).trim()},
+              )
+              .toList();
+
+      await RecentProgressService.instance.touch(
+        id: id,
+        title: title,
+        thumb: thumb,
+        kind: 'audio',
+      );
+
       await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder:
-              (_) => CollectionDetailScreen(
-                categoryName: title,
-                customQuery: 'collection:$id',
-              ),
+        _sharedAxisRoute(
+          ArchiveItemScreen(
+            title: title,
+            identifier: id,
+            files: fileMaps,
+            parentThumbUrl: thumb,
+          ),
         ),
       );
       return;

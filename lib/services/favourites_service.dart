@@ -419,12 +419,11 @@ class FavoritesService {
     for (final folder in data.keys) {
       final list = data[folder]!;
       for (int i = 0; i < list.length; i++) {
-        final item = list[i];
+        var item = list[i];
         final cleanId = sanitizeArchiveId(item.id);
-        var current = item;
 
         if (cleanId != item.id) {
-          current = FavoriteItem(
+          item = FavoriteItem(
             id: cleanId,
             title: item.title,
             url: item.url,
@@ -434,20 +433,40 @@ class FavoritesService {
             formats: item.formats,
             files: item.files,
           );
-          list[i] = current;
+          list[i] = item;
           changed = true;
         }
 
+        String mt = (item.mediatype ?? '').toLowerCase();
+
+        if (mt.isEmpty) {
+          try {
+            final meta = await ArchiveApi.getMetadata(cleanId);
+            final raw = Map<String, dynamic>.from(meta['metadata'] ?? {});
+            final resolved =
+                (raw['mediatype'] ?? '').toString().trim().toLowerCase();
+            if (resolved.isNotEmpty) {
+              list[i] = list[i].copyWith(mediatype: resolved);
+              changed = true;
+              mt = resolved;
+            }
+          } catch (e) {
+            debugPrint('Failed to resolve mt for $cleanId: $e');
+          }
+        }
+
         // Skip fetching for collections/unknown; keep behavior aligned with addFavoriteWithFiles.
-        final mt = (current.mediatype ?? '').toLowerCase();
         final isCollection = mt == 'collection';
         final isUnknown = mt.isEmpty || mt == 'unknown';
 
-        if (current.files == null && !isCollection && !isUnknown) {
+        if (item.files == null && !isCollection && !isUnknown) {
           try {
             var files = await ArchiveApi.fetchFilesForIdentifier(cleanId);
-            files = _normalizeFiles(files, identifier: cleanId);
-            list[i] = current.copyWith(files: files);
+            files = _normalizeFiles(
+              files.map((e) => Map<String, String>.from(e)).toList(),
+              identifier: cleanId,
+            );
+            list[i] = item.copyWith(files: files);
             changed = true;
             debugPrint('Migrated files for $cleanId');
           } catch (e) {

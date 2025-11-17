@@ -2,6 +2,8 @@
 import 'package:archivereader/ui/shell/root_shell.dart';
 import 'package:flutter/material.dart';
 
+import 'marquee_text.dart';
+
 class ArchivistAppBar extends StatefulWidget implements PreferredSizeWidget {
   const ArchivistAppBar({super.key});
 
@@ -73,17 +75,26 @@ class ArchivistAppBarState extends State<ArchivistAppBar> {
           // ---- PAGE TITLE (right) ----
           if (_pageDesc.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(
-                right: 28,
-              ), // Increased from 16 → 28
-              child: Text(
-                _pageDesc,
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w900,
-                  color: isDark ? Colors.white70 : Colors.black87,
-                ),
-              ),
+              padding: const EdgeInsets.only(right: 28),
+              child:
+                  _pageDesc.length >
+                          20 // Optional: only enable marquee for very long titles
+                      ? MarqueeText(
+                        text: _pageDesc,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          color: isDark ? Colors.white70 : Colors.black87,
+                        ),
+                      )
+                      : Text(
+                        _pageDesc,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          color: isDark ? Colors.white70 : Colors.black87,
+                        ),
+                      ),
             ),
         ],
       ),

@@ -101,5 +101,12 @@
 	<array>
 		<string>audio</string>
 	</array>
+
+	<key>NSAppleMusicUsageDescription</key>
+    <string>Archivereader plays archived audio and shows controls on the lock screen.</string>
+
+	<!-- Add inside <dict> after UIBackgroundModes -->
+    <key>NSAppleMusicUsageDescription</key>
+    <string>Archivereader plays archived audio and shows controls on the lock screen.</string>
 </dict>
 </plist>

@@ -186,6 +186,10 @@ class RecentProgressService {
     int? positionMs,
     int? durationMs,
     double? percent,
+    List<String>? queueUrls,
+    Map<String, String>? queueTitles,
+    Map<String, String>? queueThumbnails,
+    String? currentTrackUrl,
   }) async {
     final box = await _ensureBox();
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -206,6 +210,12 @@ class RecentProgressService {
       if (durationMs != null) 'durationMs': durationMs,
       'lastOpenedAt': now,
       'lastListenedAt': now,
+      if (queueUrls != null) 'queueUrls': queueUrls,
+      if (queueTitles != null)
+        'queueTitles': Map<String, dynamic>.from(queueTitles),
+      if (queueThumbnails != null)
+        'queueThumbnails': Map<String, dynamic>.from(queueThumbnails),
+      if (currentTrackUrl != null) 'currentTrackUrl': currentTrackUrl,
     });
     _notify();
     _triggerImmediatePush();
@@ -221,6 +231,11 @@ class RecentProgressService {
     int? positionMs,
     int? durationMs,
     double? percent,
+    // For audio queue
+    List<String>? queueUrls,
+    Map<String, String>? queueTitles,
+    Map<String, String>? queueThumbnails,
+    String? currentTrackUrl,
   }) async {
     if (kind == 'video') {
       await updateVideo(
@@ -243,6 +258,10 @@ class RecentProgressService {
         positionMs: positionMs,
         durationMs: durationMs,
         percent: percent,
+        queueUrls: queueUrls,
+        queueTitles: queueTitles,
+        queueThumbnails: queueThumbnails,
+        currentTrackUrl: currentTrackUrl,
       );
     } else {
       await touch(

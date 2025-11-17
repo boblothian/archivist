@@ -7,7 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
-import '../net.dart'; // for Net.headers
+import '../net.dart';
+import '../widgets/marquee_text.dart'; // for Net.headers
 
 class ArchiveAudioPlayerScreen extends StatefulWidget {
   /// Single URL (used when there is no queue)
@@ -198,17 +199,25 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
       onWillPop: _handlePopWithProgress,
       child: Scaffold(
         appBar: AppBar(
+          // This makes the title scroll when it's too long
           title: StreamBuilder<SequenceState?>(
             stream: _player.sequenceStateStream,
             builder: (context, snapshot) {
               final state = snapshot.data;
               final index = state?.currentIndex ?? _startIndex;
               final currentUrl = _urls[index.clamp(0, _urls.length - 1)];
-              final title =
+              final rawTitle =
                   _titles[currentUrl] ??
                   widget.title ??
                   Uri.parse(currentUrl).pathSegments.last;
-              return Text(title);
+
+              // Use the exact same MarqueeText you already created!
+              return MarqueeText(
+                text: rawTitle,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+              );
             },
           ),
           leading: IconButton(

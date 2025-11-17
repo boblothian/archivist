@@ -1,6 +1,7 @@
 // lib/screens/audio_player_screen.dart
 import 'dart:async';
 
+import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
@@ -109,17 +110,45 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
 
-    // Build source (single or playlist)
+    // Build source (single or playlist) WITH MediaItem tags for lock-screen
     if (_urls.length == 1) {
+      final u = _urls.first;
+      final title =
+          _titles[u] ?? widget.title ?? Uri.parse(u).pathSegments.last;
+      final art = _thumbs[u];
+
       await _player.setAudioSource(
-        AudioSource.uri(Uri.parse(_urls.first), headers: Net.headers),
+        AudioSource.uri(
+          Uri.parse(u),
+          headers: Net.headers,
+          tag: MediaItem(
+            id: u,
+            title: title,
+            artUri: (art != null && art.isNotEmpty) ? Uri.parse(art) : null,
+          ),
+        ),
         preload: true,
       );
     } else {
-      final sources =
-          _urls
-              .map((u) => AudioSource.uri(Uri.parse(u), headers: Net.headers))
-              .toList();
+      final sources = <AudioSource>[];
+      for (final u in _urls) {
+        final title =
+            _titles[u] ?? widget.title ?? Uri.parse(u).pathSegments.last;
+        final art = _thumbs[u];
+
+        sources.add(
+          AudioSource.uri(
+            Uri.parse(u),
+            headers: Net.headers,
+            tag: MediaItem(
+              id: u,
+              title: title,
+              artUri: (art != null && art.isNotEmpty) ? Uri.parse(art) : null,
+            ),
+          ),
+        );
+      }
+
       final playlist = ConcatenatingAudioSource(children: sources);
       await _player.setAudioSource(
         playlist,

@@ -332,8 +332,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (_videoController != null && _videoController!.value.isInitialized) {
       final size = _videoController!.value.size;
       if (size.width > 0 && size.height > 0) {
-        resolution =
-            '${size.width.toInt()}x${size.height.toInt()}'; // e.g. 1920x1080
+        resolution = '${size.width.toInt()}x${size.height.toInt()}';
       }
       final d = _videoController!.value.duration;
       if (d.inMilliseconds > 0) {
@@ -482,6 +481,48 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     await _initializePlayerForCurrent();
   }
 
+  // ───────────────────── Back/Pop handling (with iOS AirPlay warning) ─────────────────────
+  Future<bool> _onWillPop() async {
+    // On iOS, warn that leaving will stop playback (including any AirPlay).
+    if (Platform.isIOS) {
+      final isPlaying = _videoController?.value.isPlaying ?? false;
+
+      if (isPlaying) {
+        final shouldLeave =
+            await showDialog<bool>(
+              context: context,
+              builder: (ctx) {
+                return AlertDialog(
+                  title: const Text('Stop playback?'),
+                  content: const Text(
+                    'Leaving this screen will stop the video playback '
+                    '(including AirPlay on your TV, if active).',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      child: const Text('Stop & Go Back'),
+                    ),
+                  ],
+                );
+              },
+            ) ??
+            false;
+
+        if (!shouldLeave) {
+          return false; // stay on player
+        }
+      }
+    }
+
+    // Normal pop behaviour (sends PlaybackResult back)
+    return _handlePopWithProgress();
+  }
+
   // ───────────────────── UI ─────────────────────
   @override
   Widget build(BuildContext context) {
@@ -499,13 +540,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     final bool hasQueue = _urls.length > 1;
 
     return WillPopScope(
-      onWillPop: _handlePopWithProgress,
+      onWillPop: _onWillPop,
       child: Scaffold(
         appBar: AppBar(
           title: Text(_currentTitle),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () => _handlePopWithProgress(),
+            onPressed: () => _onWillPop(),
           ),
           actions: [
             if (hasQueue)

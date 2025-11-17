@@ -41,6 +41,11 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   int _totalPages = 0;
   int _defaultPage = 0;
 
+  PDFViewController? _pdfController;
+
+  bool _isScrubbing = false;
+  double _scrubPage = 0;
+
   String get _progressId => widget.identifier;
 
   /// Unique resume key per *identifier + file*, so different PDFs don’t clash.
@@ -111,6 +116,8 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       // Use the *per-file* resume key. Defaults to 0 (page index 0 == page 1).
       final saved = prefs.getInt(_resumeKey) ?? 0;
       _defaultPage = saved;
+      _currentPage = saved;
+      _scrubPage = saved.toDouble();
 
       ifMounted(this, () => setState(() => _loading = false));
     } catch (e) {
@@ -158,6 +165,79 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
             )
           else
             const SizedBox(width: 48),
+        ],
+      ),
+    );
+  }
+
+  // Bottom scrubber: press & drag to navigate pages quickly
+  Widget _buildBottomScrubber() {
+    if (_totalPages <= 1) return const SizedBox.shrink();
+
+    final min = 0.0;
+    final max = (_totalPages - 1).toDouble();
+    final value = _scrubPage.clamp(min, max);
+
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [Colors.black54, Colors.transparent],
+        ),
+      ),
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        bottom: MediaQuery.of(context).padding.bottom + 12,
+        top: 12,
+      ),
+      child: Row(
+        children: [
+          Text(
+            '${value.round() + 1}',
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 2,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+              ),
+              child: Slider(
+                value: value,
+                min: min,
+                max: max > min ? max : min + 1,
+                onChangeStart: (_) {
+                  setState(() => _isScrubbing = true);
+                },
+                onChanged: (v) {
+                  setState(() => _scrubPage = v);
+                },
+                onChangeEnd: (v) async {
+                  if (_totalPages <= 0) return;
+                  final targetPage = v.round().clamp(
+                    0,
+                    _totalPages - 1,
+                  ); // 0-based
+                  setState(() {
+                    _isScrubbing = false;
+                    _scrubPage = targetPage.toDouble();
+                  });
+                  if (_pdfController != null) {
+                    await _pdfController!.setPage(targetPage);
+                  }
+                },
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '$_totalPages',
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
         ],
       ),
     );
@@ -247,9 +327,21 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         pageFling: true,
         pageSnap: true,
         autoSpacing: true,
+        onViewCreated: (controller) {
+          _pdfController = controller;
+          // Extra safety: ensure we land on the resumed page.
+          if (_defaultPage > 0) {
+            controller.setPage(_defaultPage);
+          }
+        },
         onRender: (pages) {
           if (pages == null || pages == 0) return;
-          setState(() => _totalPages = pages);
+          setState(() {
+            _totalPages = pages;
+            // Ensure current/scrub are within range
+            _currentPage = _defaultPage.clamp(0, pages - 1);
+            _scrubPage = _currentPage.toDouble();
+          });
 
           RecentProgressService.instance.touch(
             id: _progressId,
@@ -276,6 +368,9 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
             setState(() {
               _currentPage = page;
               _totalPages = total;
+              if (!_isScrubbing) {
+                _scrubPage = page.toDouble();
+              }
             });
             _saveResume(page);
 
@@ -286,7 +381,9 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
               page: page + 1,
               total: total,
               fileUrl: widget.url ?? _localFile?.path,
-              fileName: widget.filenameHint ?? _localFile?.path.split('/').last,
+              fileName:
+                  widget.filenameHint ??
+                  _localFile?.path.split(Platform.pathSeparator).last,
             );
           }
         },
@@ -300,6 +397,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         fit: StackFit.expand,
         children: [
           viewer,
+          // Top gradient bar with back + page indicator
           Positioned(
             top: 0,
             left: 0,
@@ -322,6 +420,13 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                 child: _buildTopBar(),
               ),
             ),
+          ),
+          // Bottom scrubber for quick navigation
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _buildBottomScrubber(),
           ),
         ],
       );

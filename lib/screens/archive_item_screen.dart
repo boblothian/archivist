@@ -278,41 +278,30 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
 
     // 2) Fallback: build a queue from on-screen audio files if needed
     if (q == null) {
-      final audioFiles =
-          widget.files
-              .map((f) => f['name'])
-              .whereType<String>()
-              .where((n) => isAudioFile(p.extension(n).toLowerCase()))
-              .toList();
+      // Preserve the order of widget.files (no sorting here)
+      final entries = <({String name, String url})>[];
 
-      final urls =
-          audioFiles
-              .map(
-                (n) =>
-                    'https://archive.org/download/${widget.identifier}/${Uri.encodeComponent(n)}',
-              )
-              .toList();
+      for (final f in widget.files) {
+        final name = f['name'];
+        if (name == null) continue;
+        final ext = p.extension(name).toLowerCase();
+        if (!isAudioFile(ext)) continue;
 
-      // Sort naturally (same as grid)
-      audioFiles.sort((a, b) => _naturalCompare(a, b));
-      urls.sort(
-        (a, b) => _naturalCompare(
-          Uri.parse(a).pathSegments.last,
-          Uri.parse(b).pathSegments.last,
-        ),
-      );
+        final url =
+            'https://archive.org/download/${widget.identifier}/${Uri.encodeComponent(name)}';
+
+        entries.add((name: name, url: url));
+      }
 
       final items =
-          urls
+          entries
               .map(
-                (u) => Playable(
-                  url: u,
-                  title: _prettifyFilename(Uri.parse(u).pathSegments.last),
-                ),
+                (e) => Playable(url: e.url, title: _prettifyFilename(e.name)),
               )
               .toList();
 
       final start = items.indexWhere((p) => p.url == fileUrl);
+
       q = MediaQueue(
         items: items,
         type: MediaType.audio,
@@ -320,10 +309,30 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
       );
     }
 
+    // 🔽 Ensure the queue will start at the file the user tapped
+    if (q != null) {
+      int startIndex = q.startIndex;
+
+      // Re-check using the exact URL, just in case
+      try {
+        final idx = q.items.indexWhere((p) => (p.url) == fileUrl);
+        if (idx >= 0) {
+          startIndex = idx;
+        }
+      } catch (_) {
+        // ignore; keep previous startIndex
+      }
+
+      // Rebuild q because MediaQueue fields are final
+      q = MediaQueue(items: q.items, type: q.type, startIndex: startIndex);
+    }
+
     // 3) Launch the queue-enabled audio player
+    final MediaQueue finalQueue = q!;
+
     await MediaPlayerOps.playAudioQueue(
       context,
-      queue: q,
+      queue: finalQueue,
       identifier: widget.identifier,
       title: widget.title,
       startPositionMs: 0,
@@ -509,16 +518,6 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
         audioFiles.add(file);
       }
     }
-
-    // Sort each
-    pdfFiles.sort((a, b) => _naturalCompare(a['name'] ?? '', b['name'] ?? ''));
-    imageFiles.sort(
-      (a, b) => _naturalCompare(a['name'] ?? '', b['name'] ?? ''),
-    );
-    textFiles.sort((a, b) => _naturalCompare(a['name'] ?? '', b['name'] ?? ''));
-    audioFiles.sort(
-      (a, b) => _naturalCompare(a['name'] ?? '', b['name'] ?? ''),
-    );
 
     final displayFiles = [
       ...imageFiles,

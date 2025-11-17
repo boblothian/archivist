@@ -107,6 +107,9 @@ class FavoritesService {
 
   Box<dynamic>? _box;
 
+  /// Returns `true` once the Hive box has been opened.
+  bool get isReady => _box != null && _box!.isOpen;
+
   List<Map<String, String>> _normalizeFiles(
     List<Map<String, String>> files, {
     String? identifier,
@@ -148,6 +151,7 @@ class FavoritesService {
     return b;
   }
 
+  /// Call this once during app startup and `await` it before using the service.
   late final Future<void> ready = _init();
   Future<void> init() => ready;
 

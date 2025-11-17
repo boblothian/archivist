@@ -49,8 +49,13 @@ class ArchiveMediaInfo {
       final name = f['name'] as String? ?? '';
       if (name.isEmpty) continue;
       final lower = name.toLowerCase();
-      final url = 'https://archive.org/download/$id/$name';
+
+      // IMPORTANT: encode the file name so URLs match everywhere
+      final encodedName = Uri.encodeComponent(name);
+      final url = 'https://archive.org/download/$id/$encodedName';
+
       names[url] = name;
+
       if (lower.endsWith('.mp3') ||
           lower.endsWith('.ogg') ||
           lower.endsWith('.flac') ||
@@ -154,35 +159,37 @@ class MediaService {
   // ---------- HELPERS ----------
 
   List<Playable> _buildPlayableList(ArchiveMediaInfo info, MediaType type) {
+    // KEEP ARCHIVE.ORG ORDER – no custom sorting
     final urls = (type == MediaType.video) ? info.videoUrls : info.audioUrls;
-
-    final sorted = [...urls]..sort((a, b) {
-      final A =
-          Uri.parse(a).pathSegments.isNotEmpty
-              ? Uri.parse(a).pathSegments.last.toLowerCase()
-              : a.toLowerCase();
-      final B =
-          Uri.parse(b).pathSegments.isNotEmpty
-              ? Uri.parse(b).pathSegments.last.toLowerCase()
-              : b.toLowerCase();
-      return A.compareTo(B);
-    });
 
     String pretty(String u) {
       final mapped = info.displayNames[u];
       if (mapped != null && mapped.trim().isNotEmpty) return mapped;
+
       final segs = Uri.parse(u).pathSegments;
-      return segs.isNotEmpty ? segs.last : u;
+      if (segs.isEmpty) return u;
+      final last = segs.last;
+
+      // Try to decode %xx sequences for nicer display
+      try {
+        return Uri.decodeComponent(last);
+      } catch (_) {
+        return last;
+      }
     }
 
-    return sorted.map((u) => Playable(url: u, title: pretty(u))).toList();
+    return urls.map((u) => Playable(url: u, title: pretty(u))).toList();
   }
 
   int _startIndex(List<Playable> items, String? startUrl) {
     if (startUrl == null) return 0;
 
-    final startName = Uri.parse(startUrl).pathSegments.last.toLowerCase();
+    // Exact URL match first (encoded/decoded should now align)
+    final exactIdx = items.indexWhere((p) => p.url == startUrl);
+    if (exactIdx >= 0) return exactIdx;
 
+    // Fallback: compare last path segment
+    final startName = Uri.parse(startUrl).pathSegments.last.toLowerCase();
     final i = items.indexWhere((p) {
       final name = Uri.parse(p.url).pathSegments.last.toLowerCase();
       return name == startName;

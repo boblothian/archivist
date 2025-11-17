@@ -112,6 +112,8 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   bool _showScrollTop = false;
   bool _isDisposed = false;
 
+  final Set<String> _openingIds = <String>{};
+
   // WHY: Used to cache files with correct formats when saving favourites.
   String _inferFormatFrom(String name, String? fmt) {
     final f = (fmt ?? '').trim();
@@ -698,14 +700,28 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
   Future<void> _openItem(Map<String, String> item) async {
     if (_isDisposed) return;
-    final id = item['identifier']!;
+
+    final id = item['identifier'] ?? '';
+    if (id.isEmpty) return;
+
+    // If already loading, ignore duplicate taps
+    if (_openingIds.contains(id)) return;
+
     HapticFeedback.selectionClick();
     _dismissKeyboard();
+
+    // Mark as loading
+    if (mounted && !_isDisposed) {
+      setState(() {
+        _openingIds.add(id);
+      });
+    }
 
     try {
       final resp = await _client
           .get(Uri.parse('https://archive.org/metadata/$id'), headers: _HEADERS)
           .timeout(_netTimeout);
+
       if (!mounted || _isDisposed) return;
 
       if (resp.statusCode != 200) {
@@ -720,18 +736,21 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       final m = jsonDecode(resp.body) as Map<String, dynamic>;
       final mediatype = m['metadata']?['mediatype']?.toString().toLowerCase();
 
+      // ───────── COLLECTION ─────────
       if (mediatype == 'collection') {
         await _openCollectionSmart(id, item['title'] ?? id);
         return;
       }
 
+      // ───────── TEXTS ─────────
       if (mediatype == 'texts') {
         final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
 
         final pdfFiles = <Map<String, dynamic>>[];
         final imgFiles = <Map<String, dynamic>>[];
         final txtFiles = <Map<String, dynamic>>[];
-        final epubFiles = <Map<String, dynamic>>[];
+        final epubFiles =
+            <Map<String, dynamic>>[]; // currently unused, kept for future
 
         for (final f in rawFiles) {
           if (f is! Map) continue;
@@ -953,6 +972,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         return;
       }
 
+      // ───────── AUDIO ─────────
       if (mediatype == 'audio') {
         final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
         final audioFiles = <Map<String, dynamic>>[];
@@ -1014,8 +1034,10 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         }
       }
 
+      // ───────── VIDEO / OTHER ─────────
       final rawFiles = (m['files'] as List?) ?? const <dynamic>[];
       final videoFiles = <Map<String, dynamic>>[];
+
       for (final f in rawFiles) {
         if (f is! Map) continue;
         final name = (f['name'] ?? '').toString();
@@ -1092,6 +1114,13 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Failed to open item (network).')),
       );
+    } finally {
+      // Always clear loading state
+      if (mounted && !_isDisposed) {
+        setState(() {
+          _openingIds.remove(id);
+        });
+      }
     }
   }
 

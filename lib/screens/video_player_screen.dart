@@ -11,6 +11,7 @@ import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../net.dart';
+import '../services/recent_progress_service.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
   final File? file;
@@ -639,9 +640,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     _popped = true;
     if (!mounted) return false;
 
+    // Save to recent progress from inside the player
+    await _saveProgress();
+
+    // Still return the result map for existing caller code
     Navigator.of(
       context,
     ).pop(<String, int>{'positionMs': _lastPosMs, 'durationMs': _lastDurMs});
+
     return false; // handled
   }
 
@@ -818,6 +824,39 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         );
       },
     );
+  }
+
+  Future<void> _saveProgress() async {
+    // Refresh from controller in case last tick hasn’t fired yet
+    if (_videoController != null && _videoController!.value.isInitialized) {
+      _lastPosMs = _videoController!.value.position.inMilliseconds;
+      _lastDurMs = _videoController!.value.duration.inMilliseconds;
+    }
+
+    // Build fileUrl / fileName based on current source
+    final String fileUrl =
+        widget.file != null ? 'file://${widget.file!.path}' : _currentUrl;
+
+    final String fileName =
+        widget.file != null
+            ? widget.file!.path.split(Platform.pathSeparator).last
+            : (Uri.tryParse(_currentUrl)?.pathSegments.isNotEmpty ?? false)
+            ? Uri.parse(_currentUrl).pathSegments.last
+            : widget.title;
+
+    try {
+      await RecentProgressService.instance.updateVideo(
+        id: widget.identifier,
+        title: _currentTitle,
+        thumb: null, // or pass a thumb via widget if you want
+        fileUrl: fileUrl,
+        fileName: fileName,
+        positionMs: _lastPosMs,
+        durationMs: _lastDurMs,
+      );
+    } catch (e) {
+      debugPrint('VideoPlayerScreen: failed to save progress: $e');
+    }
   }
 
   String _guessMime(String url) {

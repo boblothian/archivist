@@ -381,7 +381,9 @@ class _GridBodyState extends State<_GridBody>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
+                    // 🔽 FIXED-SIZE THUMBNAIL (no Expanded)
+                    AspectRatio(
+                      aspectRatio: 3 / 4, // 3:4 cover art
                       child: Stack(
                         children: [
                           Positioned.fill(
@@ -457,12 +459,18 @@ class _GridBodyState extends State<_GridBody>
                         ],
                       ),
                     ),
+
                     const SizedBox(height: 8),
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall,
+
+                    // 🔽 FIXED HEIGHT FOR UP TO ~2 LINES
+                    SizedBox(
+                      height: 40, // tweak if you change font size
+                      child: Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
                     ),
                   ],
                 ),

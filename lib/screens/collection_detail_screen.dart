@@ -21,6 +21,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../archive_api.dart'; // fetch files when adding to favourites
 import '../net.dart';
+import '../services/discogs_service.dart';
 import '../utils/archive_helpers.dart';
 import '../widgets/video_chooser.dart'; // shared video chooser
 import 'archive_item_screen.dart';
@@ -436,8 +437,10 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     final messenger = ScaffoldMessenger.maybeOf(context);
     final id = item['identifier']!;
     final title = (item['title'] ?? id).trim().isNotEmpty ? item['title']! : id;
-    final mediatype = item['mediatype'] ?? '';
+    final mediatypeRaw = item['mediatype'] ?? '';
+    final mediatype = mediatypeRaw.toLowerCase();
     final year = item['year'] ?? '';
+    final creator = (item['creator'] ?? '').trim();
     final safeThumb =
         (item['thumb']?.trim().isNotEmpty == true)
             ? item['thumb']!.trim()
@@ -522,6 +525,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               }
             }
 
+            // TMDb poster (video) ------------------------------------------
             Future<void> searchAndPickPoster() async {
               if (dialogClosing) return;
               final query = titleCtrl.text.trim();
@@ -580,6 +584,96 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               }
             }
 
+            // Discogs cover (audio) ----------------------------------------
+            Future<void> searchDiscogsCover() async {
+              if (dialogClosing) return;
+              final albumTitle = titleCtrl.text.trim();
+              if (albumTitle.isEmpty) {
+                messenger?.showSnackBar(
+                  const SnackBar(
+                    content: Text('Please enter an album title'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+
+              setDialogState(() => isSearching = true);
+              try {
+                final chosen = await DiscogsService.instance.chooseAlbumArtRich(
+                  context: context,
+                  albumTitle: albumTitle,
+                  artist: creator.isNotEmpty ? creator : null,
+                  year: year.isNotEmpty ? year : null,
+                );
+                if (chosen == null) return;
+
+                await FavoritesService.instance.updateThumbForId(id, chosen);
+
+                final idx = _items.indexWhere((i) => i['identifier'] == id);
+                if (idx != -1 && mounted && !_isDisposed) {
+                  setState(() => _items[idx]['thumb'] = chosen);
+                }
+                await ThumbOverrideService.instance.set(id, chosen);
+
+                messenger?.showSnackBar(
+                  const SnackBar(
+                    content: Text('Discogs cover set!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                messenger?.showSnackBar(
+                  SnackBar(
+                    content: Text('Discogs search failed: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              } finally {
+                if (!dialogClosing && dialogCtx.mounted) {
+                  setDialogState(() => isSearching = false);
+                }
+              }
+            }
+
+            // Discogs album ordering (audio) -------------------------------
+            Future<void> orderAlbumTracks() async {
+              if (dialogClosing) return;
+
+              setDialogState(() => isSearching = true);
+              try {
+                await DiscogsService.instance.saveAlbumOrderForItem(
+                  identifier: id,
+                  albumTitle:
+                      titleCtrl.text.trim().isNotEmpty
+                          ? titleCtrl.text.trim()
+                          : title,
+                  artist: creator,
+                  year: year.isNotEmpty ? year : null,
+                );
+
+                messenger?.showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Album order saved. Tracks will follow Discogs order where possible.',
+                    ),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                messenger?.showSnackBar(
+                  SnackBar(
+                    content: Text('Could not save album order: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              } finally {
+                if (!dialogClosing && dialogCtx.mounted) {
+                  setDialogState(() => isSearching = false);
+                }
+              }
+            }
+
             return AlertDialog(
               title: const Text('Options'),
               content: SingleChildScrollView(
@@ -606,7 +700,9 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                       ),
                     ),
                     const Divider(height: 16),
-                    if (mediatype.toLowerCase().contains('video') ||
+
+                    // VIDEO: TMDb poster
+                    if (mediatype.contains('video') ||
                         mediatype == 'movies') ...[
                       const Text(
                         'Generate Thumbnail from TMDb',
@@ -644,6 +740,53 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                         ),
+                    ]
+                    // AUDIO: Discogs album tools
+                    else if (mediatype.contains('audio')) ...[
+                      const Text(
+                        'Discogs (album art & order)',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: titleCtrl,
+                        decoration: const InputDecoration(
+                          hintText: 'Album title (you can adjust it)',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      if (creator.isNotEmpty || year.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            [
+                              if (creator.isNotEmpty) 'Artist: $creator',
+                              if (year.isNotEmpty) 'Year: $year',
+                            ].join(' • '),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              icon: const Icon(Icons.image),
+                              label: const Text('Discogs cover'),
+                              onPressed:
+                                  isSearching ? null : searchDiscogsCover,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.queue_music),
+                              label: const Text('Order album'),
+                              onPressed: isSearching ? null : orderAlbumTracks,
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ],
                 ),
@@ -660,7 +803,11 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
       },
     );
 
-    titleCtrl.dispose();
+    // IMPORTANT: Do NOT dispose titleCtrl here – the dialog/overlay may
+    // still be in the middle of teardown and will try to access it again,
+    // which caused the "used after being disposed" crash.
+    // titleCtrl.dispose();  <-- leave this commented out / removed
+
     if (!mounted || _isDisposed) return;
 
     if (result == DialogResult.addToFolder) {
@@ -1004,6 +1151,12 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         }
 
         if (audioFiles.isNotEmpty) {
+          // 🔽 NEW: let DiscogsService reorder tracks if you implement it later
+          await DiscogsService.instance.sortAudioFilesForItem(
+            identifier: id,
+            files: audioFiles,
+          );
+
           final audioList =
               audioFiles
                   .map<Map<String, String>>(

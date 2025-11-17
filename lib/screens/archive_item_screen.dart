@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../archive_api.dart';
 import '../media/media_player_ops.dart'; // in-app media players
 import '../net.dart';
+import '../services/discogs_service.dart';
 import '../services/favourites_service.dart';
 // 🔽 NEW: central queue support
 import '../services/media_service.dart'; // MediaService, MediaType, Playable, MediaQueue
@@ -259,7 +260,6 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
     }
   }
 
-  // 🔽 NEW: centralised audio queue playback (with fallback if not primed)
   Future<void> _playAudioViaQueue(
     String fileName,
     String fileUrl,
@@ -278,10 +278,22 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
 
     // 2) Fallback: build a queue from on-screen audio files if needed
     if (q == null) {
-      // Preserve the order of widget.files (no sorting here)
+      // Preserve the order of widget.files initially
+      var files = widget.files;
+
+      // 🔽 NEW: if we have a saved Discogs order, apply it
+      try {
+        files = await DiscogsService.instance.applySavedOrderToFiles(
+          identifier: widget.identifier,
+          files: files,
+        );
+      } catch (_) {
+        // ignore; just keep original order on failure
+      }
+
       final entries = <({String name, String url})>[];
 
-      for (final f in widget.files) {
+      for (final f in files) {
         final name = f['name'];
         if (name == null) continue;
         final ext = p.extension(name).toLowerCase();
@@ -443,29 +455,6 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
   }
 
   // Utilities ----------------------------------------------------------------
-  int _naturalCompare(String a, String b) {
-    final regex = RegExp(r'(\d+)|(\D+)');
-    final aMatches = regex.allMatches(a);
-    final bMatches = regex.allMatches(b);
-    final aParts = aMatches.map((m) => m.group(0)!).toList();
-    final bParts = bMatches.map((m) => m.group(0)!).toList();
-    final len = aParts.length < bParts.length ? aParts.length : bParts.length;
-
-    for (int i = 0; i < len; i++) {
-      final aPart = aParts[i];
-      final bPart = bParts[i];
-      final aNum = int.tryParse(aPart);
-      final bNum = int.tryParse(bPart);
-      if (aNum != null && bNum != null) {
-        if (aNum != bNum) return aNum.compareTo(bNum);
-      } else {
-        final cmp = aPart.compareTo(bPart);
-        if (cmp != 0) return cmp;
-      }
-    }
-    return aParts.length.compareTo(bParts.length);
-  }
-
   String _prettifyFilename(String name) {
     final ext = p.extension(name);
     name = name.replaceAll(ext, '');
@@ -622,8 +611,11 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
               InkWell(
                 onTap: () => _openFile(fileName, fileUrl, thumbUrl),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(
+                    // 🔽 FIXED-SIZE THUMBNAIL
+                    AspectRatio(
+                      aspectRatio: 3 / 4, // 3:4 cover art
                       child: Container(
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(12),
@@ -641,20 +633,19 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
                             children: [
                               Positioned.fill(
                                 child: () {
-                                  // treat audio like image for preview if we have a thumb
                                   if (isPdf || isImage || isAudio) {
                                     return CachedNetworkImage(
                                       httpHeaders: Net.headers,
                                       imageUrl: thumbUrl,
                                       fit: BoxFit.cover,
                                       placeholder:
-                                          (_, _) => const Center(
+                                          (_, __) => const Center(
                                             child: CircularProgressIndicator(
                                               strokeWidth: 1,
                                             ),
                                           ),
                                       errorWidget:
-                                          (_, _, _) => Container(
+                                          (_, __, ___) => Container(
                                             color: Colors.grey[300],
                                             alignment: Alignment.center,
                                             child: Icon(
@@ -679,13 +670,12 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
                                   return const SizedBox();
                                 }(),
                               ),
-                              if (_downloadProgress[fileName] != null)
+                              if (_downloadProgress[fileName] != null) ...[
                                 Positioned.fill(
                                   child: Container(
                                     color: Colors.black.withOpacity(0.4),
                                   ),
                                 ),
-                              if (_downloadProgress[fileName] != null)
                                 Positioned(
                                   left: 0,
                                   right: 0,
@@ -701,7 +691,6 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
                                     ),
                                   ),
                                 ),
-                              if (_downloadProgress[fileName] != null)
                                 Positioned.fill(
                                   child: Center(
                                     child: Text(
@@ -714,19 +703,27 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
                                     ),
                                   ),
                                 ),
+                              ],
                             ],
                           ),
                         ),
                       ),
                     ),
+
                     const SizedBox(height: 4),
-                    Text(
-                      _prettifyFilename(fileName),
-                      textAlign: TextAlign.center,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12),
+
+                    // 🔽 FIXED HEIGHT FOR UP TO ~2 LINES
+                    SizedBox(
+                      height: 32, // tweak if font size changes
+                      child: Text(
+                        _prettifyFilename(fileName),
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12),
+                      ),
                     ),
+
                     if (isAudio)
                       const Padding(
                         padding: EdgeInsets.only(top: 2),

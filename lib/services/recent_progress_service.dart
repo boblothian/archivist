@@ -306,26 +306,28 @@ class RecentProgressService {
     final box = _box;
     if (box == null || box.isEmpty) return [];
 
-    return box.values
-        .whereType<Map>()
-        .map((v) => Map<String, dynamic>.from(v))
-        .where((map) {
-          final id = map['id'];
-          final title = map['title'];
-          final lastOpenedAt = map['lastOpenedAt'];
-          final kind = map['kind'] as String?;
-          return id is String &&
-              title is String &&
-              lastOpenedAt is int &&
-              kind is String &&
-              _isValidKind(kind);
-        })
-        .toList()
-      ..sort(
-        (a, b) =>
-            (b['lastOpenedAt'] as int).compareTo(a['lastOpenedAt'] as int),
-      )
-      ..take(limit);
+    final list =
+        box.values
+            .whereType<Map>()
+            .map((v) => Map<String, dynamic>.from(v))
+            .where((map) {
+              final id = map['id'];
+              final title = map['title'];
+              final lastOpenedAt = map['lastOpenedAt'];
+              final kind = map['kind'] as String?;
+              return id is String &&
+                  title is String &&
+                  lastOpenedAt is int &&
+                  kind is String &&
+                  _isValidKind(kind);
+            })
+            .toList()
+          ..sort(
+            (a, b) =>
+                (b['lastOpenedAt'] as int).compareTo(a['lastOpenedAt'] as int),
+          );
+
+    return list.take(limit).toList();
   }
 
   Map<String, dynamic>? getById(String id) {

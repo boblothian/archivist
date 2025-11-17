@@ -1,9 +1,14 @@
 // lib/screens/settings_screen.dart
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_preferences.dart';
+import '../services/cloud_sync_service.dart';
+import '../services/recent_progress_service.dart';
 import '../theme/app_colours.dart';
 import '../theme/theme_controller.dart';
 
@@ -137,7 +142,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 12),
 
-          // App Actions (unchanged)
+          // App Actions
           Card(
             child: Column(
               children: [
@@ -162,22 +167,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                 ),
                 const Divider(height: 1),
+
+                // Clear Cache – now implemented with optional cloud
                 ListTile(
                   leading: const Icon(Icons.cleaning_services),
                   title: Text(
                     'Clear Cache',
                     style: GoogleFonts.inter(fontWeight: FontWeight.w600),
                   ),
-                  subtitle: const Text('Remove downloaded files & thumbnails'),
-                  onTap: () async {
-                    // TODO: hook up real cache-clearing logic.
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Cache cleared successfully'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                  },
+                  subtitle: const Text(
+                    'Remove downloaded files & history. Favourites are kept.',
+                  ),
+                  onTap: () => _confirmAndClearCache(context),
                 ),
                 const Divider(height: 1),
 
@@ -372,6 +373,125 @@ class _SettingsScreenState extends State<SettingsScreen> {
         );
       },
     );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // CACHE CLEARING
+  // ─────────────────────────────────────────────────────────────────────
+
+  Future<void> _confirmAndClearCache(BuildContext context) async {
+    bool alsoCloud = false;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setStateDialog) {
+            return AlertDialog(
+              title: const Text('Clear cache'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'This will remove downloaded files and thumbnails from your device.\n\n'
+                    'Your favourites will be kept.',
+                  ),
+                  const SizedBox(height: 12),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: alsoCloud,
+                    onChanged:
+                        (v) => setStateDialog(() => alsoCloud = v ?? false),
+                    title: const Text('Also clear cloud history'),
+                    subtitle: const Text(
+                      'Remove Last viewed / listening progress from your account. '
+                      'Favourites stay in sync.',
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Clear'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    await _clearDiskCache(context, alsoCloud: alsoCloud);
+  }
+
+  Future<void> _clearDiskCache(
+    BuildContext context, {
+    required bool alsoCloud,
+  }) async {
+    try {
+      // 1) Temporary directory (downloadWithCache, temp PDFs/CBZs, etc.)
+      final tempDir = await getTemporaryDirectory();
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+
+      // 2) App-specific "archivist" documents directory (used for app cache)
+      final docsDir = await getApplicationDocumentsDirectory();
+      final appCacheDir = Directory('${docsDir.path}/archivist');
+      if (await appCacheDir.exists()) {
+        await appCacheDir.delete(recursive: true);
+      }
+
+      // 3) Optionally clear local + cloud history (but keep favourites)
+      if (alsoCloud) {
+        await _clearLocalAndCloudHistory();
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            alsoCloud
+                ? 'Cache and cloud history cleared (favourites kept)'
+                : 'Local cache cleared (favourites kept)',
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to clear cache: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  /// Clear local "recent" entries and push an empty recentProgress to Firestore,
+  /// keeping favourites intact.
+  Future<void> _clearLocalAndCloudHistory() async {
+    final rsvc = RecentProgressService.instance;
+
+    // Clear local recent entries
+    final entries = rsvc.recent(limit: 9999);
+    for (final e in entries) {
+      final id = e['id'] as String?;
+      if (id == null || id.isEmpty) continue;
+      await rsvc.remove(id);
+    }
+
+    // Ask CloudSyncService to push updated local state to Firestore.
+    // Because local recent is now empty, remote `recentProgress` becomes empty too.
+    CloudSyncService.instance.schedulePush(immediate: true);
   }
 }
 

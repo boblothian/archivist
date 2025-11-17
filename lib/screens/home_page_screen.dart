@@ -425,7 +425,7 @@ class _TopContinueColumns extends StatelessWidget {
     return ValueListenableBuilder<int>(
       valueListenable: RecentProgressService.instance.version,
       builder: (context, _, __) {
-        final recent = RecentProgressService.instance.recent(limit: 30);
+        final recent = RecentProgressService.instance.recent(limit: 15);
 
         if (recent.isEmpty) {
           return Column(
@@ -1038,7 +1038,7 @@ class _RecommendedCollectionsSectionState
 
   Future<List<CollectionRec>> _buildRecommendations() async {
     // 1) take recent items
-    final recent = RecentProgressService.instance.recent(limit: 60);
+    final recent = RecentProgressService.instance.recent(limit: 20);
     if (recent.isEmpty) return const <CollectionRec>[];
 
     // unique ids

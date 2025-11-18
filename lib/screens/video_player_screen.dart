@@ -120,6 +120,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   @override
   void dispose() {
+    // Fallback: if we never went through _handlePopWithProgress,
+    // at least persist whatever position we have now.
+    if (!_popped) {
+      // fire-and-forget, we can't await in dispose
+      _saveProgress();
+    }
+
     _disposePlayers();
 
     // Wakelock / power
@@ -652,6 +659,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   // Combined picker (Chromecast + DLNA)
+  // Combined picker (Chromecast + DLNA)
   Future<void> _openCastPicker() async {
     // ensure discoveries are running/fresh
     try {
@@ -664,161 +672,168 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       context: context,
       showDragHandle: true,
       useRootNavigator: true,
+      isScrollControlled: true, // helps when content is tall
       builder: (ctx) {
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.cast),
-                  title: const Text('Cast to device'),
-                  subtitle: const Text(
-                    'Chromecast or DLNA devices on your Wi-Fi',
-                  ),
-                  trailing: IconButton(
-                    tooltip: 'Refresh',
-                    onPressed: () {
-                      GoogleCastDiscoveryManager.instance.startDiscovery();
-                      if (_dlnaReady) _startDlnaDiscovery();
-                    },
-                    icon: const Icon(Icons.refresh),
-                  ),
-                ),
-                const Divider(height: 1),
-
-                // Chromecast
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.tv, size: 18),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Chromecast devices',
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
-                    ],
-                  ),
-                ),
-                SizedBox(
-                  height: 160,
-                  child: StreamBuilder<List<GoogleCastDevice>>(
-                    stream:
-                        GoogleCastDiscoveryManager.instance.devicesStream
-                            .asBroadcastStream(),
-                    builder: (context, snap) {
-                      final devices = snap.data ?? const <GoogleCastDevice>[];
-                      if (devices.isEmpty) {
-                        return const Center(
-                          child: Text('No Chromecast devices found'),
-                        );
-                      }
-                      return ListView.separated(
-                        itemCount: devices.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (_, i) {
-                          final d = devices[i];
-                          return ListTile(
-                            leading: const Icon(Icons.cast),
-                            title: Text(d.friendlyName),
-                            subtitle: Text(d.modelName ?? d.deviceID),
-                            onTap: () async {
-                              try {
-                                await GoogleCastSessionManager.instance
-                                    .startSessionWithDevice(d);
-                                if (ctx.mounted) Navigator.pop(ctx);
-                              } catch (e) {
-                                if (!mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Connect failed: $e')),
-                                );
-                              }
-                            },
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-
-                const Divider(height: 1),
-
-                // DLNA
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.dns, size: 18),
-                      const SizedBox(width: 8),
-                      Text(
-                        'DLNA devices',
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
-                      const SizedBox(width: 8),
-                      if (!Platform.isAndroid)
-                        const Text(
-                          '(Android only)',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                    ],
-                  ),
-                ),
-                SizedBox(
-                  height: 200,
-                  child:
-                      !_dlnaReady
-                          ? const Center(
-                            child: Text('DLNA not available on this platform'),
-                          )
-                          : (_dlnaDevices.isEmpty
-                              ? const Center(
-                                child: Text('Searching for DLNA devices…'),
-                              )
-                              : ListView.separated(
-                                itemCount: _dlnaDevices.length,
-                                separatorBuilder:
-                                    (_, __) => const Divider(height: 1),
-                                itemBuilder: (_, i) {
-                                  final dev = _dlnaDevices[i];
-                                  return ListTile(
-                                    leading: const Icon(Icons.tv_outlined),
-                                    title: Text(dev.friendlyName),
-                                    subtitle: Text(dev.deviceType),
-                                    onTap: () async {
-                                      try {
-                                        await _castToDlna(dev);
-                                        if (ctx.mounted) Navigator.pop(ctx);
-                                      } catch (e) {
-                                        if (!mounted) return;
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          SnackBar(
-                                            content: Text('DLNA failed: $e'),
-                                          ),
-                                        );
-                                      }
-                                    },
-                                  );
-                                },
-                              )),
-                ),
-
-                const Divider(height: 1),
-                Padding(
-                  padding: const EdgeInsets.only(right: 8, top: 4),
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      onPressed: () => Navigator.pop(ctx),
-                      icon: const Icon(Icons.close),
-                      label: const Text('Close'),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.cast),
+                    title: const Text('Cast to device'),
+                    subtitle: const Text(
+                      'Chromecast or DLNA devices on your Wi-Fi',
+                    ),
+                    trailing: IconButton(
+                      tooltip: 'Refresh',
+                      onPressed: () {
+                        GoogleCastDiscoveryManager.instance.startDiscovery();
+                        if (_dlnaReady) _startDlnaDiscovery();
+                      },
+                      icon: const Icon(Icons.refresh),
                     ),
                   ),
-                ),
-              ],
+                  const Divider(height: 1),
+
+                  // Chromecast
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.tv, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Chromecast devices',
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(
+                    height: 160,
+                    child: StreamBuilder<List<GoogleCastDevice>>(
+                      stream:
+                          GoogleCastDiscoveryManager.instance.devicesStream
+                              .asBroadcastStream(),
+                      builder: (context, snap) {
+                        final devices = snap.data ?? const <GoogleCastDevice>[];
+                        if (devices.isEmpty) {
+                          return const Center(
+                            child: Text('No Chromecast devices found'),
+                          );
+                        }
+                        return ListView.separated(
+                          itemCount: devices.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (_, i) {
+                            final d = devices[i];
+                            return ListTile(
+                              leading: const Icon(Icons.cast),
+                              title: Text(d.friendlyName),
+                              subtitle: Text(d.modelName ?? d.deviceID),
+                              onTap: () async {
+                                try {
+                                  await GoogleCastSessionManager.instance
+                                      .startSessionWithDevice(d);
+                                  if (ctx.mounted) Navigator.pop(ctx);
+                                } catch (e) {
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Connect failed: $e'),
+                                    ),
+                                  );
+                                }
+                              },
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+
+                  const Divider(height: 1),
+
+                  // DLNA
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.dns, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          'DLNA devices',
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                        const SizedBox(width: 8),
+                        if (!Platform.isAndroid)
+                          const Text(
+                            '(Android only)',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(
+                    height: 200,
+                    child:
+                        !_dlnaReady
+                            ? const Center(
+                              child: Text(
+                                'DLNA not available on this platform',
+                              ),
+                            )
+                            : (_dlnaDevices.isEmpty
+                                ? const Center(
+                                  child: Text('Searching for DLNA devices…'),
+                                )
+                                : ListView.separated(
+                                  itemCount: _dlnaDevices.length,
+                                  separatorBuilder:
+                                      (_, __) => const Divider(height: 1),
+                                  itemBuilder: (_, i) {
+                                    final dev = _dlnaDevices[i];
+                                    return ListTile(
+                                      leading: const Icon(Icons.tv_outlined),
+                                      title: Text(dev.friendlyName),
+                                      subtitle: Text(dev.deviceType),
+                                      onTap: () async {
+                                        try {
+                                          await _castToDlna(dev);
+                                          if (ctx.mounted) Navigator.pop(ctx);
+                                        } catch (e) {
+                                          if (!mounted) return;
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text('DLNA failed: $e'),
+                                            ),
+                                          );
+                                        }
+                                      },
+                                    );
+                                  },
+                                )),
+                  ),
+
+                  const Divider(height: 1),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8, top: 4),
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: () => Navigator.pop(ctx),
+                        icon: const Icon(Icons.close),
+                        label: const Text('Close'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );

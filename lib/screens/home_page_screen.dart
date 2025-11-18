@@ -15,6 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../archive_api.dart'; // <-- needed for metadata lookups
 import '../media/media_player_ops.dart';
+import '../services/media_service.dart';
 import '../utils/archive_helpers.dart';
 import '../widgets/big_section_header.dart';
 import 'archive_item_screen.dart';
@@ -151,7 +152,7 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
         keyboardDismissBehavior:
             ScrollViewKeyboardDismissBehavior
                 .onDrag, // ← Optional: dismiss on scroll
-        padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 24.0),
+        padding: const EdgeInsets.fromLTRB(16.0, 12.0, 16.0, 24.0),
         children: const <Widget>[
           _GlobalArchiveSearchBar(),
           SizedBox(height: 16.0),
@@ -223,7 +224,7 @@ class _GlobalArchiveSearchBarState extends State<_GlobalArchiveSearchBar> {
         hintText: 'Search Archive.org',
         prefixIcon: const Icon(Icons.search),
 
-        // Fixed suffixIcon to avoid tiny overflow
+        // nicer suffix space
         suffixIconConstraints: const BoxConstraints(
           minWidth: 72,
           maxWidth: 80,
@@ -252,8 +253,28 @@ class _GlobalArchiveSearchBarState extends State<_GlobalArchiveSearchBar> {
           ),
         ),
 
-        filled: false,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        // 👇 new: pill-like card style
+        filled: true,
+        fillColor: cs.surfaceContainerHighest,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 14,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(28),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(28),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(28),
+          borderSide: BorderSide(
+            color: cs.primary.withOpacity(0.25),
+            width: 1.2,
+          ),
+        ),
       ),
     );
   }
@@ -284,63 +305,56 @@ class _ResumeMediaCard extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Container(
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(12)),
-      child: Card(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        elevation: 0,
-        margin: EdgeInsets.zero,
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: AspectRatio(
-            aspectRatio: 2 / 3,
+    return SizedBox(
+      width: 150,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: Material(
+          color: cs.surface,
+          elevation: 0,
+          child: InkWell(
+            onTap: onTap,
             child: Stack(
               children: [
-                // Full-bleed thumbnail
+                // thumb
                 Positioned.fill(
                   child: CachedNetworkImage(
                     imageUrl: thumb,
                     fit: BoxFit.cover,
                     placeholder: (_, __) => Container(color: Colors.grey[300]),
                     errorWidget:
-                        (_, __, ___) =>
-                            const Icon(Icons.broken_image, size: 40),
+                        (_, __, ___) => Container(
+                          color: cs.surfaceContainerHighest,
+                          alignment: Alignment.center,
+                          child: const Icon(Icons.broken_image, size: 32),
+                        ),
                   ),
                 ),
 
-                // Gradient that fades to white (light) or black (dark)
+                // subtle shadow + gradient at bottom
                 Positioned.fill(
-                  child: Container(
+                  child: DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors:
-                            isDark
-                                ? [
-                                  Colors.transparent,
-                                  Colors.black.withOpacity(0.85),
-                                  Colors.black,
-                                ]
-                                : [
-                                  Colors.transparent,
-                                  const Color(0xFFFFFFFF).withOpacity(0.85),
-                                  const Color(0xFFFFFFFF),
-                                ],
-                        stops: const [0.4, 0.65, 1.0],
+                        colors: [
+                          Colors.transparent,
+                          (Colors.black).withOpacity(0.90),
+                        ],
+                        stops: const [0.4, 0.7, 1.0],
                       ),
                     ),
                   ),
                 ),
 
-                // Close (X) button
+                // X button
                 if (onDelete != null)
                   Positioned(
                     top: 6,
                     right: 6,
                     child: Material(
-                      color: isDark ? Colors.white24 : Colors.black54,
+                      color: Colors.black.withOpacity(0.55),
                       shape: const CircleBorder(),
                       child: InkWell(
                         customBorder: const CircleBorder(),
@@ -349,57 +363,59 @@ class _ResumeMediaCard extends StatelessWidget {
                           padding: EdgeInsets.all(6),
                           child: Icon(
                             Icons.close,
-                            color: Colors.white,
                             size: 16,
+                            color: Colors.white,
                           ),
                         ),
                       ),
                     ),
                   ),
 
-                // Title + progress over the gradient
+                // title + progress
                 Positioned(
                   left: 10,
                   right: 10,
-                  bottom: 4,
+                  bottom: 8,
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color:
-                              isDark
-                                  ? Colors.white
-                                  : null, // Better contrast in dark
-                        ),
-                      ),
+                      const SizedBox(height: 4),
                       if (progressLabel != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          progressLabel!,
-                          style: textTheme.bodySmall?.copyWith(
-                            color: (isDark ? Colors.white : cs.onSurface)
-                                .withOpacity(0.75),
-                          ),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: cs.surfaceContainerHighest.withOpacity(
+                                  0.9,
+                                ),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                progressLabel!,
+                                style: textTheme.labelSmall?.copyWith(
+                                  color: cs.onSurface.withOpacity(0.75),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 6),
                         ClipRRect(
                           borderRadius: BorderRadius.circular(999),
                           child: LinearProgressIndicator(
-                            value: progress,
-                            backgroundColor:
-                                (isDark
-                                    ? Colors.white24
-                                    : cs.onSurface.withOpacity(0.12)),
+                            value: progress.clamp(0.0, 1.0),
+                            minHeight: 4,
+                            backgroundColor: cs.onSurface.withOpacity(
+                              isDark ? 0.2 : 0.12,
+                            ),
                             valueColor: AlwaysStoppedAnimation<Color>(
                               cs.primary,
                             ),
-                            minHeight: 4,
                           ),
                         ),
                       ],
@@ -432,7 +448,7 @@ class _TopContinueColumns extends StatelessWidget {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: const [
-              BigSectionHeader('Continue'),
+              BigSectionHeader('Last viewed'),
               SizedBox(height: 8),
               Center(
                 child: Text(
@@ -450,12 +466,12 @@ class _TopContinueColumns extends StatelessWidget {
             const BigSectionHeader('Last viewed'),
             const SizedBox(height: 8),
             SizedBox(
-              height: 200, // or 250 if you want extra breathing room
+              height: 180,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 2),
                 itemCount: recent.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                separatorBuilder: (_, __) => const SizedBox(width: 14),
                 itemBuilder: (context, i) {
                   final e = recent[i];
                   final kind = _sectionKindForEntry(e);
@@ -508,7 +524,7 @@ class _ContinueStripCard extends StatelessWidget {
     final fallbackThumb = 'https://archive.org/services/img/$id';
     final initialThumb = (entry['thumb'] as String?) ?? fallbackThumb;
 
-    // Compute progress & label (same rules as _ContinueSectionColumn)
+    // Compute progress & label (same as before)
     double percent = 0.0;
     String? label;
 
@@ -520,9 +536,10 @@ class _ContinueStripCard extends StatelessWidget {
       } else {
         percent = (entry['percent'] as double?) ?? 0.0;
       }
+      final verb = kind == _SectionKind.watching ? 'watched' : 'listened';
       label =
           percent > 0
-              ? '${(percent * 100).toStringAsFixed(0)}% ${kind == _SectionKind.watching ? 'watched' : 'listened'}'
+              ? '${(percent * 100).toStringAsFixed(0)}% $verb'
               : 'Tap to play';
     } else {
       if ((entry['kind'] as String?) == 'pdf') {
@@ -540,9 +557,9 @@ class _ContinueStripCard extends StatelessWidget {
     }
 
     return SizedBox(
-      width: 150,
+      width: 138,
       child: Align(
-        alignment: Alignment.topCenter, // or Alignment.center if you prefer
+        alignment: Alignment.topCenter,
         child: FutureBuilder<String>(
           future: _resolveThumb(id, initialThumb),
           initialData: initialThumb,
@@ -673,14 +690,65 @@ class _ContinueSectionColumn extends StatelessWidget {
           );
           return;
         }
+
         final positionMsA = (e['positionMs'] as int?) ?? 0;
-        await MediaPlayerOps.playAudio(
-          context,
-          url: fileUrl,
-          identifier: id,
-          title: title,
-          startPositionMs: positionMsA,
-        );
+
+        // Try to restore full queue playback (like Favorites / Collection)
+        final List<String> queueUrls =
+            (e['queueUrls'] as List?)?.cast<String>() ?? const <String>[];
+
+        final Map<String, String> queueTitles =
+            (e['queueTitles'] as Map?)?.map(
+              (k, v) => MapEntry(k.toString(), v?.toString() ?? ''),
+            ) ??
+            const <String, String>{};
+
+        final String currentTrackUrl =
+            (e['currentTrackUrl'] as String?) ?? fileUrl;
+
+        if (queueUrls.isNotEmpty) {
+          // Rebuild MediaQueue from stored URLs + titles
+          final items = <Playable>[];
+          for (final u in queueUrls) {
+            final t =
+                queueTitles[u] ?? Uri.tryParse(u)?.pathSegments.last ?? title;
+            items.add(Playable(url: u, title: t));
+          }
+
+          // Decide which index to start from
+          var startIndex = queueUrls.indexOf(currentTrackUrl);
+          if (startIndex < 0) {
+            startIndex = queueUrls.indexOf(fileUrl);
+          }
+          if (startIndex < 0) startIndex = 0;
+
+          final queue = MediaQueue(
+            items: items,
+            type: MediaType.audio,
+            startIndex: startIndex,
+          );
+
+          // 🔽 Queue-based audio player with album art + prev/next
+          await MediaPlayerOps.playAudioQueue(
+            context,
+            queue: queue,
+            identifier: id,
+            title: title,
+            startPositionMs: positionMsA,
+            itemThumb: thumb, // this shows the big artwork
+          );
+        } else {
+          // Legacy entries (no queue info): fall back to single-track player
+          await MediaPlayerOps.playAudio(
+            context,
+            url: fileUrl,
+            identifier: id,
+            title: title,
+            startPositionMs: positionMsA,
+            thumb: thumb,
+            fileName: fileName,
+          );
+        }
         break;
     }
   }
@@ -1220,7 +1288,7 @@ class ExploreByCategory extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         SizedBox(
-          height: 48,
+          height: 42,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 4),

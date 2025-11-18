@@ -198,6 +198,17 @@ class _ArchiveAudioPlayerScreenState extends State<ArchiveAudioPlayerScreen> {
 
   @override
   void dispose() {
+    // Fallback: if this screen is being disposed without having
+    // gone through _handlePopWithProgress, still return the
+    // last known position/duration to the caller.
+    if (!_popped) {
+      _popped = true;
+      // fire-and-forget; we can't await in dispose
+      Navigator.of(
+        context,
+      ).pop(<String, int>{'positionMs': _lastPosMs, 'durationMs': _lastDurMs});
+    }
+
     _connSub?.cancel();
     WakelockPlus.disable();
     _player.dispose();

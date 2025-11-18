@@ -181,6 +181,7 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
   @override
   Widget build(BuildContext context) {
     final store = CollectionStore();
+    final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
@@ -214,20 +215,51 @@ class _CollectionSearchScreenState extends State<CollectionSearchScreen> {
                 decoration: InputDecoration(
                   hintText: 'Search metadata',
                   prefixIcon: const Icon(Icons.search),
-                  suffixIcon:
-                      _query.isNotEmpty
-                          ? IconButton(
-                            icon: const Icon(Icons.clear),
+
+                  // Match home-screen layout: room for spinner + clear button
+                  suffixIconConstraints: const BoxConstraints(
+                    minWidth: 72,
+                    maxWidth: 80,
+                    minHeight: 48,
+                  ),
+                  suffixIcon: SizedBox(
+                    width: 72,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        if (_loading)
+                          const Padding(
+                            padding: EdgeInsets.only(right: 4),
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        if (_controller.text.isNotEmpty || _query.isNotEmpty)
+                          IconButton(
                             tooltip: 'Clear',
+                            icon: const Icon(Icons.close),
                             onPressed: () {
                               _controller.clear();
                               _runSearch('');
                               _focus.requestFocus();
                             },
-                          )
-                          : null,
+                          ),
+                      ],
+                    ),
+                  ),
+
+                  // Make it a pill, same as Home
+                  filled: true,
+                  fillColor: cs.surfaceContainerHigh,
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(999),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
                   ),
                 ),
               ),

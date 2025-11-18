@@ -303,6 +303,7 @@ class MediaPlayerOps {
     final start = queue.startIndex;
     final urls = queue.items.map((e) => e.url).toList();
     final titles = {for (final p in queue.items) p.url: p.title};
+    // we use the same thumb for every track (album/collection art)
     final thumbs = <String, String>{for (final u in urls) u: (itemThumb ?? '')};
 
     final result = await Navigator.push<dynamic>(
@@ -326,10 +327,18 @@ class MediaPlayerOps {
       await RecentProgressService.instance.updateAudio(
         id: identifier,
         title: title ?? queue.items[start].title,
+        thumb: itemThumb, // so "Last viewed" has nice art
         fileUrl: urls[start],
         fileName: titles[urls[start]] ?? '',
         positionMs: pr.positionMs,
         durationMs: pr.durationMs,
+        // 🔽 NEW: persist queue + which track we were on
+        queueUrls: urls,
+        queueTitles: titles,
+        queueThumbnails: thumbs,
+        // we don’t yet know if user skipped tracks, so we store the
+        // track we started on; it’s still enough to rebuild the queue
+        currentTrackUrl: urls[start],
       );
     }
   }

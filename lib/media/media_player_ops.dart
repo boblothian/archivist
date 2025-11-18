@@ -60,74 +60,7 @@ class MediaPlayerOps {
 
     debugPrint('MediaPlayerOps.playVideo → local=$isLocalFile, url=$url');
 
-    // Saved preference (per-type: 'local_internal', 'local_external', 'stream_internal', 'stream_external')
-    final prefType = isLocalFile ? 'local' : 'stream';
-    final savedPref = await _getSavedPreference(prefType);
-
-    // Always possible for external (we force chooser)
-    final bool canOpenExternally =
-        true; // Always show button; handle failure gracefully
-
-    // Auto-apply saved pref
-    if (savedPref != null) {
-      if (savedPref == 'external') {
-        final opened = await _openExternally(
-          context,
-          file: file,
-          url: url,
-          isLocal: isLocalFile,
-        );
-        if (opened) return;
-      }
-      // 'internal' or invalid → proceed to dialog or internal
-    }
-
-    // Show dialog (always, unless auto-applied above)
-    final choice = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder:
-          (ctx) => AlertDialog(
-            title: const Text('Play Video'),
-            content: Text(
-              isLocalFile
-                  ? 'How would you like to play this downloaded video?'
-                  : 'How would you like to play this streaming video?',
-            ),
-            actions: [
-              if (canOpenExternally)
-                TextButton(
-                  onPressed: () => Navigator.of(ctx).pop('external'),
-                  child: const Text('Open externally'),
-                ),
-              FilledButton(
-                onPressed: () => Navigator.of(ctx).pop('internal'),
-                child: const Text('Play in Archivist'),
-              ),
-            ],
-          ),
-    );
-
-    if (choice == null) return;
-
-    await _savePreference(prefType);
-
-    if (choice == 'external') {
-      final opened = await _openExternally(
-        context,
-        file: file,
-        url: url,
-        isLocal: isLocalFile,
-      );
-      if (opened) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No compatible player found. Playing in Archivist.'),
-        ),
-      );
-    }
-
-    // Internal player fallback (unchanged)
+    // 🚫 No dialog, no external option — always play internally
     final result = await Navigator.push<dynamic>(
       context,
       MaterialPageRoute(

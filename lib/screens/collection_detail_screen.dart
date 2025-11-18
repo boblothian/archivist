@@ -23,8 +23,10 @@ import '../archive_api.dart'; // fetch files when adding to favourites
 import '../net.dart';
 import '../services/discogs_service.dart';
 import '../utils/archive_helpers.dart';
+import '../widgets/audio_chooser.dart';
 import '../widgets/video_chooser.dart'; // shared video chooser
 import 'archive_item_screen.dart';
+import 'audio_album_screen.dart';
 import 'image_viewer_screen.dart';
 import 'pdf_viewer_screen.dart';
 import 'text_viewer_screen.dart';
@@ -1146,19 +1148,47 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               lower.endsWith('.m4a');
 
           if (isAudio) {
-            audioFiles.add({'name': name, 'format': fmt, 'size': f['size']});
+            audioFiles.add({
+              'name': name,
+              'format': fmt,
+              'size': f['size'],
+              'bitrate': f['bitrate'],
+            });
           }
         }
 
         if (audioFiles.isNotEmpty) {
-          // 🔽 NEW: let DiscogsService reorder tracks if you implement it later
+          // Apply Discogs ordering first
           await DiscogsService.instance.sortAudioFilesForItem(
             identifier: id,
             files: audioFiles,
           );
 
+          // Ask the user which audio format they want (mp3/flac/etc.)
+          final chosenExt = await showAudioFormatChooser(
+            context,
+            identifier: id,
+            title: item['title'] ?? id,
+            files: audioFiles, // audio_chooser builds its own meta objects
+          );
+
+          if (!mounted || _isDisposed) return;
+
+          // Filter by chosen extension if one was selected
+          final filteredAudioFiles =
+              (chosenExt == null)
+                  ? audioFiles
+                  : audioFiles.where((f) {
+                    final name = (f['name'] ?? '').toString().toLowerCase();
+                    return name.endsWith(chosenExt.toLowerCase());
+                  }).toList();
+
+          // Safety: if filtering somehow yields nothing, fall back to all
+          final effectiveFiles =
+              filteredAudioFiles.isNotEmpty ? filteredAudioFiles : audioFiles;
+
           final audioList =
-              audioFiles
+              effectiveFiles
                   .map<Map<String, String>>(
                     (f) => {'name': f['name'] as String},
                   )
@@ -1175,11 +1205,11 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
           Navigator.of(context).push(
             _sharedAxisRoute(
-              ArchiveItemScreen(
-                title: item['title'] ?? id,
+              AudioAlbumScreen(
                 identifier: id,
+                title: item['title'] ?? id,
                 files: audioList,
-                parentThumbUrl: item['thumb'],
+                thumbUrl: item['thumb'],
               ),
             ),
           );

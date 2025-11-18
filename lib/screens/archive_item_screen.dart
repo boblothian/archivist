@@ -480,7 +480,8 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
   bool isImageFile(String ext) =>
       ['.jpg', '.jpeg', '.png', '.gif', '.webp'].contains(ext);
   bool isTextFile(String ext) => ['.txt', '.md', '.log', '.csv'].contains(ext);
-  bool isAudioFile(String ext) => ['.mp3'].contains(ext);
+  bool isAudioFile(String ext) =>
+      ['.mp3', '.ogg', '.flac', '.m4a', '.wav', '.opus', '.aac'].contains(ext);
 
   // Build --------------------------------------------------------------------
   @override
@@ -590,7 +591,7 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
           crossAxisCount: 3,
           crossAxisSpacing: 8,
           mainAxisSpacing: 8,
-          childAspectRatio: 0.55,
+          childAspectRatio: 0.52,
         ),
         itemCount: displayFiles.length,
         itemBuilder: (context, index) {
@@ -615,7 +616,7 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
                   children: [
                     // 🔽 FIXED-SIZE THUMBNAIL
                     AspectRatio(
-                      aspectRatio: 3 / 4, // 3:4 cover art
+                      aspectRatio: 2 / 3, // 3:4 cover art
                       child: Container(
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(12),

@@ -1,9 +1,7 @@
 import 'package:archivereader/services/recent_progress_service.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'archive_helpers.dart';
-import 'external_launch.dart';
 
 /// Opens a bottom-sheet that lets the user:
 ///  • pick a video file from the list
@@ -139,30 +137,6 @@ class _VideoChooserSheet extends StatelessWidget {
       );
     }
 
-    // ---- ask user: Browser or App? ----
-    final choice = await showDialog<String>(
-      context: ctx,
-      builder:
-          (dCtx) => AlertDialog(
-            title: const Text('Open video'),
-            content: const Text(
-              'Choose how you’d like to open or save this video:',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dCtx, 'browser'),
-                child: const Text('Browser'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(dCtx, 'app'),
-                child: const Text('Installed app'),
-              ),
-            ],
-          ),
-    );
-
-    if (choice == null) return; // user cancelled
-
     // close the bottom-sheet
     if (ctx.mounted) Navigator.pop(ctx);
 
@@ -192,17 +166,6 @@ class _VideoChooserSheet extends StatelessWidget {
       mime = 'video/x-matroska';
     } else if (nameLower.endsWith('.m3u8')) {
       mime = 'application/vnd.apple.mpegurl';
-    }
-
-    // ---- launch ----
-    if (choice == 'browser') {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      await openExternallyWithChooser(
-        url: uri.toString(),
-        mimeType: mime,
-        chooserTitle: 'Open with',
-      );
     }
   }
 }

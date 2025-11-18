@@ -11,7 +11,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../archive_api.dart';
 import '../media/media_player_ops.dart';
 import '../utils/archive_helpers.dart';
+import '../widgets/audio_chooser.dart';
 import '../widgets/video_chooser.dart';
+import 'audio_album_screen.dart';
 import 'collection_detail_screen.dart';
 
 class FavoritesScreen extends StatelessWidget {
@@ -285,6 +287,76 @@ class _GridBodyState extends State<_GridBody>
         title: title,
         files: videoFiles,
       );
+      return;
+    }
+
+    // ────────────────────────────────────────────────
+    // 4) AUDIO: Show format chooser → open AudioAlbumScreen
+    // ────────────────────────────────────────────────
+    final List<Map<String, dynamic>> audioFiles = files
+        .where((f) {
+          final name = (f['name'] ?? '').toString().toLowerCase();
+          return MediaPlayerOps.isAudioUrl(name);
+        })
+        .map(
+          (f) => {
+            'name': f['name']!,
+            'format': f['format'] ?? '',
+            'size': _toInt(f['size']),
+          },
+        )
+        .toList(growable: false);
+
+    if (audioFiles.isNotEmpty) {
+      // Ask user which audio format they want (mp3 / flac / wav)
+      final chosenExt = await showAudioFormatChooser(
+        context,
+        identifier: id,
+        title: title,
+        files: audioFiles,
+      );
+
+      if (!mounted) return;
+
+      // Filter files by extension
+      final filtered =
+          (chosenExt == null)
+              ? audioFiles
+              : audioFiles.where((f) {
+                final name = (f['name'] ?? '').toString().toLowerCase();
+                return name.endsWith(chosenExt.toLowerCase());
+              }).toList();
+
+      // Fallback if nothing matched
+      final effectiveFiles = filtered.isNotEmpty ? filtered : audioFiles;
+
+      final audioList =
+          effectiveFiles
+              .map<Map<String, String>>((f) => {'name': f['name'] as String})
+              .toList();
+
+      await RecentProgressService.instance.touch(
+        id: id,
+        title: title,
+        thumb: thumb,
+        kind: 'audio',
+      );
+
+      if (!mounted) return;
+
+      // Open album-style screen
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder:
+              (_) => AudioAlbumScreen(
+                identifier: id,
+                title: title,
+                files: audioList,
+                thumbUrl: thumb,
+              ),
+        ),
+      );
+
       return;
     }
 

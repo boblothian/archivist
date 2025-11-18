@@ -58,7 +58,62 @@ class RecentProgressService {
     return _box!;
   }
 
-  // --- Writers ---
+  // ---------------------------------------------------------------------------
+  // Helper to choose the *best* thumbnail
+  // ---------------------------------------------------------------------------
+  String _bestThumb({
+    required String id,
+    required String kind,
+    String? newThumb,
+    String? fileName,
+    String? prevThumb,
+  }) {
+    // 1) If caller explicitly passes a thumb, always prefer that
+    if (newThumb != null && newThumb.trim().isNotEmpty) {
+      return newThumb.trim();
+    }
+
+    final lowerKind = kind.toLowerCase();
+    final name = fileName ?? '';
+    final lowerName = name.toLowerCase();
+
+    // 2) Derive from fileName for reading types (PDF, images, etc.)
+    if (name.isNotEmpty) {
+      // PDF: use JP2 first-page thumbnail, same style as ArchiveItemScreen
+      if (lowerName.endsWith('.pdf')) {
+        final base = name.substring(0, name.length - 4); // strip '.pdf'
+        final encoded = Uri.encodeComponent(base);
+        return 'https://archive.org/download/$id/'
+            '$encoded'
+            '_jp2.zip/'
+            '$encoded'
+            '_jp2/'
+            '$encoded'
+            '_0000.jp2&ext=jpg';
+      }
+
+      // Direct image file → use its own URL as thumb
+      if (lowerName.endsWith('.jpg') ||
+          lowerName.endsWith('.jpeg') ||
+          lowerName.endsWith('.png') ||
+          lowerName.endsWith('.gif') ||
+          lowerName.endsWith('.webp')) {
+        final encodedName = Uri.encodeComponent(name);
+        return 'https://archive.org/download/$id/$encodedName';
+      }
+    }
+
+    // 3) Keep previous thumb if we had one
+    if (prevThumb != null && prevThumb.toString().trim().isNotEmpty) {
+      return prevThumb.toString();
+    }
+
+    // 4) Absolute fallback → collection/item thumb
+    return 'https://archive.org/services/img/$id';
+  }
+
+  // --- Writers ---------------------------------------------------------------
+
   Future<void> touch({
     required String id,
     required String title,
@@ -69,16 +124,26 @@ class RecentProgressService {
   }) async {
     final box = await _ensureBox();
     final now = DateTime.now().millisecondsSinceEpoch;
+
     final prev = Map<String, dynamic>.from(box.get(id) ?? {});
-    prev.addAll({
-      'id': id,
-      'title': title,
-      'thumb': thumb,
-      'kind': kind,
-      'lastOpenedAt': now,
-      if (fileUrl != null) 'fileUrl': fileUrl,
-      if (fileName != null) 'fileName': fileName,
-    });
+    final effectiveThumb = _bestThumb(
+      id: id,
+      kind: kind,
+      newThumb: thumb,
+      fileName: fileName,
+      prevThumb: prev['thumb'] as String?,
+    );
+
+    prev
+      ..['id'] = id
+      ..['title'] = title
+      ..['thumb'] = effectiveThumb
+      ..['kind'] = kind
+      ..['lastOpenedAt'] = now;
+
+    if (fileUrl != null) prev['fileUrl'] = fileUrl;
+    if (fileName != null) prev['fileName'] = fileName;
+
     await box.put(id, prev);
     _notify();
     _triggerImmediatePush();
@@ -93,21 +158,34 @@ class RecentProgressService {
     String? fileUrl,
     String? fileName,
   }) async {
+    const kind = 'pdf';
     final box = await _ensureBox();
     final now = DateTime.now().millisecondsSinceEpoch;
-    await box.put(id, {
-      'id': id,
-      'title': title,
-      'thumb': thumb,
-      'kind': 'pdf',
-      'page': page,
-      'total': total,
-      'percent': total > 0 ? page / total : 0.0,
-      'lastReadAt': now,
-      'lastOpenedAt': now,
-      if (fileUrl != null) 'fileUrl': fileUrl,
-      if (fileName != null) 'fileName': fileName,
-    });
+
+    final prev = Map<String, dynamic>.from(box.get(id) ?? {});
+    final effectiveThumb = _bestThumb(
+      id: id,
+      kind: kind,
+      newThumb: thumb,
+      fileName: fileName ?? prev['fileName'] as String?,
+      prevThumb: prev['thumb'] as String?,
+    );
+
+    prev
+      ..['id'] = id
+      ..['title'] = title
+      ..['thumb'] = effectiveThumb
+      ..['kind'] = kind
+      ..['page'] = page
+      ..['total'] = total
+      ..['percent'] = total > 0 ? page / total : 0.0
+      ..['lastReadAt'] = now
+      ..['lastOpenedAt'] = now;
+
+    if (fileUrl != null) prev['fileUrl'] = fileUrl;
+    if (fileName != null) prev['fileName'] = fileName;
+
+    await box.put(id, prev);
     _notify();
     _triggerImmediatePush();
   }
@@ -123,22 +201,35 @@ class RecentProgressService {
     String? fileUrl,
     String? fileName,
   }) async {
+    const kind = 'epub';
     final box = await _ensureBox();
     final now = DateTime.now().millisecondsSinceEpoch;
-    await box.put(id, {
-      'id': id,
-      'title': title,
-      'thumb': thumb,
-      'kind': 'epub',
-      'page': page,
-      'total': total,
-      'percent': percent,
-      'cfi': cfi,
-      'fileUrl': fileUrl,
-      'fileName': fileName,
-      'lastOpenedAt': now,
-      'lastReadAt': now,
-    });
+
+    final prev = Map<String, dynamic>.from(box.get(id) ?? {});
+    final effectiveThumb = _bestThumb(
+      id: id,
+      kind: kind,
+      newThumb: thumb,
+      fileName: fileName ?? prev['fileName'] as String?,
+      prevThumb: prev['thumb'] as String?,
+    );
+
+    prev
+      ..['id'] = id
+      ..['title'] = title
+      ..['thumb'] = effectiveThumb
+      ..['kind'] = kind
+      ..['page'] = page
+      ..['total'] = total
+      ..['percent'] = percent
+      ..['cfi'] = cfi
+      ..['lastOpenedAt'] = now
+      ..['lastReadAt'] = now;
+
+    if (fileUrl != null) prev['fileUrl'] = fileUrl;
+    if (fileName != null) prev['fileName'] = fileName;
+
+    await box.put(id, prev);
     _notify();
     _triggerImmediatePush();
   }
@@ -153,26 +244,43 @@ class RecentProgressService {
     int? positionMs,
     int? durationMs,
   }) async {
+    const kind = 'video';
     final box = await _ensureBox();
     final now = DateTime.now().millisecondsSinceEpoch;
-    double finalPercent =
-        (durationMs != null && durationMs > 0 && (positionMs ?? 0) >= 0)
-            ? ((positionMs ?? 0) / durationMs)
-            : (percent ?? 0.0);
 
-    await box.put(id, {
-      'id': id,
-      'title': title,
-      'thumb': thumb,
-      'kind': 'video',
-      'percent': finalPercent,
-      'fileUrl': fileUrl,
-      'fileName': fileName,
-      if (positionMs != null) 'positionMs': positionMs,
-      if (durationMs != null) 'durationMs': durationMs,
-      'lastOpenedAt': now,
-      'lastWatchedAt': now,
-    });
+    final prev = Map<String, dynamic>.from(box.get(id) ?? {});
+    final effectiveThumb = _bestThumb(
+      id: id,
+      kind: kind,
+      newThumb: thumb,
+      fileName: fileName,
+      prevThumb: prev['thumb'] as String?,
+    );
+
+    double finalPercent;
+    if (durationMs != null && durationMs > 0 && (positionMs ?? 0) >= 0) {
+      finalPercent = (positionMs ?? 0) / durationMs;
+    } else {
+      finalPercent =
+          percent ??
+          (prev['percent'] is num ? (prev['percent'] as num).toDouble() : 0.0);
+    }
+
+    prev
+      ..['id'] = id
+      ..['title'] = title
+      ..['thumb'] = effectiveThumb
+      ..['kind'] = kind
+      ..['percent'] = finalPercent
+      ..['fileUrl'] = fileUrl
+      ..['fileName'] = fileName
+      ..['lastOpenedAt'] = now
+      ..['lastWatchedAt'] = now;
+
+    if (positionMs != null) prev['positionMs'] = positionMs;
+    if (durationMs != null) prev['durationMs'] = durationMs;
+
+    await box.put(id, prev);
     _notify();
     _triggerImmediatePush();
   }
@@ -191,32 +299,52 @@ class RecentProgressService {
     Map<String, String>? queueThumbnails,
     String? currentTrackUrl,
   }) async {
+    const kind = 'audio';
     final box = await _ensureBox();
     final now = DateTime.now().millisecondsSinceEpoch;
-    double finalPercent =
-        (durationMs != null && durationMs > 0 && (positionMs ?? 0) >= 0)
-            ? ((positionMs ?? 0) / durationMs)
-            : (percent ?? 0.0);
 
-    await box.put(id, {
-      'id': id,
-      'title': title,
-      'thumb': thumb,
-      'kind': 'audio',
-      'percent': finalPercent,
-      'fileUrl': fileUrl,
-      'fileName': fileName,
-      if (positionMs != null) 'positionMs': positionMs,
-      if (durationMs != null) 'durationMs': durationMs,
-      'lastOpenedAt': now,
-      'lastListenedAt': now,
-      if (queueUrls != null) 'queueUrls': queueUrls,
-      if (queueTitles != null)
-        'queueTitles': Map<String, dynamic>.from(queueTitles),
-      if (queueThumbnails != null)
-        'queueThumbnails': Map<String, dynamic>.from(queueThumbnails),
-      if (currentTrackUrl != null) 'currentTrackUrl': currentTrackUrl,
-    });
+    final prev = Map<String, dynamic>.from(box.get(id) ?? {});
+    final effectiveThumb = _bestThumb(
+      id: id,
+      kind: kind,
+      newThumb: thumb,
+      fileName: fileName,
+      prevThumb: prev['thumb'] as String?,
+    );
+
+    double finalPercent;
+    if (durationMs != null && durationMs > 0 && (positionMs ?? 0) >= 0) {
+      finalPercent = (positionMs ?? 0) / durationMs;
+    } else {
+      finalPercent =
+          percent ??
+          (prev['percent'] is num ? (prev['percent'] as num).toDouble() : 0.0);
+    }
+
+    prev
+      ..['id'] = id
+      ..['title'] = title
+      ..['thumb'] = effectiveThumb
+      ..['kind'] = kind
+      ..['percent'] = finalPercent
+      ..['fileUrl'] = fileUrl
+      ..['fileName'] = fileName
+      ..['lastOpenedAt'] = now
+      ..['lastListenedAt'] = now;
+
+    if (positionMs != null) prev['positionMs'] = positionMs;
+    if (durationMs != null) prev['durationMs'] = durationMs;
+
+    if (queueUrls != null) prev['queueUrls'] = queueUrls;
+    if (queueTitles != null) {
+      prev['queueTitles'] = Map<String, dynamic>.from(queueTitles);
+    }
+    if (queueThumbnails != null) {
+      prev['queueThumbnails'] = Map<String, dynamic>.from(queueThumbnails);
+    }
+    if (currentTrackUrl != null) prev['currentTrackUrl'] = currentTrackUrl;
+
+    await box.put(id, prev);
     _notify();
     _triggerImmediatePush();
   }
@@ -264,6 +392,7 @@ class RecentProgressService {
         currentTrackUrl: currentTrackUrl,
       );
     } else {
+      // pdf/epub/txt/cbz/etc can still use touch; _bestThumb will kick in
       await touch(
         id: id,
         title: title,
@@ -283,7 +412,8 @@ class RecentProgressService {
     _triggerImmediatePush(id);
   }
 
-  // --- Readers ---
+  // --- Readers ---------------------------------------------------------------
+
   Map<String, dynamic>? get lastViewed {
     final box = _box;
     if (box == null || box.isEmpty) return null;
@@ -296,7 +426,6 @@ class RecentProgressService {
 
   void _triggerImmediatePush([String? deletedId]) {
     CloudSyncService.instance.schedulePush(
-      // ← public
       immediate: true,
       deletedId: deletedId,
     );

@@ -331,23 +331,6 @@ class _ResumeMediaCard extends StatelessWidget {
                   ),
                 ),
 
-                // subtle shadow + gradient at bottom
-                Positioned.fill(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          (Colors.black).withOpacity(0.90),
-                        ],
-                        stops: const [0.4, 0.7, 1.0],
-                      ),
-                    ),
-                  ),
-                ),
-
                 // X button
                 if (onDelete != null)
                   Positioned(
@@ -448,7 +431,7 @@ class _TopContinueColumns extends StatelessWidget {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: const [
-              BigSectionHeader('Last viewed'),
+              BigSectionHeader('Continue'),
               SizedBox(height: 8),
               Center(
                 child: Text(
@@ -463,7 +446,7 @@ class _TopContinueColumns extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const BigSectionHeader('Last viewed'),
+            const BigSectionHeader('Continue'),
             const SizedBox(height: 8),
             SizedBox(
               height: 180,
@@ -521,8 +504,14 @@ class _ContinueStripCard extends StatelessWidget {
             ? _prettify(fileName)
             : rawTitle;
 
-    final fallbackThumb = 'https://archive.org/services/img/$id';
-    final initialThumb = (entry['thumb'] as String?) ?? fallbackThumb;
+    final fallbackThumb = archiveThumbUrl(id);
+
+    // For reading (pdf/text/etc.), always use the collection/item cover,
+    // not the generated page thumb.
+    final initialThumb =
+        kind == _SectionKind.reading
+            ? fallbackThumb
+            : (entry['thumb'] as String?) ?? fallbackThumb;
 
     // Compute progress & label (same as before)
     double percent = 0.0;
@@ -848,8 +837,11 @@ class _ContinueSectionColumn extends StatelessWidget {
       }
     }
 
-    final fallback = 'https://archive.org/services/img/$id';
-    final initialThumb = (e['thumb'] as String?) ?? fallback;
+    final fallback = archiveThumbUrl(id);
+    final initialThumb =
+        kind == _SectionKind.reading
+            ? fallback
+            : (e['thumb'] as String?) ?? fallback;
 
     return FutureBuilder<String>(
       future: _resolveThumb(id, initialThumb),
@@ -915,9 +907,11 @@ class _ContinueSectionColumn extends StatelessWidget {
                       final id = e['id'] as String;
                       final t = (e['title'] as String?) ?? id;
                       final fn = e['fileName'] as String?;
+                      final thumbBase = archiveThumbUrl(id);
                       final thumb =
-                          (e['thumb'] as String?) ??
-                          'https://archive.org/services/img/$id';
+                          kind == _SectionKind.reading
+                              ? thumbBase
+                              : (e['thumb'] as String?) ?? thumbBase;
 
                       String sub = '';
                       if (kind == _SectionKind.watching ||

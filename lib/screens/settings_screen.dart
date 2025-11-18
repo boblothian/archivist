@@ -438,15 +438,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       // 1) Temporary directory (downloadWithCache, temp PDFs/CBZs, etc.)
       final tempDir = await getTemporaryDirectory();
-      if (await tempDir.exists()) {
-        await tempDir.delete(recursive: true);
-      }
+      await _clearDirContents(tempDir); // ← clear contents, don't delete root
 
       // 2) App-specific "archivist" documents directory (used for app cache)
       final docsDir = await getApplicationDocumentsDirectory();
       final appCacheDir = Directory('${docsDir.path}/archivist');
       if (await appCacheDir.exists()) {
-        await appCacheDir.delete(recursive: true);
+        // You *can* delete this whole folder (it’s under Documents),
+        // but using the same helper keeps behaviour consistent.
+        await _clearDirContents(appCacheDir);
+        // Optionally also remove the empty folder:
+        // await appCacheDir.delete();
       }
 
       // 3) Optionally clear local + cloud history (but keep favourites)
@@ -476,6 +478,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Delete all files and subdirectories inside [dir], but not [dir] itself.
+  Future<void> _clearDirContents(Directory dir) async {
+    if (!await dir.exists()) return;
+
+    await for (final entity in dir.list(recursive: false, followLinks: false)) {
+      try {
+        if (entity is File) {
+          await entity.delete();
+        } else if (entity is Directory) {
+          await entity.delete(recursive: true);
+        }
+      } catch (_) {
+        // Ignore individual failures; keep going
+      }
+    }
+  }
+
   /// Clear local "recent" entries and push an empty recentProgress to Firestore,
   /// keeping favourites intact.
   Future<void> _clearLocalAndCloudHistory() async {
@@ -490,7 +509,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     // Ask CloudSyncService to push updated local state to Firestore.
-    // Because local recent is now empty, remote `recentProgress` becomes empty too.
     CloudSyncService.instance.schedulePush(immediate: true);
   }
 }

@@ -1564,13 +1564,52 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                       decoration: InputDecoration(
                         hintText: 'Search in ${widget.categoryName}',
                         prefixIcon: const Icon(Icons.search),
-                        suffixIcon: IconButton(
-                          onPressed: () {
-                            _searchCtrl.clear();
-                            _runSearch();
-                          },
-                          icon: const Icon(Icons.clear),
-                          tooltip: 'Clear',
+
+                        // match home-screen pill layout
+                        suffixIconConstraints: const BoxConstraints(
+                          minWidth: 72,
+                          maxWidth: 80,
+                          minHeight: 48,
+                        ),
+                        suffixIcon: SizedBox(
+                          width: 72,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              if (_loading)
+                                const Padding(
+                                  padding: EdgeInsets.only(right: 4),
+                                  child: SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                ),
+                              if (_searchCtrl.text.isNotEmpty)
+                                IconButton(
+                                  tooltip: 'Clear',
+                                  icon: const Icon(Icons.close),
+                                  onPressed: () {
+                                    _searchCtrl.clear();
+                                    _runSearch();
+                                  },
+                                ),
+                            ],
+                          ),
+                        ),
+
+                        filled: true,
+                        fillColor:
+                            Theme.of(context).colorScheme.surfaceContainerHigh,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(999),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
                         ),
                       ),
                     ),

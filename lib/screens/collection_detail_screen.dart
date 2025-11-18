@@ -1576,17 +1576,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
-                              if (_loading)
-                                const Padding(
-                                  padding: EdgeInsets.only(right: 4),
-                                  child: SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  ),
-                                ),
                               if (_searchCtrl.text.isNotEmpty)
                                 IconButton(
                                   tooltip: 'Clear',

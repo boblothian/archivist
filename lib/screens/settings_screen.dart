@@ -7,7 +7,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_preferences.dart';
-import '../services/cloud_sync_service.dart';
 import '../services/recent_progress_service.dart';
 import '../theme/app_colours.dart';
 import '../theme/theme_controller.dart';
@@ -397,17 +396,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'Your favourites will be kept.',
                   ),
                   const SizedBox(height: 12),
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: alsoCloud,
-                    onChanged:
-                        (v) => setStateDialog(() => alsoCloud = v ?? false),
-                    title: const Text('Also clear cloud history'),
-                    subtitle: const Text(
-                      'Remove Last viewed / listening progress from your account. '
-                      'Favourites stay in sync.',
-                    ),
-                  ),
                 ],
               ),
               actions: [
@@ -507,9 +495,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (id == null || id.isEmpty) continue;
       await rsvc.remove(id);
     }
-
-    // Ask CloudSyncService to push updated local state to Firestore.
-    CloudSyncService.instance.schedulePush(immediate: true);
   }
 }
 

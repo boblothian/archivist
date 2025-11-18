@@ -2,8 +2,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 
-import 'cloud_sync_service.dart';
-
 class RecentProgressService {
   RecentProgressService._();
   static final instance = RecentProgressService._();
@@ -146,7 +144,6 @@ class RecentProgressService {
 
     await box.put(id, prev);
     _notify();
-    _triggerImmediatePush();
   }
 
   Future<void> updatePdf({
@@ -187,7 +184,6 @@ class RecentProgressService {
 
     await box.put(id, prev);
     _notify();
-    _triggerImmediatePush();
   }
 
   Future<void> updateEpub({
@@ -231,7 +227,6 @@ class RecentProgressService {
 
     await box.put(id, prev);
     _notify();
-    _triggerImmediatePush();
   }
 
   Future<void> updateVideo({
@@ -282,7 +277,6 @@ class RecentProgressService {
 
     await box.put(id, prev);
     _notify();
-    _triggerImmediatePush();
   }
 
   Future<void> updateAudio({
@@ -346,7 +340,6 @@ class RecentProgressService {
 
     await box.put(id, prev);
     _notify();
-    _triggerImmediatePush();
   }
 
   Future<void> upsertMedia({
@@ -409,7 +402,6 @@ class RecentProgressService {
     final box = await _ensureBox();
     await box.delete(id);
     _notify();
-    _triggerImmediatePush(id);
   }
 
   // --- Readers ---------------------------------------------------------------
@@ -422,13 +414,6 @@ class RecentProgressService {
       (a, b) => (b['lastOpenedAt'] ?? 0).compareTo(a['lastOpenedAt'] ?? 0),
     );
     return list.firstOrNull;
-  }
-
-  void _triggerImmediatePush([String? deletedId]) {
-    CloudSyncService.instance.schedulePush(
-      immediate: true,
-      deletedId: deletedId,
-    );
   }
 
   List<Map<String, dynamic>> recent({int limit = 10}) {

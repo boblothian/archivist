@@ -22,6 +22,9 @@ Future<void> main() async {
     androidNotificationOngoing: true,
   );
 
+  // 🧹 Clear temp/cache directory on every app start
+  await _clearAppCache();
+
   // 1. Hive + app directory
   await Hive.initFlutter();
   final docsDir = await getApplicationDocumentsDirectory();
@@ -39,4 +42,17 @@ Future<void> main() async {
 
   // 5. NOW it's safe to start the UI
   runApp(ArchivistApp(themeController: themeController));
+}
+
+// Deletes the OS temp directory used by things like downloadWithCache()
+// (if that uses getTemporaryDirectory under the hood).
+Future<void> _clearAppCache() async {
+  try {
+    final tempDir = await getTemporaryDirectory();
+    if (await tempDir.exists()) {
+      await tempDir.delete(recursive: true);
+    }
+  } catch (_) {
+    // Swallow errors – failing to clear cache shouldn't block app startup.
+  }
 }

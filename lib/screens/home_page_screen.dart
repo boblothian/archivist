@@ -160,7 +160,6 @@ class _HomePageScreenState extends State<HomePageScreen> with RouteAware {
           SizedBox(height: 24.0),
           _TopContinueColumns(),
           SizedBox(height: 24.0),
-          SizedBox(height: 24.0),
           FeaturedCollectionsCarousel(),
           SizedBox(height: 24.0),
           RecommendedCollectionsSection(),

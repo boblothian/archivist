@@ -45,6 +45,8 @@ dependencies:
   open_filex: ^4.7.0
   just_audio_background: ^0.0.1-beta.17
   audio_service: ^0.18.18
+  flutter_tilt: ^3.3.2
+  waveform_visualizer: ^1.0.0
 
 
 dev_dependencies:

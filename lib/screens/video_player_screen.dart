@@ -45,7 +45,7 @@ class VideoPlayerScreen extends StatefulWidget {
 }
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
-  // ─── Retain controllers when leaving on iOS to keep AirPlay alive (why) ───
+  // ─── Retain controllers when leaving on iOS to keep AirPlay alive ───
   static VideoPlayerController? _retainedVideo;
   static ChewieController? _retainedChewie;
   bool _keepAliveForAirPlay = false;
@@ -83,6 +83,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   StreamSubscription<GoogleCastSession?>? _gcSessionSub;
   StreamSubscription? _gcMediaStatusSub;
   bool _isCastingChromecast = false;
+  bool _chromecastInitAttempted = false;
 
   // DLNA (Android only)
   final MediaCastDlnaApi _dlna = MediaCastDlnaApi();
@@ -97,7 +98,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     super.initState();
     _initQueueState();
     _initializePlayerForCurrent(initial: true);
-    _initChromecast();
     _initDlna();
     WakelockPlus.enable();
   }
@@ -124,7 +124,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       _saveProgress(); // best-effort
     }
 
-    // iOS AirPlay: retain controllers instead of disposing if user opted in (why)
+    // iOS AirPlay: retain controllers instead of disposing if user opted in
     if (Platform.isIOS && _keepAliveForAirPlay && _videoController != null) {
       try {
         _videoController?.removeListener(_onTick);
@@ -162,8 +162,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     _videoController = null;
   }
 
-  // ───────────────────── Chromecast ─────────────────────
+  // ───────────────────── Chromecast (lazy init) ─────────────────────
   Future<void> _initChromecast() async {
+    if (_chromecastInitAttempted) return; // already tried
+    _chromecastInitAttempted = true;
+
     try {
       const appId = GoogleCastDiscoveryCriteria.kDefaultApplicationId;
 
@@ -209,7 +212,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             }
           });
     } catch (e) {
-      debugPrint('Chromecast init error: $e');
+      debugPrint('Chromecast init error (ignored): $e');
     }
   }
 
@@ -370,7 +373,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
-  // ✅ Added: stop DLNA playback (fixes undefined name)
   Future<void> _stopDlnaPlayback() async {
     if (_activeDlnaUdn == null) return;
     try {
@@ -576,7 +578,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               IconButton(
                 tooltip: 'Stop DLNA',
                 icon: const Icon(Icons.stop_circle_outlined),
-                onPressed: () async => _stopDlnaPlayback(), // <-- closure
+                onPressed: () async => _stopDlnaPlayback(),
               ),
             if (_isCastingChromecast)
               IconButton(
@@ -639,8 +641,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     return false;
   }
 
-  // Combined picker (Chromecast + DLNA) — unchanged
+  // Combined picker (Chromecast + DLNA)
   Future<void> _openCastPicker() async {
+    await _initChromecast();
     try {
       await GoogleCastDiscoveryManager.instance.startDiscovery();
     } catch (_) {}

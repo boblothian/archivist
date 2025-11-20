@@ -102,7 +102,8 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
   String? _error;
 
   int _requestToken = 0;
-  static const int _rows = 60;
+  static const int _initialRows = 24; // smaller first page
+  static const int _rows = 60; // subsequent pages
   int _page = 1;
   int _numFound = 0;
 
@@ -239,61 +240,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     return compute((String s) => jsonDecode(s) as Map<String, dynamic>, body);
   }
 
-  Future<void> _unblockSmartThumbs(
-    List<Map<String, String>> batch, {
-    required int currentToken,
-  }) async {
-    const int kMaxConcurrent = 6;
-    final Map<int, String> thumbUpdates = {};
-
-    Future<void> process(Map<String, String> item) async {
-      try {
-        if (!mounted || _isDisposed || currentToken != _requestToken) return;
-
-        final id = item['identifier']!;
-        final mediatype = item['mediatype'] ?? '';
-        final title = item['title'] ?? id;
-        final year = item['year'] ?? '';
-
-        final currentThumb = (item['thumb'] ?? '').trim();
-        final placeholder = archiveThumbUrl(id);
-        if (currentThumb.isNotEmpty && currentThumb != placeholder) return;
-
-        final smart = await ThumbnailService().getSmartThumb(
-          id: id,
-          mediatype: mediatype,
-          title: title,
-          year: year,
-        );
-
-        if (!mounted || _isDisposed || currentToken != _requestToken) return;
-        if (smart.isEmpty || smart == currentThumb) return;
-
-        final idx = _items.indexWhere((e) => e['identifier'] == id);
-        if (idx != -1) thumbUpdates[idx] = smart;
-      } catch (_) {}
-    }
-
-    for (int i = 0; i < batch.length; i += kMaxConcurrent) {
-      if (!mounted || _isDisposed || currentToken != _requestToken) return;
-      final end = (i + kMaxConcurrent).clamp(0, batch.length);
-      final slice = batch.sublist(i, end);
-      await Future.wait(slice.map(process));
-    }
-
-    if (thumbUpdates.isNotEmpty &&
-        mounted &&
-        !_isDisposed &&
-        currentToken == _requestToken) {
-      setState(() {
-        thumbUpdates.forEach((idx, smartThumb) {
-          _items[idx] = Map<String, String>.from(_items[idx])
-            ..['thumb'] = smartThumb;
-        });
-      });
-    }
-  }
-
   Future<void> _fetch({bool reset = false}) async {
     final int token = ++_requestToken;
 
@@ -323,21 +269,23 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     try {
       final q = _buildQuery(_searchCtrl.text.trim());
 
+      // NOTE: dropped "description" to reduce payload size.
       final flParams = <String>[
         'identifier',
         'title',
         'mediatype',
         'subject',
         'creator',
-        'description',
         'year',
       ].map((f) => 'fl[]=$f').join('&');
+
+      final rows = reset ? _initialRows : _rows;
 
       final url =
           'https://archive.org/advancedsearch.php?'
           'q=${Uri.encodeQueryComponent(q)}&'
           '$flParams&sort[]=${Uri.encodeQueryComponent(_sortParam(_sort))}&'
-          'rows=$_rows&page=$_page&output=json';
+          'rows=$rows&page=$_page&output=json';
 
       final resp = await _client
           .get(Uri.parse(url), headers: _HEADERS)
@@ -376,7 +324,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           'title': title,
           'thumb': thumb,
           'mediatype': mediatype,
-          'description': flat(doc['description']),
+          'description': flat(doc['description']), // will be '' now
           'creator': flat(doc['creator']),
           'subject': flat(doc['subject']),
           'year': year,
@@ -390,6 +338,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         }
       }
 
+      // Apply local thumb overrides (no network).
       await ThumbOverrideService.instance.applyToItemMaps(batch);
 
       final existingIds = _items.map((m) => m['identifier']).toSet();
@@ -406,7 +355,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         });
       }
 
-      unawaited(_unblockSmartThumbs(batch, currentToken: token));
+      // Smart thumbs removed: no extra thumbnail network calls here.
     } catch (e) {
       if (mounted && token == _requestToken) {
         setState(() {
@@ -804,11 +753,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         );
       },
     );
-
-    // IMPORTANT: Do NOT dispose titleCtrl here – the dialog/overlay may
-    // still be in the middle of teardown and will try to access it again,
-    // which caused the "used after being disposed" crash.
-    // titleCtrl.dispose();  <-- leave this commented out / removed
 
     if (!mounted || _isDisposed) return;
 
@@ -1416,13 +1360,14 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     required bool Function() isCancelled,
   }) async {
     final q = 'collection:$collectionId';
+
+    // NOTE: also dropped "description" here.
     final flParams = <String>[
       'identifier',
       'title',
       'mediatype',
       'subject',
       'creator',
-      'description',
       'year',
     ].map((f) => 'fl[]=$f').join('&');
 
@@ -1466,7 +1411,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
               'title': title.isEmpty ? id : title,
               'thumb': archiveThumbUrl(id),
               'mediatype': flat(doc['mediatype']),
-              'description': flat(doc['description']),
+              'description': flat(doc['description']), // will be '' now
               'creator': flat(doc['creator']),
               'subject': flat(doc['subject']),
               'year': year,
@@ -2181,15 +2126,32 @@ class _CollectionQuickPick extends StatelessWidget {
                         width: 48,
                         height: 64,
                         fit: BoxFit.cover,
-                        errorWidget:
-                            (_, __, ___) => Image.network(
-                              archiveFallbackThumbUrl(id),
+                        // Decode a small bitmap instead of full-res.
+                        memCacheWidth: 180,
+                        memCacheHeight: 240,
+                        // Cheap, non-animated placeholder while the image loads.
+                        placeholder:
+                            (_, __) => Container(
                               width: 48,
                               height: 64,
-                              fit: BoxFit.cover,
+                              color: Colors.grey[300],
+                            ),
+                        // Don't keep hammering archive.org if the thumb/fallback 502s.
+                        errorWidget:
+                            (_, __, ___) => Container(
+                              width: 48,
+                              height: 64,
+                              color: Colors.grey[400],
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.broken_image,
+                                size: 20,
+                                color: Colors.black38,
+                              ),
                             ),
                       ),
                     ),
+
                     title: Text(
                       it['title'] ?? id,
                       maxLines: 2,

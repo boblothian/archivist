@@ -67,6 +67,21 @@ class CollectionCapsuleCard extends StatelessWidget {
                   width: 48,
                   height: 48,
                   fit: BoxFit.cover,
+                  // Decode a small bitmap for this tiny avatar.
+                  memCacheWidth: 160,
+                  memCacheHeight: 160,
+                  placeholder:
+                      (_, __) => Container(
+                        width: 48,
+                        height: 48,
+                        color: Colors.grey[300],
+                        alignment: Alignment.center,
+                        child: const Icon(
+                          Icons.image,
+                          size: 20,
+                          color: Colors.black26,
+                        ),
+                      ),
                   errorWidget:
                       (_, __, ___) => const Icon(Icons.image_not_supported),
                 ),
@@ -320,6 +335,9 @@ class _ResumeMediaCard extends StatelessWidget {
                   child: CachedNetworkImage(
                     imageUrl: thumb,
                     fit: BoxFit.cover,
+                    // Roughly match ~150x180 card, scaled for hi-dpi.
+                    memCacheWidth: 450,
+                    memCacheHeight: 540,
                     placeholder: (_, __) => Container(color: Colors.grey[300]),
                     errorWidget:
                         (_, __, ___) => Container(
@@ -938,6 +956,15 @@ class _ContinueSectionColumn extends StatelessWidget {
                             width: 56,
                             height: 56,
                             fit: BoxFit.cover,
+                            // Downsample for this small tile avatar.
+                            memCacheWidth: 190,
+                            memCacheHeight: 190,
+                            placeholder:
+                                (_, __) => Container(
+                                  width: 56,
+                                  height: 56,
+                                  color: Colors.grey[300],
+                                ),
                           ),
                         ),
                         title: Text(
@@ -1480,37 +1507,47 @@ class _FeaturedTile extends StatelessWidget {
           ),
         );
       },
-      child: Ink(
+      child: SizedBox(
         width: 200,
-        decoration: BoxDecoration(
+        child: ClipRRect(
           borderRadius: BorderRadius.circular(16),
-          image: DecorationImage(
-            image: NetworkImage(imageUrl),
-            fit: BoxFit.cover,
-            colorFilter: ColorFilter.mode(
-              Colors.black.withValues(alpha: 0.25),
-              BlendMode.darken,
-            ),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.1),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Align(
-          alignment: Alignment.bottomLeft,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              title,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              CachedNetworkImage(
+                imageUrl: imageUrl,
+                fit: BoxFit.cover,
+                // Downsample the banner so we don't decode a huge image.
+                memCacheWidth: 600,
+                memCacheHeight: 360,
+                placeholder: (_, __) => Container(color: Colors.grey[300]),
+                errorWidget:
+                    (_, __, ___) => Container(
+                      color: Colors.grey[400],
+                      alignment: Alignment.center,
+                      child: const Icon(
+                        Icons.image_not_supported,
+                        color: Colors.black38,
+                        size: 32,
+                      ),
+                    ),
               ),
-            ),
+              // Overlay like your old ColorFilter.darken
+              Container(color: Colors.black.withOpacity(0.25)),
+              Align(
+                alignment: Alignment.bottomLeft,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),

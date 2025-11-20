@@ -195,14 +195,64 @@ class _GridBodyState extends State<_GridBody>
             ? fav.thumb!.trim()
             : archiveThumbUrl(id);
 
-    // Resolve & cache mediatype
+    // ────────────────────────────────────────────────
+    // 0) FAST PATH: Use cached files to open video chooser
+    //    → No network calls here.
+    // ────────────────────────────────────────────────
+    List<Map<String, String>> files = fav.files ?? [];
+
+    List<Map<String, dynamic>> _buildVideoFiles(List<Map<String, String>> src) {
+      return src
+          .where((f) {
+            final name = (f['name'] ?? '').toString();
+            if (name.isEmpty) return false;
+            final url =
+                'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
+            return MediaPlayerOps.isVideoUrl(url);
+          })
+          .map((f) {
+            final name = (f['name'] ?? '').toString();
+            final fmt = _inferFormat(name, (f['format'] ?? '').toString());
+            return {
+              'name': name,
+              'format': fmt,
+              'size': _toInt(f['size']),
+              'width': _toInt(f['width']),
+              'height': _toInt(f['height']),
+            };
+          })
+          .toList(growable: false);
+    }
+
+    final fastVideoFiles = _buildVideoFiles(files);
+    if (fastVideoFiles.isNotEmpty) {
+      // Log progress quickly without needing mediatype / isCollection.
+      await RecentProgressService.instance.touch(
+        id: id,
+        title: title,
+        thumb: thumb,
+        kind: 'item', // or 'video' if your app supports that
+      );
+      if (!mounted) return;
+
+      await showVideoChooser(
+        context,
+        identifier: id,
+        title: title,
+        files: fastVideoFiles,
+      );
+      return;
+    }
+
+    // ────────────────────────────────────────────────
+    // 1) Resolve mediatype & collection status (slow path)
+    //    Only for non-video items or when we lack cached video info.
+    // ────────────────────────────────────────────────
     final mediatype = await _resolveAndPersistMediaType(id, fav);
     final mt = (mediatype ?? '').toLowerCase();
 
-    // Check if collection
     final isCollection = await ArchiveApi.isCollection(id);
 
-    // Log progress
     final kindForProgress =
         isCollection
             ? 'collection'
@@ -219,7 +269,7 @@ class _GridBodyState extends State<_GridBody>
     if (!mounted) return;
 
     // ────────────────────────────────────────────────
-    // 0) COLLECTION PATH
+    // 2) COLLECTION PATH
     // ────────────────────────────────────────────────
     if (isCollection) {
       await Navigator.of(context).push(
@@ -235,11 +285,10 @@ class _GridBodyState extends State<_GridBody>
     }
 
     // ────────────────────────────────────────────────
-    // 1) Load cached files
+    // 3) Load / enrich files
     // ────────────────────────────────────────────────
-    List<Map<String, String>> files = fav.files ?? [];
+    files = fav.files ?? [];
 
-    // 2) Enrich if needed
     if (_needsEnrichment(files)) {
       try {
         ScaffoldMessenger.of(
@@ -267,28 +316,9 @@ class _GridBodyState extends State<_GridBody>
     }
 
     // ────────────────────────────────────────────────
-    // 3) VIDEO: Open with toast (unchanged)
+    // 4) VIDEO: Slow-path (if we had no cached video files)
     // ────────────────────────────────────────────────
-    final List<Map<String, dynamic>> videoFiles = files
-        .where((f) {
-          final name = (f['name'] ?? '').toString();
-          final url =
-              'https://archive.org/download/$id/${Uri.encodeComponent(name)}';
-          return name.isNotEmpty && MediaPlayerOps.isVideoUrl(url);
-        })
-        .map((f) {
-          final name = (f['name'] ?? '').toString();
-          final fmt = _inferFormat(name, (f['format'] ?? '').toString());
-          return {
-            'name': name,
-            'format': fmt,
-            'size': _toInt(f['size']),
-            'width': _toInt(f['width']),
-            'height': _toInt(f['height']),
-          };
-        })
-        .toList(growable: false);
-
+    final videoFiles = _buildVideoFiles(files);
     if (videoFiles.isNotEmpty) {
       await showVideoChooser(
         context,
@@ -300,7 +330,7 @@ class _GridBodyState extends State<_GridBody>
     }
 
     // ────────────────────────────────────────────────
-    // 4) AUDIO: Show format chooser → open AudioAlbumScreen
+    // 5) AUDIO: unchanged
     // ────────────────────────────────────────────────
     final List<Map<String, dynamic>> audioFiles = files
         .where((f) {
@@ -317,7 +347,6 @@ class _GridBodyState extends State<_GridBody>
         .toList(growable: false);
 
     if (audioFiles.isNotEmpty) {
-      // Ask user which audio format they want (mp3 / flac / wav)
       final chosenExt = await showAudioFormatChooser(
         context,
         identifier: id,
@@ -327,7 +356,6 @@ class _GridBodyState extends State<_GridBody>
 
       if (!mounted) return;
 
-      // Filter files by extension
       final filtered =
           (chosenExt == null)
               ? audioFiles
@@ -336,7 +364,6 @@ class _GridBodyState extends State<_GridBody>
                 return name.endsWith(chosenExt.toLowerCase());
               }).toList();
 
-      // Fallback if nothing matched
       final effectiveFiles = filtered.isNotEmpty ? filtered : audioFiles;
 
       final audioList =
@@ -353,7 +380,6 @@ class _GridBodyState extends State<_GridBody>
 
       if (!mounted) return;
 
-      // Open album-style screen
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder:
@@ -370,7 +396,7 @@ class _GridBodyState extends State<_GridBody>
     }
 
     // ────────────────────────────────────────────────
-    // 4) DEFAULT: File Browser (audio, PDF, text, etc.)
+    // 6) DEFAULT: File Browser
     // ────────────────────────────────────────────────
     await _openItemScreen(
       context,

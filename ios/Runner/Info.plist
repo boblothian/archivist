@@ -1,3 +1,4 @@
+<!-- ios/Runner/Info.plist (cleaned) -->
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -30,6 +31,7 @@
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -50,7 +52,7 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 
-	<!-- App Transport Security: allow archive.org (and subdomains) over HTTP -->
+	<!-- App Transport Security: allow archive.org over HTTP -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSExceptionDomains</key>
@@ -65,7 +67,7 @@
 		</dict>
 	</dict>
 
-	<!-- URL schemes you can query (for url_launcher sanity) -->
+	<!-- URL schemes you can query -->
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>http</string>
@@ -78,35 +80,29 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 
-	<!-- Privacy: Microphone (only if you actually record) -->
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Archivereader uses the microphone to record voice notes or narrate archived texts.</string>
-
-	<!-- Privacy: Bluetooth -->
+	<!-- Bluetooth (optional for Bluetooth audio accessories) -->
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Archivereader connects to Bluetooth audio devices to play archived audiobooks and recordings.</string>
 
-	<!-- ✅ NEW: Local Network Privacy (required for Cast/DLNA discovery) -->
+	<!-- Local Network permission (Cast/DLNA discovery) -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Archivereader needs local network access to discover and cast to devices on your network.</string>
 
-	<!-- ✅ NEW: Bonjour service types (required for Google Cast mDNS) -->
+	<!-- Bonjour service types (Google Cast mDNS) -->
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_googlecast._tcp</string>
 	</array>
 
-	<!-- ✅ NEW: Background audio playback -->
+	<!-- Background audio playback -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
 	</array>
 
-	<key>NSAppleMusicUsageDescription</key>
-    <string>Archivereader plays archived audio and shows controls on the lock screen.</string>
-
-	<!-- Add inside <dict> after UIBackgroundModes -->
-    <key>NSAppleMusicUsageDescription</key>
-    <string>Archivereader plays archived audio and shows controls on the lock screen.</string>
+	<!-- REMOVE if you don't access the user's Apple Music library.
+	     If kept, ensure you actually use MediaLibrary APIs. -->
+	<!-- <key>NSAppleMusicUsageDescription</key>
+	<string>Archivereader plays archived audio and shows controls on the lock screen.</string> -->
 </dict>
 </plist>

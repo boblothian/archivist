@@ -6,7 +6,7 @@ import 'package:chewie/chewie.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_chrome_cast/flutter_chrome_cast.dart';
 import 'package:flutter_to_airplay/flutter_to_airplay.dart';
-import 'package:media_cast_dlna/media_cast_dlna.dart'; // DLNA (Android only)
+import 'package:media_cast_dlna/media_cast_dlna.dart';
 import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -18,8 +18,6 @@ class VideoPlayerScreen extends StatefulWidget {
   final String? url; // nullable if playing via queue
   final String identifier;
   final String title;
-
-  /// Seek here on first load (milliseconds)
   final int? startPositionMs;
 
   // Queue support (all optional)
@@ -27,7 +25,6 @@ class VideoPlayerScreen extends StatefulWidget {
   final Map<String, String>? queueTitles; // url -> title
   final int? startIndex; // index into `queue`
 
-  // NOTE: do NOT make this constructor const. We rely on runtime asserts.
   VideoPlayerScreen({
     super.key,
     this.file,
@@ -48,6 +45,11 @@ class VideoPlayerScreen extends StatefulWidget {
 }
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
+  // ─── Retain controllers when leaving on iOS to keep AirPlay alive (why) ───
+  static VideoPlayerController? _retainedVideo;
+  static ChewieController? _retainedChewie;
+  bool _keepAliveForAirPlay = false;
+
   // Queue state
   List<String> _urls = const [];
   Map<String, String> _titles = const {};
@@ -62,15 +64,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   String get _currentTitle => _titles[_currentUrl] ?? widget.title;
-
   bool get _hasHttpUrl => _currentUrl.toLowerCase().startsWith('http');
 
-  // Track progress to return on pop
+  // Progress
   int _lastPosMs = 0;
   int _lastDurMs = 0;
   bool _popped = false;
 
-  // Track buffering/playing
+  // State flags
   bool _wasBuffering = false;
   bool _wasPlaying = false;
 
@@ -111,7 +112,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       _titles = Map<String, String>.from(widget.queueTitles ?? const {});
       _queueIndex = 0;
     } else {
-      // local file-only mode — no URLs
       _urls = const [];
       _titles = const {};
       _queueIndex = 0;
@@ -120,19 +120,25 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   @override
   void dispose() {
-    // Fallback: if we never went through _handlePopWithProgress,
-    // at least persist whatever position we have now.
     if (!_popped) {
-      // fire-and-forget, we can't await in dispose
-      _saveProgress();
+      _saveProgress(); // best-effort
     }
 
-    _disposePlayers();
+    // iOS AirPlay: retain controllers instead of disposing if user opted in (why)
+    if (Platform.isIOS && _keepAliveForAirPlay && _videoController != null) {
+      try {
+        _videoController?.removeListener(_onTick);
+      } catch (_) {}
+      _retainedVideo ??= _videoController;
+      _retainedChewie ??= _chewieController;
+      _videoController = null;
+      _chewieController = null;
+    } else {
+      _disposePlayers();
+    }
 
-    // Wakelock / power
     WakelockPlus.disable();
 
-    // Chromecast cleanup
     _gcSessionSub?.cancel();
     _gcMediaStatusSub?.cancel();
     try {
@@ -140,7 +146,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       GoogleCastDiscoveryManager.instance.stopDiscovery();
     } catch (_) {}
 
-    // DLNA cleanup
     _dlnaRefreshTimer?.cancel();
     _stopDlnaDiscovery();
 
@@ -175,12 +180,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         await GoogleCastContext.instance.setSharedInstanceWithOptions(options);
       }
 
-      // Start discovery early, keep it alive
       try {
         await GoogleCastDiscoveryManager.instance.startDiscovery();
       } catch (_) {}
 
-      // Observe session + media status
       _gcSessionSub = GoogleCastSessionManager.instance.currentSessionStream
           .listen((s) {
             if (s != null) {
@@ -224,8 +227,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
 
     final url = _currentUrl;
-    debugPrint('Cast: preparing to cast $url');
-
     final info = GoogleCastMediaInformation(
       contentId: url,
       contentUrl: Uri.parse(url),
@@ -250,19 +251,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       if (_videoController?.value.isPlaying == true) {
         await _videoController!.pause();
       }
-
       final pos = _currentPositionForCast;
-      debugPrint('Cast: loading media at position $pos');
-
       await GoogleCastRemoteMediaClient.instance.loadMedia(
         info,
         autoPlay: true,
         playPosition: pos,
       );
-
-      debugPrint('Cast: loadMedia sent successfully');
     } catch (e) {
-      debugPrint('Cast: error while casting: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -272,7 +267,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   // ───────────────────── DLNA ─────────────────────
   Future<void> _initDlna() async {
-    if (!Platform.isAndroid) return; // plugin is Android-only
+    if (!Platform.isAndroid) return;
     try {
       await _dlna.initializeUpnpService();
       final ok = await _dlna.isUpnpServiceInitialized();
@@ -293,11 +288,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         ),
       );
 
-      // initial devices
       _dlnaDevices = await _dlna.getDiscoveredDevices();
       if (mounted) setState(() {});
 
-      // keep short refresher polling then stop
       _dlnaRefreshTimer?.cancel();
       _dlnaRefreshTimer = Timer.periodic(const Duration(seconds: 3), (t) async {
         if (!mounted) {
@@ -305,9 +298,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           return;
         }
         final list = await _dlna.getDiscoveredDevices();
-        if (mounted) {
-          setState(() => _dlnaDevices = list);
-        }
+        if (mounted) setState(() => _dlnaDevices = list);
         if (t.tick >= 6) {
           t.cancel();
           _stopDlnaDiscovery();
@@ -332,8 +323,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
     final url = _currentUrl;
     final udn = device.udn;
-
-    // Try to give the TV proper metadata (may help with aspect ratio / zoom).
     String? resolution;
     TimeDuration? duration;
 
@@ -357,16 +346,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     );
 
     try {
-      debugPrint('DLNA: casting $url to ${device.friendlyName}');
-
       if (_videoController?.value.isPlaying == true) {
         await _videoController!.pause();
       }
-
       await _dlna.setMediaUri(udn, Url(value: url), meta);
       await _dlna.play(udn);
 
-      // Stop discovery once we are casting so we don't keep pinging the network.
       await _stopDlnaDiscovery();
       _dlnaRefreshTimer?.cancel();
       _dlnaRefreshTimer = null;
@@ -377,35 +362,48 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           _activeDlnaUdn = udn;
         });
       }
-
-      debugPrint('DLNA: playback started on ${device.friendlyName}');
     } catch (e) {
-      debugPrint('DLNA: cast error: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('DLNA cast failed: $e')));
+      ).showSnackBar(SnackBar(content: Text('DLNA failed: $e')));
     }
   }
 
+  // ✅ Added: stop DLNA playback (fixes undefined name)
   Future<void> _stopDlnaPlayback() async {
     if (_activeDlnaUdn == null) return;
     try {
       await _dlna.stop(_activeDlnaUdn!);
     } catch (_) {}
-    if (mounted) {
-      setState(() {
-        _isCastingDlna = false;
-        _activeDlnaUdn = null;
-      });
-    }
+    if (!mounted) return;
+    setState(() {
+      _isCastingDlna = false;
+      _activeDlnaUdn = null;
+    });
   }
 
   // ───────────────────── Local player ─────────────────────
   Future<void> _initializePlayerForCurrent({bool initial = false}) async {
+    // If we retained controllers (iOS keep-alive), reuse them.
+    if (Platform.isIOS && _retainedVideo != null && _retainedChewie != null) {
+      _videoController = _retainedVideo;
+      _chewieController = _retainedChewie;
+      _retainedVideo = null;
+      _retainedChewie = null;
+
+      _videoController?.removeListener(_onTick);
+      _videoController?.addListener(_onTick);
+
+      _wasBuffering = _videoController!.value.isBuffering;
+      _wasPlaying = _videoController!.value.isPlaying;
+      if (mounted) setState(() {});
+      return;
+    }
+
+    // Fresh controllers
     _disposePlayers();
 
-    // Pick source: local file when provided & no queue URL available; otherwise current URL
     if (widget.file != null && _urls.isEmpty) {
       _videoController = VideoPlayerController.file(widget.file!);
     } else if (_currentUrl.isNotEmpty) {
@@ -419,14 +417,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
     _videoController!.addListener(_onTick);
     await _videoController!.initialize();
-
-    // Make sure isBuffering transitions clear reliably
     await _videoController!.setLooping(false);
 
-    // Seek to resume point only on very first load if provided
-    if (initial &&
-        widget.startPositionMs != null &&
-        widget.startPositionMs! > 0) {
+    if (initial && (widget.startPositionMs ?? 0) > 0) {
       await _videoController!.seekTo(
         Duration(milliseconds: widget.startPositionMs!),
       );
@@ -454,7 +447,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     _lastPosMs = v.position.inMilliseconds;
     _lastDurMs = v.duration.inMilliseconds;
 
-    // Detect "ended" and advance if we have more in the queue
     final ended =
         v.isInitialized &&
         !v.isPlaying &&
@@ -468,7 +460,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       return;
     }
 
-    // Rebuild only when buffering/playing flips to avoid excessive setState.
     if (_wasBuffering != v.isBuffering || _wasPlaying != v.isPlaying) {
       setState(() {
         _wasBuffering = v.isBuffering;
@@ -489,45 +480,37 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     await _initializePlayerForCurrent();
   }
 
-  // ───────────────────── Back/Pop handling (with iOS AirPlay warning) ─────────────────────
+  // ───────────────────── Back/Pop handling (keep AirPlay) ─────────────────────
   Future<bool> _onWillPop() async {
-    // On iOS, warn that leaving will stop playback (including any AirPlay).
     if (Platform.isIOS) {
       final isPlaying = _videoController?.value.isPlaying ?? false;
-
       if (isPlaying) {
-        final shouldLeave =
+        final keepPlaying =
             await showDialog<bool>(
               context: context,
-              builder: (ctx) {
-                return AlertDialog(
-                  title: const Text('Stop playback?'),
-                  content: const Text(
-                    'Leaving this screen will stop the video playback '
-                    '(including AirPlay on your TV, if active).',
+              builder:
+                  (ctx) => AlertDialog(
+                    title: const Text('Keep playing on AirPlay?'),
+                    content: const Text(
+                      'You can leave this screen and keep the video playing on your TV.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(false),
+                        child: const Text('Stop & Go Back'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.of(ctx).pop(true),
+                        child: const Text('Keep Playing'),
+                      ),
+                    ],
                   ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(ctx).pop(false),
-                      child: const Text('Cancel'),
-                    ),
-                    FilledButton(
-                      onPressed: () => Navigator.of(ctx).pop(true),
-                      child: const Text('Stop & Go Back'),
-                    ),
-                  ],
-                );
-              },
             ) ??
             false;
-
-        if (!shouldLeave) {
-          return false; // stay on player
-        }
+        _keepAliveForAirPlay = keepPlaying || _keepAliveForAirPlay;
       }
     }
 
-    // Normal pop behaviour (sends PlaybackResult back)
     return _handlePopWithProgress();
   }
 
@@ -564,7 +547,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   child: Text('${_queueIndex + 1}/${_urls.length}'),
                 ),
               ),
-            // Native AirPlay button on iOS
             if (Platform.isIOS)
               const Padding(
                 padding: EdgeInsets.only(right: 4),
@@ -578,16 +560,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   ),
                 ),
               ),
-            IconButton(
-              tooltip: 'Cast',
-              icon: Icon(isCasting ? Icons.cast_connected : Icons.cast),
-              onPressed: !_hasHttpUrl ? null : _openCastPicker,
-            ),
+            if (!Platform.isIOS)
+              IconButton(
+                tooltip: 'Cast',
+                icon: Icon(isCasting ? Icons.cast_connected : Icons.cast),
+                onPressed: !_hasHttpUrl ? null : _openCastPicker,
+              ),
             if (_isCastingDlna)
               IconButton(
                 tooltip: 'Stop DLNA',
                 icon: const Icon(Icons.stop_circle_outlined),
-                onPressed: _stopDlnaPlayback,
+                onPressed: () async => _stopDlnaPlayback(), // <-- closure
               ),
             if (_isCastingChromecast)
               IconButton(
@@ -604,7 +587,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         ),
         body: Stack(
           children: [
-            // Main player
             if (!isInitialized)
               const Center(child: CircularProgressIndicator())
             else if (isCasting)
@@ -627,14 +609,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 ),
                 controller: _chewieController!,
               ),
-
-            // Chromecast mini controller
             const Align(
               alignment: Alignment.bottomCenter,
               child: GoogleCastMiniController(),
             ),
-
-            // Buffering spinner (only when truly buffering)
             if (showBuffering) const Center(child: CircularProgressIndicator()),
           ],
         ),
@@ -647,21 +625,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     _popped = true;
     if (!mounted) return false;
 
-    // Save to recent progress from inside the player
     await _saveProgress();
-
-    // Still return the result map for existing caller code
     Navigator.of(
       context,
     ).pop(<String, int>{'positionMs': _lastPosMs, 'durationMs': _lastDurMs});
 
-    return false; // handled
+    return false;
   }
 
-  // Combined picker (Chromecast + DLNA)
-  // Combined picker (Chromecast + DLNA)
+  // Combined picker (Chromecast + DLNA) — unchanged
   Future<void> _openCastPicker() async {
-    // ensure discoveries are running/fresh
     try {
       await GoogleCastDiscoveryManager.instance.startDiscovery();
     } catch (_) {}
@@ -672,7 +645,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       context: context,
       showDragHandle: true,
       useRootNavigator: true,
-      isScrollControlled: true, // helps when content is tall
+      isScrollControlled: true,
       builder: (ctx) {
         return SafeArea(
           child: Padding(
@@ -697,8 +670,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                     ),
                   ),
                   const Divider(height: 1),
-
-                  // Chromecast
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
                     child: Row(
@@ -754,10 +725,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                       },
                     ),
                   ),
-
                   const Divider(height: 1),
-
-                  // DLNA
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
                     child: Row(
@@ -819,7 +787,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                                   },
                                 )),
                   ),
-
                   const Divider(height: 1),
                   Padding(
                     padding: const EdgeInsets.only(right: 8, top: 4),
@@ -842,13 +809,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   Future<void> _saveProgress() async {
-    // Refresh from controller in case last tick hasn’t fired yet
     if (_videoController != null && _videoController!.value.isInitialized) {
       _lastPosMs = _videoController!.value.position.inMilliseconds;
       _lastDurMs = _videoController!.value.duration.inMilliseconds;
     }
 
-    // Build fileUrl / fileName based on current source
     final String fileUrl =
         widget.file != null ? 'file://${widget.file!.path}' : _currentUrl;
 
@@ -863,7 +828,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       await RecentProgressService.instance.updateVideo(
         id: widget.identifier,
         title: _currentTitle,
-        thumb: null, // or pass a thumb via widget if you want
+        thumb: null,
         fileUrl: fileUrl,
         fileName: fileName,
         positionMs: _lastPosMs,

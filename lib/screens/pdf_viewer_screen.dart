@@ -46,6 +46,9 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   bool _isScrubbing = false;
   double _scrubPage = 0;
 
+  // Bookmarks as 0-based page indices
+  Set<int> _bookmarks = {};
+
   String get _progressId => widget.identifier;
 
   /// Unique resume key per *identifier + file*, so different PDFs don’t clash.
@@ -65,6 +68,9 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     return parts.join('_');
     // Example: pdf_page_mars_attacks_1993_issue_01.pdf
   }
+
+  // Separate key for bookmarks for this PDF
+  String get _bookmarksKey => '${_resumeKey}_bookmarks';
 
   @override
   void initState() {
@@ -119,6 +125,15 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       _currentPage = saved;
       _scrubPage = saved.toDouble();
 
+      // Load bookmarks for this PDF
+      final bmStrings = prefs.getStringList(_bookmarksKey) ?? const [];
+      _bookmarks =
+          bmStrings
+              .map((s) => int.tryParse(s))
+              .where((v) => v != null)
+              .cast<int>()
+              .toSet();
+
       ifMounted(this, () => setState(() => _loading = false));
     } catch (e) {
       ifMounted(this, () {
@@ -131,6 +146,208 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   Future<void> _saveResume(int page) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_resumeKey, page);
+  }
+
+  Future<void> _saveBookmarks() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _bookmarksKey,
+      _bookmarks.map((e) => e.toString()).toList(),
+    );
+  }
+
+  // Bottom sheet for "Go to page" + "Bookmark" (triggered by long-press)
+  Future<void> _showPageActionsSheet() async {
+    if (_totalPages <= 0) return;
+
+    final isBookmarked = _bookmarks.contains(_currentPage);
+    final currentLabel = 'Page ${_currentPage + 1}';
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent, // so we can draw rounded container
+      isScrollControlled: false,
+      builder: (ctx) {
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
+            decoration: BoxDecoration(
+              color: colors.surface,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  blurRadius: 20,
+                  color: Colors.black.withOpacity(0.2),
+                  offset: const Offset(0, -4),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 8),
+                // drag handle
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: colors.onSurface.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                ListTile(
+                  leading: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: colors.primary.withOpacity(0.08),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      isBookmarked ? Icons.bookmark_remove : Icons.bookmark_add,
+                      size: 18,
+                      color: colors.primary,
+                    ),
+                  ),
+                  title: Text(
+                    isBookmarked
+                        ? 'Remove bookmark on $currentLabel'
+                        : 'Add bookmark on $currentLabel',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colors.onSurface,
+                    ),
+                  ),
+                  onTap: () => Navigator.of(ctx).pop('bookmark'),
+                ),
+
+                const Divider(height: 1),
+
+                ListTile(
+                  leading: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: colors.secondary.withOpacity(0.08),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.tag, size: 18, color: colors.secondary),
+                  ),
+                  title: Text(
+                    'Go to page…',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colors.onSurface,
+                    ),
+                  ),
+                  onTap: () => Navigator.of(ctx).pop('goto'),
+                ),
+
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!mounted || result == null) return;
+
+    if (result == 'bookmark') {
+      _toggleBookmarkForPage(_currentPage);
+    } else if (result == 'goto') {
+      _showGotoPageDialog();
+    }
+  }
+
+  void _toggleBookmarkForPage(int page, {bool showSnackBar = true}) async {
+    setState(() {
+      if (_bookmarks.contains(page)) {
+        _bookmarks.remove(page);
+      } else {
+        _bookmarks.add(page);
+      }
+    });
+    await _saveBookmarks();
+
+    if (!mounted || !showSnackBar) return;
+
+    final isNowBookmarked = _bookmarks.contains(page);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          isNowBookmarked
+              ? 'Bookmarked page ${page + 1}'
+              : 'Removed bookmark on page ${page + 1}',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _showGotoPageDialog() async {
+    if (_totalPages <= 0) return;
+
+    final controller = TextEditingController(text: '${_currentPage + 1}');
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    final page = await showDialog<int>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: colors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Text(
+            'Go to page',
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: colors.onSurface,
+            ),
+          ),
+          content: TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            style: TextStyle(color: colors.onSurface),
+            decoration: InputDecoration(
+              hintText: '1 – $_totalPages',
+              hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                color: colors.onSurface.withOpacity(0.5),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                final raw = int.tryParse(controller.text.trim());
+                if (raw == null) {
+                  Navigator.of(ctx).pop();
+                  return;
+                }
+                final target = raw.clamp(1, _totalPages) - 1; // 0-based
+                Navigator.of(ctx).pop(target);
+              },
+              child: const Text('Go'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (page == null || !mounted) return;
+
+    if (_pdfController != null) {
+      await _pdfController!.setPage(page);
+    }
   }
 
   // Fullscreen top bar: back + page indicator
@@ -153,14 +370,17 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
             ),
           ),
 
-          // Page indicator
+          // Page indicator (still can long-press here too if you like)
           if (_totalPages > 0)
-            Text(
-              '${_currentPage + 1}/$_totalPages',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
+            GestureDetector(
+              onLongPress: _showPageActionsSheet,
+              child: Text(
+                '${_currentPage + 1}/$_totalPages',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             )
           else
@@ -170,73 +390,154 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     );
   }
 
-  // Bottom scrubber: press & drag to navigate pages quickly
+  // Bottom scrubber: floating rounded bar with page numbers + bookmark icons.
   Widget _buildBottomScrubber() {
     if (_totalPages <= 1) return const SizedBox.shrink();
 
     final min = 0.0;
     final max = (_totalPages - 1).toDouble();
     final value = _scrubPage.clamp(min, max);
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
 
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
-          colors: [Colors.black54, Colors.transparent],
-        ),
-      ),
+    return Padding(
       padding: EdgeInsets.only(
         left: 16,
         right: 16,
-        bottom: MediaQuery.of(context).padding.bottom + 12,
-        top: 12,
+        bottom: MediaQuery.of(context).padding.bottom + 8,
+        top: 8,
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            '${value.round() + 1}',
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: SliderTheme(
-              data: SliderTheme.of(context).copyWith(
-                trackHeight: 2,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+          // Page numbers row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${value.round() + 1}',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: colors.onSurface.withOpacity(0.7),
+                ),
               ),
-              child: Slider(
-                value: value,
-                min: min,
-                max: max > min ? max : min + 1,
-                onChangeStart: (_) {
-                  setState(() => _isScrubbing = true);
-                },
-                onChanged: (v) {
-                  setState(() => _scrubPage = v);
-                },
-                onChangeEnd: (v) async {
-                  if (_totalPages <= 0) return;
-                  final targetPage = v.round().clamp(
-                    0,
-                    _totalPages - 1,
-                  ); // 0-based
-                  setState(() {
-                    _isScrubbing = false;
-                    _scrubPage = targetPage.toDouble();
-                  });
-                  if (_pdfController != null) {
-                    await _pdfController!.setPage(targetPage);
+              Text(
+                '$_totalPages',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: colors.onSurface.withOpacity(0.7),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+
+          // Floating pill with slider + bookmark markers
+          SizedBox(
+            height: 40,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final pillWidth = constraints.maxWidth;
+                const horizontalPadding = 16.0;
+                final trackWidth = pillWidth - (horizontalPadding * 2);
+
+                final children = <Widget>[];
+
+                // Pill background + slider
+                children.add(
+                  Container(
+                    width: pillWidth,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: colors.surfaceVariant.withOpacity(0.95),
+                      borderRadius: BorderRadius.circular(999),
+                      boxShadow: [
+                        BoxShadow(
+                          blurRadius: 12,
+                          color: Colors.black.withOpacity(0.12),
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: horizontalPadding,
+                    ),
+                    alignment: Alignment.center,
+                    child: SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 3,
+                        thumbShape: const RoundSliderThumbShape(
+                          enabledThumbRadius: 8,
+                        ),
+                        overlayShape: const RoundSliderOverlayShape(
+                          overlayRadius: 16,
+                        ),
+                      ),
+                      child: Slider(
+                        value: value,
+                        min: min,
+                        max: max > min ? max : min + 1,
+                        onChangeStart: (_) {
+                          setState(() => _isScrubbing = true);
+                        },
+                        onChanged: (v) {
+                          setState(() => _scrubPage = v);
+                        },
+                        onChangeEnd: (v) async {
+                          if (_totalPages <= 0) return;
+                          final targetPage = v.round().clamp(
+                            0,
+                            _totalPages - 1,
+                          ); // 0-based
+                          setState(() {
+                            _isScrubbing = false;
+                            _scrubPage = targetPage.toDouble();
+                          });
+                          if (_pdfController != null) {
+                            await _pdfController!.setPage(targetPage);
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                );
+
+                // Bookmark icons above the track (inside same pill area)
+                if (_bookmarks.isNotEmpty && _totalPages > 1) {
+                  for (final page in _bookmarks) {
+                    if (page < 0 || page >= _totalPages) continue;
+
+                    final t = page / (_totalPages - 1);
+                    final dx = horizontalPadding + t * trackWidth;
+
+                    children.add(
+                      Positioned(
+                        left: dx - 9, // center icon horizontally
+                        top: 4, // a bit above the track
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onTap: () async {
+                            if (_pdfController == null) return;
+
+                            if (page == _currentPage) {
+                              // tapping bookmark on current page removes it
+                              _toggleBookmarkForPage(page);
+                            } else {
+                              await _pdfController!.setPage(page);
+                            }
+                          },
+                          child: Icon(
+                            Icons.bookmark,
+                            size: 18,
+                            color: colors.primary,
+                          ),
+                        ),
+                      ),
+                    );
                   }
-                },
-              ),
+                }
+
+                return Stack(clipBehavior: Clip.none, children: children);
+              },
             ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            '$_totalPages',
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
           ),
         ],
       ),
@@ -341,6 +642,10 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
             // Ensure current/scrub are within range
             _currentPage = _defaultPage.clamp(0, pages - 1);
             _scrubPage = _currentPage.toDouble();
+
+            // Prune invalid bookmark indices
+            _bookmarks =
+                _bookmarks.where((p) => p >= 0 && p < _totalPages).toSet();
           });
 
           RecentProgressService.instance.touch(
@@ -393,10 +698,17 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         },
       );
 
+      // <<< KEY PART: long-press on the PAGE (PDF area) >>>
+      final viewerWithLongPress = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onLongPress: _showPageActionsSheet,
+        child: viewer,
+      );
+
       body = Stack(
         fit: StackFit.expand,
         children: [
-          viewer,
+          viewerWithLongPress,
           // Top gradient bar with back + page indicator
           Positioned(
             top: 0,
@@ -421,7 +733,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
               ),
             ),
           ),
-          // Bottom scrubber for quick navigation
+          // Bottom scrubber for quick navigation + bookmarks
           Positioned(
             left: 0,
             right: 0,

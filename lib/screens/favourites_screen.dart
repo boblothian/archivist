@@ -429,9 +429,9 @@ class _GridBodyState extends State<_GridBody>
           padding: const EdgeInsets.all(8),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            childAspectRatio: 0.62,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
+            childAspectRatio: 0.52,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
           ),
           itemCount: widget.items.length,
           itemBuilder: (context, i) {
@@ -464,7 +464,7 @@ class _GridBodyState extends State<_GridBody>
                   children: [
                     // 🔽 FIXED-SIZE THUMBNAIL (no Expanded)
                     AspectRatio(
-                      aspectRatio: 3 / 4, // 3:4 cover art
+                      aspectRatio: 2 / 3, // 3:4 cover art
                       child: Stack(
                         children: [
                           Positioned.fill(

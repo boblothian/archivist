@@ -548,14 +548,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 ),
               ),
             if (Platform.isIOS)
-              const Padding(
-                padding: EdgeInsets.only(right: 4),
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
                 child: SizedBox(
                   width: 44,
                   height: 44,
                   child: AirPlayRoutePickerView(
-                    tintColor: Colors.white,
-                    activeTintColor: Colors.white,
+                    tintColor:
+                        Theme.of(context).brightness == Brightness.dark
+                            ? Colors.white
+                            : Colors.black,
+                    activeTintColor:
+                        Theme.of(context).brightness == Brightness.dark
+                            ? Colors.white
+                            : Colors.black,
                     backgroundColor: Colors.transparent,
                   ),
                 ),

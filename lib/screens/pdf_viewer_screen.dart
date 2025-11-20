@@ -447,7 +447,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                     width: pillWidth,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: colors.surfaceVariant.withOpacity(0.95),
+                      color: colors.surfaceContainerHighest.withOpacity(0.95),
                       borderRadius: BorderRadius.circular(999),
                       boxShadow: [
                         BoxShadow(

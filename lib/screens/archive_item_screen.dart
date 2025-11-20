@@ -322,25 +322,23 @@ class _ArchiveItemScreenState extends State<ArchiveItemScreen> {
     }
 
     // 🔽 Ensure the queue will start at the file the user tapped
-    if (q != null) {
-      int startIndex = q.startIndex;
+    int startIndex = q.startIndex;
 
-      // Re-check using the exact URL, just in case
-      try {
-        final idx = q.items.indexWhere((p) => (p.url) == fileUrl);
-        if (idx >= 0) {
-          startIndex = idx;
-        }
-      } catch (_) {
-        // ignore; keep previous startIndex
+    // Re-check using the exact URL, just in case
+    try {
+      final idx = q.items.indexWhere((p) => (p.url) == fileUrl);
+      if (idx >= 0) {
+        startIndex = idx;
       }
-
-      // Rebuild q because MediaQueue fields are final
-      q = MediaQueue(items: q.items, type: q.type, startIndex: startIndex);
+    } catch (_) {
+      // ignore; keep previous startIndex
     }
 
+    // Rebuild q because MediaQueue fields are final
+    q = MediaQueue(items: q.items, type: q.type, startIndex: startIndex);
+  
     // 3) Launch the queue-enabled audio player
-    final MediaQueue finalQueue = q!;
+    final MediaQueue finalQueue = q;
 
     await MediaPlayerOps.playAudioQueue(
       context,

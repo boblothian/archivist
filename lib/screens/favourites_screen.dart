@@ -201,7 +201,7 @@ class _GridBodyState extends State<_GridBody>
     // ────────────────────────────────────────────────
     List<Map<String, String>> files = fav.files ?? [];
 
-    List<Map<String, dynamic>> _buildVideoFiles(List<Map<String, String>> src) {
+    List<Map<String, dynamic>> buildVideoFiles(List<Map<String, String>> src) {
       return src
           .where((f) {
             final name = (f['name'] ?? '').toString();
@@ -224,7 +224,7 @@ class _GridBodyState extends State<_GridBody>
           .toList(growable: false);
     }
 
-    final fastVideoFiles = _buildVideoFiles(files);
+    final fastVideoFiles = buildVideoFiles(files);
     if (fastVideoFiles.isNotEmpty) {
       // Log progress quickly without needing mediatype / isCollection.
       await RecentProgressService.instance.touch(
@@ -318,7 +318,7 @@ class _GridBodyState extends State<_GridBody>
     // ────────────────────────────────────────────────
     // 4) VIDEO: Slow-path (if we had no cached video files)
     // ────────────────────────────────────────────────
-    final videoFiles = _buildVideoFiles(files);
+    final videoFiles = buildVideoFiles(files);
     if (videoFiles.isNotEmpty) {
       await showVideoChooser(
         context,

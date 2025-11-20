@@ -62,7 +62,7 @@ class DiscogsService {
       throw Exception('No audio files to order');
     }
 
-    String _normalize(String s) {
+    String normalize(String s) {
       s = s.toLowerCase();
       // strip extension
       final dot = s.lastIndexOf('.');
@@ -78,7 +78,7 @@ class DiscogsService {
     final Map<String, int> discogsIndex = {};
     for (int i = 0; i < rel.tracks.length; i++) {
       final t = rel.tracks[i];
-      final norm = _normalize(t.title);
+      final norm = normalize(t.title);
       if (norm.isEmpty) continue;
       discogsIndex.putIfAbsent(norm, () => i);
     }
@@ -86,7 +86,7 @@ class DiscogsService {
     final List<MapEntry<String, int>> matches = [];
     for (final f in audioFiles) {
       final name = (f['name'] ?? '').toString();
-      final norm = _normalize(name);
+      final norm = normalize(name);
       if (norm.isEmpty) continue;
       final idx = discogsIndex[norm];
       if (idx != null) {

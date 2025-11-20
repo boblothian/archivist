@@ -1,40 +1,40 @@
-// ===============================
-// 1) lib/widgets/video_chooser.dart
-// ===============================
+// lib/widgets/video_chooser.dart
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../media/media_player_ops.dart';
+import '../screens/video_album_screen.dart';
 import '../services/recent_progress_service.dart';
 import '../utils/archive_helpers.dart';
 
 class ArchiveVideoMeta {
   final String name;
   final String format;
+  final int? sizeBytes;
   final int? width;
   final int? height;
-  final int? sizeBytes;
 
   const ArchiveVideoMeta({
     required this.name,
     required this.format,
+    this.sizeBytes,
     this.width,
     this.height,
-    this.sizeBytes,
   });
 
   factory ArchiveVideoMeta.fromMap(Map<String, dynamic> m) {
-    // Parse size: raw bytes (e.g. "9234567") OR formatted (e.g. "9.2 MB")
     int? parseSize(dynamic v) {
       if (v == null) return null;
       final s = v.toString().trim();
       if (s.isEmpty) return null;
 
-      // Try direct parse first (raw bytes)
       final direct = int.tryParse(s);
       if (direct != null) return direct;
 
-      // Try parsing formatted size: "9.2 MB", "1.5 GB", etc.
       final match = RegExp(
         r'^([\d.]+)\s*(B|KB|MB|GB|TB)$',
         caseSensitive: false,
@@ -49,22 +49,26 @@ class ArchiveVideoMeta {
       return (value * (1 << (10 * multiplier))).round();
     }
 
+    int? parseDim(dynamic v) {
+      if (v == null) return null;
+      final s = v.toString().trim();
+      if (s.isEmpty) return null;
+      return int.tryParse(s);
+    }
+
     return ArchiveVideoMeta(
       name: (m['name'] ?? '').toString(),
-      format:
-          (m['format'] ?? m['fmt'] ?? '').toString(), // Support legacy 'fmt'
-      width: _toInt(m['width']),
-      height: _toInt(m['height']),
+      format: (m['format'] ?? m['fmt'] ?? '').toString(),
       sizeBytes: parseSize(m['size']),
+      width: parseDim(m['width']),
+      height: parseDim(m['height']),
     );
   }
-
-  static int? _toInt(dynamic v) {
-    if (v == null) return null;
-    if (v is int) return v;
-    return int.tryParse('$v');
-  }
 }
+
+// ─────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────
 
 String _humanBytes(int? b) {
   if (b == null || b <= 0) return '—';
@@ -79,6 +83,44 @@ String _humanBytes(int? b) {
   return u == 0 ? '$b ${units[u]}' : '$fixed ${units[u]}';
 }
 
+String _extFromName(String name) {
+  final m = RegExp(r'\.([a-z0-9]+)$', caseSensitive: false).firstMatch(name);
+  return (m?.group(1) ?? '').toLowerCase();
+}
+
+bool _isVideoName(String name) {
+  final ext = _extFromName(name);
+  return [
+    'mp4',
+    'm4v',
+    'mkv',
+    'webm',
+    'mov',
+    'avi',
+    'm3u8', // HLS playlist
+  ].contains(ext);
+}
+
+String _videoFormatLabel(String ext) {
+  switch (ext) {
+    case 'mp4':
+    case 'm4v':
+      return 'MP4 / H.264';
+    case 'mkv':
+      return 'MKV / Matroska';
+    case 'webm':
+      return 'WebM';
+    case 'mov':
+      return 'QuickTime MOV';
+    case 'avi':
+      return 'AVI';
+    case 'm3u8':
+      return 'HLS playlist (.m3u8)';
+    default:
+      return ext.toUpperCase();
+  }
+}
+
 String _prettyFilename(String raw) {
   var s = raw;
   s = s.replaceFirst(
@@ -91,148 +133,330 @@ String _prettyFilename(String raw) {
   return s;
 }
 
-String _extFromName(String name) {
-  final m = RegExp(r'\.([a-z0-9]+)$', caseSensitive: false).firstMatch(name);
-  return (m?.group(1) ?? '').toLowerCase();
-}
-
-String _guessMime(String name, String format) {
-  final n = name.toLowerCase();
-  final f = format.toLowerCase();
-  if (n.endsWith('.webm') || f.contains('webm')) return 'video/webm';
-  if (n.endsWith('.mp4') ||
-      n.endsWith('.m4v') ||
-      f.contains('mp4') ||
-      f.contains('h.264'))
-    return 'video/mp4';
-  if (n.endsWith('.mkv') || f.contains('matroska')) return 'video/x-matroska';
-  if (n.endsWith('.mov')) return 'video/quicktime';
-  if (n.endsWith('.m3u8')) return 'application/vnd.apple.mpegurl';
-  return 'video/*';
-}
-
 String _resolutionLabel(ArchiveVideoMeta m) {
-  if (m.width != null && m.height != null) return '${m.width}x${m.height}';
-  final nameRes = RegExp(r'(\d{3,4})p').firstMatch(m.name)?.group(1);
-  if (nameRes != null) return '${nameRes}p';
-  return 'Unknown';
+  if (m.width != null && m.height != null) {
+    return '${m.width}×${m.height}';
+  }
+  // Try to infer from filename like "1080p", "720p"
+  final match = RegExp(r'(\d{3,4})p').firstMatch(m.name.toLowerCase());
+  if (match != null) {
+    return '${match.group(1)}p';
+  }
+  return 'Unknown resolution';
 }
 
-class _AutoScrollText extends StatefulWidget {
-  final String text;
-  final TextStyle? style;
-  final Duration pause;
-  final Duration? duration; // if null, auto-calculated from text width
+// ─────────────────────────────────────
+// MKV buffering helper
+// ─────────────────────────────────────
 
-  const _AutoScrollText({
-    Key? key,
-    required this.text,
-    this.style,
-    this.pause = const Duration(milliseconds: 800),
-    this.duration,
-  }) : super(key: key);
+/// Download a file to temporary cache with a buffering dialog + progress bar.
+/// Returns the local file path, or null if cancelled/failed.
+Future<String?> _downloadWithProgressDialog(
+  BuildContext context, {
+  required String url,
+  required String fileName,
+}) async {
+  final progress = ValueNotifier<double?>(0.0);
+  bool cancelled = false;
 
-  @override
-  State<_AutoScrollText> createState() => _AutoScrollTextState();
-}
-
-class _AutoScrollTextState extends State<_AutoScrollText>
-    with SingleTickerProviderStateMixin {
-  late final ScrollController _scrollCtrl;
-  late final AnimationController _animCtrl;
-  Animation<double>? _animation;
-  double _maxScrollExtent = 0;
-  bool _needsScroll = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _scrollCtrl = ScrollController();
-    _animCtrl = AnimationController(vsync: this);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) => _setup());
-  }
-
-  @override
-  void didUpdateWidget(covariant _AutoScrollText oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text || oldWidget.style != widget.style) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _setup());
-    }
-  }
-
-  Future<void> _setup() async {
-    if (!mounted || !_scrollCtrl.hasClients) return;
-
-    await Future.delayed(const Duration(milliseconds: 10)); // layout settle
-
-    final max = _scrollCtrl.position.maxScrollExtent;
-    _maxScrollExtent = max;
-    _needsScroll = max > 0;
-
-    if (!_needsScroll) {
-      _animCtrl.stop();
-      _scrollCtrl.jumpTo(0);
-      return;
-    }
-
-    // Duration based on distance, clamped for sanity.
-    final duration =
-        widget.duration ??
-        Duration(milliseconds: (max * 20).clamp(3000, 15000).toInt());
-
-    _animCtrl
-      ..stop()
-      ..reset()
-      ..duration = duration;
-
-    _animation = Tween<double>(begin: 0, end: _maxScrollExtent).animate(
-      CurvedAnimation(parent: _animCtrl, curve: Curves.easeInOut),
-    )..addListener(() {
-      if (!_scrollCtrl.hasClients) return;
-      _scrollCtrl.jumpTo(_animation!.value);
-    });
-
-    // Small pause at start, then start bouncing back and forth.
-    await Future.delayed(widget.pause);
-    if (!mounted) return;
-
-    _animCtrl.repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _animCtrl.dispose();
-    _scrollCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRect(
-      child: SingleChildScrollView(
-        controller: _scrollCtrl,
-        scrollDirection: Axis.horizontal,
-        physics: const NeverScrollableScrollPhysics(),
-        child: Text(
-          widget.text,
-          style: widget.style,
-          maxLines: 1,
-          softWrap: false,
-          overflow: TextOverflow.visible, // let it overflow so we can scroll it
+  // Show "buffering" dialog
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogCtx) {
+      return AlertDialog(
+        title: const Text('Buffering large video file'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'This MKV is being downloaded to temporary cache for smoother playback. '
+              'It will be removed when the app restarts.',
+            ),
+            const SizedBox(height: 16),
+            ValueListenableBuilder<double?>(
+              valueListenable: progress,
+              builder: (_, value, __) {
+                final pct = value == null ? null : (value * 100).clamp(0, 100);
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    LinearProgressIndicator(value: value),
+                    const SizedBox(height: 8),
+                    Text(
+                      value == null
+                          ? 'Downloading...'
+                          : '${pct!.toStringAsFixed(0)}%',
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              cancelled = true;
+            },
+            child: const Text('Cancel'),
+          ),
+        ],
+      );
+    },
+  );
+
+  try {
+    final tempDir = await getTemporaryDirectory();
+    final cacheDir = Directory(p.join(tempDir.path, 'archivist_cache'));
+    if (!await cacheDir.exists()) {
+      await cacheDir.create(recursive: true);
+    }
+
+    // Sanitise file name for local use
+    final safeName = fileName.replaceAll(RegExp(r'[^\w\.\-]'), '_');
+    final file = File(p.join(cacheDir.path, safeName));
+
+    final client = HttpClient();
+    final req = await client.getUrl(Uri.parse(url));
+    final resp = await req.close();
+
+    if (resp.statusCode != 200) {
+      throw Exception('HTTP ${resp.statusCode}');
+    }
+
+    final total = resp.contentLength;
+    int received = 0;
+    final sink = file.openWrite();
+
+    await for (final chunk in resp) {
+      if (cancelled) {
+        await sink.close();
+        if (await file.exists()) {
+          await file.delete().catchError((_) {});
+        }
+        client.close(force: true);
+        Navigator.of(context, rootNavigator: true).pop(); // close dialog
+        return null;
+      }
+
+      received += chunk.length;
+      sink.add(chunk);
+
+      if (total > 0) {
+        progress.value = received / total;
+      } else {
+        // Unknown length -> indeterminate
+        progress.value = null;
+      }
+    }
+
+    await sink.close();
+    client.close();
+    Navigator.of(context, rootNavigator: true).pop(); // close dialog
+    return file.path;
+  } catch (e) {
+    Navigator.of(context, rootNavigator: true).pop(); // close dialog
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Failed to buffer video: $e')));
+    return null;
+  } finally {
+    progress.dispose();
+  }
+}
+
+// ─────────────────────────────────────
+// Shared playback helper
+// ─────────────────────────────────────
+
+Future<void> _playVideoMeta(
+  BuildContext context, {
+  required String identifier,
+  required String title,
+  required ArchiveVideoMeta meta,
+}) async {
+  final ext = _extFromName(meta.name);
+  final rawFmt = meta.format.trim().toLowerCase();
+  final remoteUrl =
+      'https://archive.org/download/$identifier/${Uri.encodeComponent(meta.name)}';
+
+  final isMkv =
+      ext == 'mkv' || rawFmt.contains('matroska') || rawFmt.contains('mkv');
+
+  try {
+    await RecentProgressService.instance.touch(
+      id: identifier,
+      title: title,
+      thumb: archiveThumbUrl(identifier),
+      kind: 'video',
+      fileUrl: remoteUrl,
+      fileName: meta.name,
+    );
+  } catch (_) {}
+
+  await MediaPlayerOps.playVideo(
+    context,
+    url: remoteUrl,
+    identifier: identifier,
+    title: title,
+    thumb: archiveThumbUrl(identifier),
+    fileName: meta.name,
+  );
+}
+
+// ─────────────────────────────────────
+// Format grouping (audio_chooser-style)
+// ─────────────────────────────────────
+
+class _VideoFormatOption {
+  final String ext; // e.g. "mp4"
+  final int fileCount;
+  final int? totalSizeBytes;
+  final String? typicalResolution;
+
+  _VideoFormatOption({
+    required this.ext,
+    required this.fileCount,
+    this.totalSizeBytes,
+    this.typicalResolution,
+  });
+}
+
+Future<String?> _showVideoFormatSheet(
+  BuildContext context, {
+  required String identifier,
+  required String title,
+  required List<ArchiveVideoMeta> metas,
+}) async {
+  // Group by extension
+  final Map<String, List<ArchiveVideoMeta>> byExt = {};
+  for (final m in metas) {
+    final ext = _extFromName(m.name);
+    if (ext.isEmpty) continue;
+    byExt.putIfAbsent(ext, () => []).add(m);
+  }
+
+  if (byExt.isEmpty) return null;
+
+  final options = <_VideoFormatOption>[];
+
+  byExt.forEach((ext, list) {
+    final count = list.length;
+    final totalSize = list.fold<int?>(
+      0,
+      (prev, e) =>
+          e.sizeBytes == null ? prev : (prev ?? 0) + (e.sizeBytes ?? 0),
+    );
+
+    final firstWithRes = list.firstWhere(
+      (e) => e.width != null && e.height != null,
+      orElse: () => list.first,
+    );
+    final typicalRes = _resolutionLabel(firstWithRes);
+
+    options.add(
+      _VideoFormatOption(
+        ext: ext,
+        fileCount: count,
+        totalSizeBytes: totalSize == 0 ? null : totalSize,
+        typicalResolution: typicalRes,
       ),
     );
-  }
+  });
+
+  // Sort: larger total size first (usually higher quality), then ext name
+  options.sort((a, b) {
+    final sizeA = a.totalSizeBytes ?? 0;
+    final sizeB = b.totalSizeBytes ?? 0;
+    final r = sizeB.compareTo(sizeA);
+    if (r != 0) return r;
+    return a.ext.compareTo(b.ext);
+  });
+
+  return showModalBottomSheet<String?>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheetCtx) {
+      return SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Choose video format',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: options.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (_, i) {
+                  final op = options[i];
+                  final label = _videoFormatLabel(op.ext);
+                  final size = _humanBytes(op.totalSizeBytes);
+                  final res = op.typicalResolution;
+
+                  final subtitleParts = <String>[
+                    '${op.fileCount} file${op.fileCount == 1 ? '' : 's'}',
+                    if (res != null && res != 'Unknown resolution') res,
+                    if (op.totalSizeBytes != null) size,
+                  ];
+
+                  return ListTile(
+                    leading: const Icon(Icons.movie),
+                    title: Text(label),
+                    subtitle: Text(subtitleParts.join(' • ')),
+                    onTap: () {
+                      Navigator.pop(sheetCtx, '.${op.ext}');
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
 }
 
+// ─────────────────────────────────────
+// PUBLIC API: showVideoChooser
+// (called from CollectionDetailScreen & Favourites)
+// ─────────────────────────────────────
+
+/// High-level helper that mirrors the audio flow:
+/// - If only 1 video total → play it.
+/// - Otherwise ask for format (mp4/mkv/etc).
+///   - If only 1 file of that type → play it.
+///   - If >1 → push VideoAlbumScreen for that type.
+///
+/// Callers just `await showVideoChooser(...)` and don't need to care.
 Future<void> showVideoChooser(
   BuildContext context, {
   required String identifier,
   required String title,
   required List<dynamic> files,
 }) async {
-  final options =
+  // Normalise into ArchiveVideoMeta & keep only video-ish names
+  final metas =
       files
           .map(
             (f) =>
@@ -240,10 +464,11 @@ Future<void> showVideoChooser(
                     ? f
                     : ArchiveVideoMeta.fromMap(f as Map<String, dynamic>),
           )
-          .where((m) => m.name.isNotEmpty)
+          .where((m) => m.name.isNotEmpty && _isVideoName(m.name))
           .toList();
 
-  if (options.isEmpty) {
+  if (metas.isEmpty) {
+    // Fallback: open on web
     await launchUrl(
       Uri.parse('https://archive.org/details/$identifier'),
       mode: LaunchMode.externalApplication,
@@ -251,99 +476,62 @@ Future<void> showVideoChooser(
     return;
   }
 
-  int resScore(ArchiveVideoMeta m) {
-    final s = RegExp(r'(\d{3,4})p').firstMatch(m.name)?.group(1);
-    final inferred = int.tryParse(s ?? '') ?? (m.height ?? 0);
-    return inferred;
+  // Only 1 video total → just play it.
+  if (metas.length == 1) {
+    await _playVideoMeta(
+      context,
+      identifier: identifier,
+      title: title,
+      meta: metas.first,
+    );
+    return;
   }
 
-  // Sort by resolution (desc), then size (desc)
-  options.sort((a, b) {
-    final r = resScore(b).compareTo(resScore(a));
-    if (r != 0) return r;
-    return (b.sizeBytes ?? 0).compareTo(a.sizeBytes ?? 0);
-  });
-
-  await showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    isScrollControlled: true,
-    builder: (sheetCtx) {
-      final media = MediaQuery.of(sheetCtx);
-      const double kItemExtent = 72;
-      const double kChrome = 24 + 16 + 16;
-      final double desired = (options.length * kItemExtent) + kChrome;
-      final double maxH = media.size.height * 0.85;
-      const double minH = 200;
-      final double height = desired.clamp(minH, maxH);
-      final bool scrollable = desired > height + 1;
-
-      return SafeArea(
-        child: SizedBox(
-          height: height,
-          child: ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            itemCount: options.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            shrinkWrap: true,
-            physics:
-                scrollable
-                    ? const AlwaysScrollableScrollPhysics()
-                    : const NeverScrollableScrollPhysics(),
-            itemBuilder: (_, i) {
-              final op = options[i];
-              final res = _resolutionLabel(op);
-              final size = _humanBytes(op.sizeBytes);
-              final pretty = _prettyFilename(op.name);
-
-              final rawFmt = (op.format).trim();
-              final ext = _extFromName(op.name);
-              final fmtLabel = (rawFmt.isNotEmpty ? rawFmt : ext).toUpperCase();
-
-              final url =
-                  'https://archive.org/download/$identifier/${Uri.encodeComponent(op.name)}';
-
-              return ListTile(
-                leading: const Icon(Icons.play_circle_outline),
-                title: _AutoScrollText(
-                  text: pretty.isEmpty ? op.name : pretty,
-                  style: Theme.of(context).textTheme.bodyLarge,
-                ),
-                subtitle: _AutoScrollText(
-                  text: '$fmtLabel  •  $res  •  $size',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                onTap: () async {
-                  final url =
-                      'https://archive.org/download/$identifier/${Uri.encodeComponent(op.name)}';
-
-                  try {
-                    await RecentProgressService.instance.touch(
-                      id: identifier,
-                      title: title,
-                      thumb: archiveThumbUrl(identifier),
-                      kind: 'video',
-                      fileUrl: url,
-                      fileName: op.name,
-                    );
-                  } catch (_) {}
-
-                  await MediaPlayerOps.playVideo(
-                    context,
-                    url: url,
-                    identifier: identifier,
-                    title: title,
-                  );
-
-                  if (Navigator.canPop(sheetCtx)) {
-                    Navigator.pop(sheetCtx);
-                  }
-                },
-              );
-            },
-          ),
-        ),
-      );
-    },
+  // Ask user which format they want
+  final chosenExt = await _showVideoFormatSheet(
+    context,
+    identifier: identifier,
+    title: title,
+    metas: metas,
   );
+
+  if (chosenExt == null) {
+    // User cancelled
+    return;
+  }
+
+  final filtered =
+      metas
+          .where((m) => m.name.toLowerCase().endsWith(chosenExt.toLowerCase()))
+          .toList();
+
+  final effective = filtered.isNotEmpty ? filtered : metas;
+
+  if (effective.length == 1) {
+    await _playVideoMeta(
+      context,
+      identifier: identifier,
+      title: title,
+      meta: effective.first,
+    );
+  } else {
+    final fmtLabel = chosenExt.replaceFirst('.', '').toUpperCase();
+
+    // Map ArchiveVideoMeta → Map<String, String> for VideoAlbumScreen
+    final fileMaps =
+        effective.map<Map<String, String>>((m) => {'name': m.name}).toList();
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (_) => VideoAlbumScreen(
+              identifier: identifier,
+              title: title,
+              files: fileMaps,
+              thumbUrl: archiveThumbUrl(identifier),
+              formatLabel: fmtLabel,
+            ),
+      ),
+    );
+  }
 }

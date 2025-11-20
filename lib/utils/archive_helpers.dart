@@ -2,6 +2,7 @@
 ///
 /// Keeping these functions in a single location avoids duplicating simple
 /// constants and heuristics across multiple screens.
+library;
 
 /// Returns the standard Archive.org thumbnail URL for an identifier.
 String archiveThumbUrl(String identifier) =>

@@ -1,30 +1,34 @@
-// lib/screens/audio_album_screen.dart
+// lib/screens/video_album_screen.dart
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../media/media_player_ops.dart';
-import '../services/discogs_service.dart';
-import '../services/media_service.dart';
 import '../services/recent_progress_service.dart';
 import '../utils/archive_helpers.dart';
 
-class AudioAlbumScreen extends StatefulWidget {
+class VideoAlbumScreen extends StatefulWidget {
   final String identifier;
   final String title;
-  final List<Map<String, String>> files; // expects {"name": ...}
+
+  /// expects {"name": ...}
+  final List<Map<String, String>> files;
   final String? thumbUrl;
 
-  const AudioAlbumScreen({
+  /// Optional label like "MP4", "MKV", etc. (used when coming from a format chooser)
+  final String? formatLabel;
+
+  const VideoAlbumScreen({
     super.key,
     required this.identifier,
     required this.title,
     required this.files,
     this.thumbUrl,
+    this.formatLabel,
   });
 
   @override
-  State<AudioAlbumScreen> createState() => _AudioAlbumScreenState();
+  State<VideoAlbumScreen> createState() => _VideoAlbumScreenState();
 }
 
 /// Simple horizontally swipeable text, clipped so it doesn't overflow the tile.
@@ -53,48 +57,37 @@ class _SwipeScrollText extends StatelessWidget {
   }
 }
 
-class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
-  late List<Map<String, String>> _tracks;
+class _VideoAlbumScreenState extends State<VideoAlbumScreen> {
+  late List<Map<String, String>> _videos;
 
   @override
   void initState() {
     super.initState();
-    _tracks = List<Map<String, String>>.from(widget.files);
-    _applyDiscogsOrder();
+    _videos = List<Map<String, String>>.from(widget.files);
+    _sortVideos();
   }
 
-  Future<void> _applyDiscogsOrder() async {
-    try {
-      await DiscogsService.instance.sortAudioFilesForItem(
-        identifier: widget.identifier,
-        files: _tracks,
-      );
-      if (!mounted) return;
-      setState(() {});
-    } catch (_) {
-      // ignore; keep natural order
-    }
-  }
-
-  bool _isAudioName(String name) {
+  bool _isVideoName(String name) {
     final ext = p.extension(name).toLowerCase();
     return [
-      '.mp3',
-      '.ogg',
-      '.flac',
-      '.m4a',
-      '.wav',
-      '.opus',
-      '.aac',
+      '.mp4',
+      '.m4v',
+      '.mkv',
+      '.webm',
+      '.mov',
+      '.avi',
+      '.m3u8',
     ].contains(ext);
   }
 
-  /// Normalise for loose comparison (case-insensitive, ignore punctuation).
+  // ---------- NEW HELPERS TO STRIP COLLECTION NAME ----------
+
+  /// Normalize for loose comparison.
   String _normalizeForCompare(String s) {
     return s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
   }
 
-  /// Remove album / collection name if it's at the start of the track name.
+  /// Remove album/collection name prefix if present.
   String _stripAlbumNamePrefix(String rawTitle) {
     final album = widget.title;
     if (album.isEmpty) return rawTitle;
@@ -102,7 +95,7 @@ class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
     final albumNorm = _normalizeForCompare(album);
     var result = rawTitle;
 
-    // Case 1: "Album Name/Rest Of Title"
+    // Case 1: "Album Name/Something"
     final slashIndex = result.indexOf('/');
     if (slashIndex > 0) {
       final firstSegment = result.substring(0, slashIndex);
@@ -111,13 +104,13 @@ class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
       }
     }
 
-    // Case 2: "Album Name - Something" / "Album Name: Something" etc.
+    // Case 2: Leading "Album - Something" / "Album: Something" etc.
     final normResult = _normalizeForCompare(result);
     if (normResult.startsWith(albumNorm) &&
         normResult.length > albumNorm.length + 2) {
-      final escapedAlbum = RegExp.escape(album);
+      final escaped = RegExp.escape(album);
       result = result.replaceFirst(
-        RegExp('^$escapedAlbum[\\s:_\\-/\\\\]*', caseSensitive: false),
+        RegExp('^$escaped[\\s:_\\-/\\\\]*', caseSensitive: false),
         '',
       );
     }
@@ -125,58 +118,96 @@ class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
     return result.trim();
   }
 
+  // ------------------------------------------------------------
+
+  void _sortVideos() {
+    _videos.sort((a, b) {
+      final na = (a['name'] ?? '').toLowerCase();
+      final nb = (b['name'] ?? '').toLowerCase();
+      int resScore(String n) {
+        final match = RegExp(r'(\d{3,4})p').firstMatch(n);
+        if (match != null) {
+          return int.tryParse(match.group(1) ?? '') ?? 0;
+        }
+        return 0;
+      }
+
+      final ra = resScore(na);
+      final rb = resScore(nb);
+      final r = rb.compareTo(ra);
+      if (r != 0) return r;
+      return na.compareTo(nb);
+    });
+  }
+
+  void _alphabetiseVideos() {
+    setState(() {
+      _videos.sort((a, b) {
+        final na = _prettifyFilename(a['name'] ?? '').toLowerCase();
+        final nb = _prettifyFilename(b['name'] ?? '').toLowerCase();
+        return na.compareTo(nb);
+      });
+    });
+  }
+
   String _prettifyFilename(String name) {
     final ext = p.extension(name);
     var base = name.replaceAll(ext, '');
-    final match = RegExp(r'^(\d+)[_\s-]+(.*)').firstMatch(base);
-    String number = '';
-    String title = base;
 
+    // Remove album name
+    base = _stripAlbumNamePrefix(base);
+
+    // Strip leading track/episode numbers like "01 - "
+    final match = RegExp(r'^(\d+)[_\s-]+(.*)').firstMatch(base);
     if (match != null) {
-      number = match.group(1)!;
-      title = match.group(2)!;
+      base = match.group(2)!;
     }
 
-    // Strip album/collection name if present at the front.
-    title = _stripAlbumNamePrefix(title);
+    base = base.replaceAll(RegExp(r'[_-]+'), ' ').trim();
 
-    title = title
-        .replaceAll(RegExp(r'[_-]+'), ' ')
-        .trim()
+    return base
         .split(' ')
         .map((w) => w.isEmpty ? '' : w[0].toUpperCase() + w.substring(1))
         .join(' ');
-
-    return number.isNotEmpty ? '$number. $title' : title;
   }
 
-  Future<void> _playFromIndex(int index) async {
-    final entries = <({String name, String url})>[];
+  String _resolutionFromName(String name) {
+    final match = RegExp(r'(\d{3,4})p').firstMatch(name.toLowerCase());
+    if (match != null) return '${match.group(1)}p';
+    return '';
+  }
 
-    for (final f in _tracks) {
-      final name = f['name'];
-      if (name == null) continue;
-      if (!_isAudioName(name)) continue;
-
-      final url =
-          'https://archive.org/download/${widget.identifier}/${Uri.encodeComponent(name)}';
-      entries.add((name: name, url: url));
+  String _extLabel(String name) {
+    final ext = p.extension(name).toLowerCase();
+    switch (ext) {
+      case '.mp4':
+      case '.m4v':
+        return 'MP4';
+      case '.mkv':
+        return 'MKV';
+      case '.webm':
+        return 'WebM';
+      case '.mov':
+        return 'MOV';
+      case '.avi':
+        return 'AVI';
+      case '.m3u8':
+        return 'HLS';
+      default:
+        return ext.isNotEmpty ? ext.replaceFirst('.', '').toUpperCase() : '';
     }
+  }
 
-    if (entries.isEmpty) return;
+  Future<void> _playSingleByIndex(int index) async {
+    if (_videos.isEmpty) return;
+    if (index < 0 || index >= _videos.length) index = 0;
 
-    final items =
-        entries
-            .map((e) => Playable(url: e.url, title: _prettifyFilename(e.name)))
-            .toList();
+    final entry = _videos[index];
+    final name = entry['name'];
+    if (name == null || name.isEmpty || !_isVideoName(name)) return;
 
-    if (index < 0 || index >= items.length) index = 0;
-
-    final queue = MediaQueue(
-      items: items,
-      type: MediaType.audio,
-      startIndex: index,
-    );
+    final url =
+        'https://archive.org/download/${widget.identifier}/${Uri.encodeComponent(name)}';
 
     final thumb = widget.thumbUrl ?? archiveThumbUrl(widget.identifier);
 
@@ -184,17 +215,20 @@ class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
       id: widget.identifier,
       title: widget.title,
       thumb: thumb,
-      kind: 'audio',
+      kind: 'video',
+      fileUrl: url,
+      fileName: name,
     );
 
     if (!mounted) return;
 
-    await MediaPlayerOps.playAudioQueue(
+    await MediaPlayerOps.playVideo(
       context,
-      queue: queue,
+      url: url,
       identifier: widget.identifier,
       title: widget.title,
-      itemThumb: thumb,
+      thumb: thumb,
+      fileName: name,
     );
   }
 
@@ -205,9 +239,17 @@ class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
             ? widget.thumbUrl!
             : archiveThumbUrl(widget.identifier);
 
-    // Responsive-ish cover size
     final shortestSide = MediaQuery.of(context).size.shortestSide;
     final coverSize = shortestSide < 600 ? 120.0 : 160.0;
+
+    final videoCount =
+        _videos.where((v) => _isVideoName(v['name'] ?? '')).length;
+
+    final subtitleParts = <String>[
+      if (videoCount > 0) '$videoCount video${videoCount == 1 ? '' : 's'}',
+      if (widget.formatLabel != null && widget.formatLabel!.isNotEmpty)
+        widget.formatLabel!,
+    ];
 
     return Scaffold(
       appBar: AppBar(
@@ -219,11 +261,10 @@ class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: SizedBox(
-              width: double.infinity, // give Row tight width
+              width: double.infinity,
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Constrained cover art
                   SizedBox(
                     width: coverSize,
                     height: coverSize,
@@ -236,7 +277,6 @@ class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
                     ),
                   ),
                   const SizedBox(width: 16),
-                  // Text + buttons
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -246,10 +286,11 @@ class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                         const SizedBox(height: 8),
-                        Text(
-                          '${_tracks.length} track${_tracks.length == 1 ? '' : 's'}',
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
+                        if (subtitleParts.isNotEmpty)
+                          Text(
+                            subtitleParts.join(' • '),
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
                         const SizedBox(height: 12),
                         Wrap(
                           spacing: 8,
@@ -257,27 +298,17 @@ class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
                           children: [
                             ElevatedButton.icon(
                               icon: const Icon(Icons.play_arrow),
-                              label: const Text('Play all'),
+                              label: const Text('Play first'),
                               onPressed:
-                                  _tracks.isEmpty
+                                  _videos.isEmpty
                                       ? null
-                                      : () => _playFromIndex(0),
+                                      : () => _playSingleByIndex(0),
                             ),
                             OutlinedButton.icon(
-                              icon: const Icon(Icons.shuffle),
-                              label: const Text('Shuffle'),
+                              icon: const Icon(Icons.sort_by_alpha),
+                              label: const Text('Alphabetise'),
                               onPressed:
-                                  _tracks.isEmpty
-                                      ? null
-                                      : () {
-                                        final idx =
-                                            _tracks.isEmpty
-                                                ? 0
-                                                : (DateTime.now()
-                                                        .millisecondsSinceEpoch %
-                                                    _tracks.length);
-                                        _playFromIndex(idx);
-                                      },
+                                  _videos.isEmpty ? null : _alphabetiseVideos,
                             ),
                           ],
                         ),
@@ -291,15 +322,15 @@ class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
 
           const Divider(height: 1),
 
-          // TRACK LIST
+          // VIDEO LIST
           Expanded(
             child: ListView.separated(
-              itemCount: _tracks.length,
+              itemCount: _videos.length,
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (context, index) {
-                final t = _tracks[index];
-                final name = t['name'] ?? '';
-                final title = _prettifyFilename(name);
+                final v = _videos[index];
+                final name = v['name'] ?? '';
+                final pretty = _prettifyFilename(name);
 
                 return ListTile(
                   leading: Text(
@@ -307,10 +338,10 @@ class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   title: _SwipeScrollText(
-                    text: title,
+                    text: pretty,
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
-                  onTap: () => _playFromIndex(index),
+                  onTap: () => _playSingleByIndex(index),
                 );
               },
             ),

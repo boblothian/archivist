@@ -7,12 +7,12 @@ class AutoScrollText extends StatefulWidget {
   final Duration? duration; // if null, auto-calculated from text width
 
   const AutoScrollText({
-    Key? key,
+    super.key,
     required this.text,
     this.style,
     this.pause = const Duration(milliseconds: 800),
     this.duration,
-  }) : super(key: key);
+  });
 
   @override
   State<AutoScrollText> createState() => _AutoScrollTextState();

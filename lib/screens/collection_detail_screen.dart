@@ -24,7 +24,7 @@ import '../net.dart';
 import '../services/discogs_service.dart';
 import '../utils/archive_helpers.dart';
 import '../widgets/audio_chooser.dart';
-import '../widgets/video_chooser.dart'; // shared video chooser
+import '../widgets/video_chooser.dart';
 import 'archive_item_screen.dart';
 import 'audio_album_screen.dart';
 import 'image_viewer_screen.dart';
@@ -1255,36 +1255,36 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
     // -----------------------------------------------------------------
     // Cancellation handling – no PopListener API needed
     // -----------------------------------------------------------------
-    bool _canceled = false;
+    bool canceled = false;
     final navigator = Navigator.of(context);
 
     // If the user presses back while we are loading, cancel everything
-    void _checkCancel() {
+    void checkCancel() {
       if (!navigator.canPop()) return;
       final currentRoute = ModalRoute.of(context);
       if (currentRoute == null || !currentRoute.isCurrent) {
-        _canceled = true;
+        canceled = true;
       }
     }
 
     // Run a periodic check (cheap) while the future is pending
-    Timer? _timer;
-    _timer = Timer.periodic(
+    Timer? timer;
+    timer = Timer.periodic(
       const Duration(milliseconds: 100),
-      (_) => _checkCancel(),
+      (_) => checkCancel(),
     );
 
     try {
       final children = await _fetchCollectionChildren(
         collectionId,
         enrich: false,
-        isCancelled: () => _canceled || !mounted || _isDisposed,
+        isCancelled: () => canceled || !mounted || _isDisposed,
       );
 
       // Stop the timer as soon as we have a result
-      _timer?.cancel();
+      timer.cancel();
 
-      if (!mounted || _isDisposed || _canceled) return;
+      if (!mounted || _isDisposed || canceled) return;
 
       // -----------------------------------------------------------------
       // No children → open the full collection screen
@@ -1345,8 +1345,8 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
         ),
       );
     } catch (_) {
-      _timer?.cancel();
-      if (mounted && !_isDisposed && !_canceled) {
+      timer.cancel();
+      if (mounted && !_isDisposed && !canceled) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Failed to load collection preview.')),
         );

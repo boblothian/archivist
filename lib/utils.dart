@@ -71,7 +71,7 @@ Future<File> downloadWithCache({
   // Cache hit – return immediately
   if (await target.exists() && (await target.length()) > 0) {
     final sizeMb = (await target.length() / 1024 / 1024).toStringAsFixed(1);
-    print('CACHE HIT: ${target.path} (${sizeMb} MB)');
+    print('CACHE HIT: ${target.path} ($sizeMb MB)');
     onProgress?.call(await target.length(), await target.length());
     return target;
   }

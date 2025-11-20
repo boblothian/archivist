@@ -24,8 +24,9 @@ Future<void> showVideoFileChooser({
       (() {
         final t = thumb?.trim();
         if (t != null && t.isNotEmpty) return t; // 1) explicit thumb
-        if (thumbForId != null)
+        if (thumbForId != null) {
           return thumbForId(identifier); // 2) provided resolver
+        }
         return archiveThumbUrl(identifier); // 3) default IA services/img
       })();
 

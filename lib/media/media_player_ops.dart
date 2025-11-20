@@ -150,12 +150,14 @@ class MediaPlayerOps {
     final lower = urls.map((u) => u.toLowerCase()).toList();
 
     for (final u in lower) {
-      if (u.endsWith('.mp4') || u.endsWith('.m4v'))
+      if (u.endsWith('.mp4') || u.endsWith('.m4v')) {
         return urls[lower.indexOf(u)];
+      }
     }
     for (final u in lower) {
-      if (u.endsWith('.webm') || u.endsWith('.mkv'))
+      if (u.endsWith('.webm') || u.endsWith('.mkv')) {
         return urls[lower.indexOf(u)];
+      }
     }
     for (final u in lower) {
       if (u.endsWith('.m3u8')) return urls[lower.indexOf(u)];

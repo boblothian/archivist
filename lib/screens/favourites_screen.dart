@@ -29,7 +29,16 @@ class FavoritesScreen extends StatelessWidget {
       valueListenable: svc.version,
       builder: (context, _, __) {
         final folders = svc.folders();
-        final selectedFolder = initialFolder ?? folders.firstOrNull ?? 'All';
+
+        // Treat 'Favourites' as internal; UI default is always 'All'
+        String selectedFolder;
+        if (initialFolder != null &&
+            initialFolder!.isNotEmpty &&
+            initialFolder != 'Favourites') {
+          selectedFolder = initialFolder!;
+        } else {
+          selectedFolder = 'All';
+        }
 
         final items =
             selectedFolder == 'All'
@@ -722,20 +731,158 @@ class _FolderSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final items = <String>{'All', ...folders}.toList();
+    // Hide the internal 'Favourites' folder; use 'All' as the main view.
+    final items =
+        <String>{'All', ...folders.where((f) => f != 'Favourites')}.toList()
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
-    return DropdownButton<String>(
-      value: currentFolder,
-      isExpanded: true,
-      hint: const Text('Select folder'),
-      items:
-          items.map((folder) {
-            return DropdownMenuItem<String>(
-              value: folder,
-              child: Text(folder, overflow: TextOverflow.ellipsis),
-            );
-          }).toList(),
-      onChanged: (value) => value != null ? onChanged(value) : null,
+    // If for some reason currentFolder is no longer in the list (e.g. 'Favourites'),
+    // fall back to 'All' so the UI stays valid.
+    final effectiveCurrent =
+        items.contains(currentFolder) ? currentFolder : 'All';
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _showFolderSheet(context, items, effectiveCurrent),
+      child: InputDecorator(
+        isEmpty: false,
+        decoration: InputDecoration(
+          labelText: 'Favourites folder',
+          border: const OutlineInputBorder(),
+          isDense: true,
+          suffixIcon: const Icon(Icons.arrow_drop_down),
+        ),
+        child: Text(
+          effectiveCurrent,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showFolderSheet(
+    BuildContext context,
+    List<String> items,
+    String effectiveCurrent,
+  ) async {
+    final svc = FavoritesService.instance;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        final theme = Theme.of(sheetCtx);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  title: const Text('Choose folder'),
+                  subtitle: Text(
+                    'Swipe left to delete a folder',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+                const Divider(height: 1),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: items.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, index) {
+                      final folder = items[index];
+                      final canDelete =
+                          folder != 'All' && folder != 'Favourites';
+
+                      return Dismissible(
+                        key: ValueKey(folder),
+                        direction:
+                            canDelete
+                                ? DismissDirection.endToStart
+                                : DismissDirection.none,
+                        background: Container(
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          color: theme.colorScheme.error,
+                          child: const Icon(
+                            Icons.delete_outline,
+                            color: Colors.white,
+                          ),
+                        ),
+                        confirmDismiss:
+                            canDelete
+                                ? (direction) async {
+                                  final confirmed = await showDialog<bool>(
+                                    context: sheetCtx,
+                                    builder:
+                                        (ctx) => AlertDialog(
+                                          title: const Text('Delete folder?'),
+                                          content: Text(
+                                            'Delete the "$folder" folder and remove '
+                                            'all favourites inside it?\n\n'
+                                            'Items that also exist in other folders '
+                                            'will stay there.',
+                                          ),
+                                          actions: [
+                                            TextButton(
+                                              onPressed:
+                                                  () =>
+                                                      Navigator.pop(ctx, false),
+                                              child: const Text('Cancel'),
+                                            ),
+                                            TextButton(
+                                              onPressed:
+                                                  () =>
+                                                      Navigator.pop(ctx, true),
+                                              child: const Text('Delete'),
+                                            ),
+                                          ],
+                                        ),
+                                  );
+
+                                  if (confirmed == true) {
+                                    await svc.deleteFolder(folder);
+
+                                    // If we just deleted the active folder,
+                                    // jump back to "All"
+                                    if (effectiveCurrent == folder) {
+                                      Navigator.of(
+                                        sheetCtx,
+                                      ).pop(); // close sheet
+                                      onChanged('All');
+                                    } else {
+                                      // Just close the sheet; parent will rebuild
+                                      Navigator.of(sheetCtx).pop();
+                                    }
+                                  }
+
+                                  // We close the sheet manually; don't let
+                                  // Dismissible animate it away.
+                                  return false;
+                                }
+                                : null,
+                        child: ListTile(
+                          title: Text(folder),
+                          onTap: () {
+                            Navigator.of(sheetCtx).pop();
+                            if (folder != effectiveCurrent) {
+                              onChanged(folder);
+                            }
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

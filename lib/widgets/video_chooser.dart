@@ -118,6 +118,114 @@ String _resolutionLabel(ArchiveVideoMeta m) {
   return 'Unknown';
 }
 
+class _AutoScrollText extends StatefulWidget {
+  final String text;
+  final TextStyle? style;
+  final Duration pause;
+  final Duration? duration; // if null, auto-calculated from text width
+
+  const _AutoScrollText({
+    Key? key,
+    required this.text,
+    this.style,
+    this.pause = const Duration(milliseconds: 800),
+    this.duration,
+  }) : super(key: key);
+
+  @override
+  State<_AutoScrollText> createState() => _AutoScrollTextState();
+}
+
+class _AutoScrollTextState extends State<_AutoScrollText>
+    with SingleTickerProviderStateMixin {
+  late final ScrollController _scrollCtrl;
+  late final AnimationController _animCtrl;
+  Animation<double>? _animation;
+  double _maxScrollExtent = 0;
+  bool _needsScroll = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollCtrl = ScrollController();
+    _animCtrl = AnimationController(vsync: this);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => _setup());
+  }
+
+  @override
+  void didUpdateWidget(covariant _AutoScrollText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text || oldWidget.style != widget.style) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _setup());
+    }
+  }
+
+  Future<void> _setup() async {
+    if (!mounted || !_scrollCtrl.hasClients) return;
+
+    await Future.delayed(const Duration(milliseconds: 10)); // layout settle
+
+    final max = _scrollCtrl.position.maxScrollExtent;
+    _maxScrollExtent = max;
+    _needsScroll = max > 0;
+
+    if (!_needsScroll) {
+      _animCtrl.stop();
+      _scrollCtrl.jumpTo(0);
+      return;
+    }
+
+    // Duration based on distance, clamped for sanity.
+    final duration =
+        widget.duration ??
+        Duration(milliseconds: (max * 20).clamp(3000, 15000).toInt());
+
+    _animCtrl
+      ..stop()
+      ..reset()
+      ..duration = duration;
+
+    _animation = Tween<double>(begin: 0, end: _maxScrollExtent).animate(
+      CurvedAnimation(parent: _animCtrl, curve: Curves.easeInOut),
+    )..addListener(() {
+      if (!_scrollCtrl.hasClients) return;
+      _scrollCtrl.jumpTo(_animation!.value);
+    });
+
+    // Small pause at start, then start bouncing back and forth.
+    await Future.delayed(widget.pause);
+    if (!mounted) return;
+
+    _animCtrl.repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _animCtrl.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRect(
+      child: SingleChildScrollView(
+        controller: _scrollCtrl,
+        scrollDirection: Axis.horizontal,
+        physics: const NeverScrollableScrollPhysics(),
+        child: Text(
+          widget.text,
+          style: widget.style,
+          maxLines: 1,
+          softWrap: false,
+          overflow: TextOverflow.visible, // let it overflow so we can scroll it
+        ),
+      ),
+    );
+  }
+}
+
 Future<void> showVideoChooser(
   BuildContext context, {
   required String identifier,
@@ -197,21 +305,18 @@ Future<void> showVideoChooser(
 
               return ListTile(
                 leading: const Icon(Icons.play_circle_outline),
-                title: Text(
-                  pretty.isEmpty ? op.name : pretty,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                title: _AutoScrollText(
+                  text: pretty.isEmpty ? op.name : pretty,
+                  style: Theme.of(context).textTheme.bodyLarge,
                 ),
-                subtitle: Text(
-                  '$fmtLabel  •  $res  •  $size',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                subtitle: _AutoScrollText(
+                  text: '$fmtLabel  •  $res  •  $size',
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
                 onTap: () async {
                   final url =
                       'https://archive.org/download/$identifier/${Uri.encodeComponent(op.name)}';
 
-                  // Save to recent
                   try {
                     await RecentProgressService.instance.touch(
                       id: identifier,
@@ -223,7 +328,6 @@ Future<void> showVideoChooser(
                     );
                   } catch (_) {}
 
-                  // Play in the in-app video player
                   await MediaPlayerOps.playVideo(
                     context,
                     url: url,
@@ -231,7 +335,6 @@ Future<void> showVideoChooser(
                     title: title,
                   );
 
-                  // Close the bottom sheet after starting playback
                   if (Navigator.canPop(sheetCtx)) {
                     Navigator.pop(sheetCtx);
                   }

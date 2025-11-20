@@ -8,6 +8,7 @@ import '../services/discogs_service.dart';
 import '../services/media_service.dart';
 import '../services/recent_progress_service.dart';
 import '../utils/archive_helpers.dart';
+import '../widgets/auto_scroll_text.dart';
 
 class AudioAlbumScreen extends StatefulWidget {
   final String identifier;
@@ -176,12 +177,11 @@ class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          widget.title,
+                        AutoScrollText(
+                          text: widget.title,
                           style: Theme.of(context).textTheme.titleLarge,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
                         ),
+
                         const SizedBox(height: 8),
                         Text(
                           '${_tracks.length} track${_tracks.length == 1 ? '' : 's'}',
@@ -243,15 +243,12 @@ class _AudioAlbumScreenState extends State<AudioAlbumScreen> {
                     '${index + 1}',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
-                  title: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  title: AutoScrollText(
+                    text: title,
+                    style: Theme.of(context).textTheme.bodyMedium,
                   ),
-                  subtitle: Text(
-                    name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  subtitle: AutoScrollText(
+                    text: name,
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   onTap: () => _playFromIndex(index),

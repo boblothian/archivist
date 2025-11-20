@@ -77,13 +77,17 @@ Future<String?> showAddToFavoritesDialog(
                         itemBuilder: (_, i) {
                           final f = folders[i];
                           final contains = svc.contains(f, item.id);
+
+                          // 👇 This is the important bit: show "All" instead of "Favourites"
+                          final displayName = f == 'Favourites' ? 'All' : f;
+
                           return RadioListTile<String>(
-                            title: Text(f),
+                            title: Text(displayName),
                             subtitle:
                                 contains
                                     ? const Text('Already contains this item')
                                     : null,
-                            value: f,
+                            value: f, // keep the INTERNAL name here
                             groupValue: selectedFolder,
                             onChanged:
                                 contains
@@ -133,7 +137,8 @@ Future<String?> showAddToFavoritesDialog(
                             // Service already initialized above.
                             await FavoritesService.instance
                                 .addFavoriteWithFiles(
-                                  folder: folder,
+                                  folder:
+                                      folder, // still "Favourites" internally
                                   id: item.id,
                                   title: item.title,
                                   thumb: item.thumb,
@@ -146,7 +151,9 @@ Future<String?> showAddToFavoritesDialog(
                             messenger?.hideCurrentSnackBar();
                             messenger?.showSnackBar(
                               SnackBar(
-                                content: Text('Added to "$folder"'),
+                                content: Text(
+                                  'Added to "${folder == 'Favourites' ? 'All' : folder}"',
+                                ),
                                 backgroundColor: Colors.green,
                               ),
                             );

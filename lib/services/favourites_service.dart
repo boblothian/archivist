@@ -107,6 +107,10 @@ class FavoritesService {
 
   Box<dynamic>? _box;
 
+  /// In-memory cache of folders → favorites.
+  Map<String, List<FavoriteItem>> _cache = const <String, List<FavoriteItem>>{};
+  bool _cacheLoaded = false;
+
   /// Returns `true` once the Hive box has been opened.
   bool get isReady => _box != null && _box!.isOpen;
 
@@ -172,6 +176,7 @@ class FavoritesService {
       debugPrint('Favorites migration failed (non-fatal): $e\n$s');
     }
 
+    // Cache will be lazily populated on first access via _data.
     _notify();
   }
 
@@ -233,11 +238,19 @@ class FavoritesService {
     return changed;
   }
 
+  /// Central data getter: reads from Hive once, normalizes, then uses in-memory cache.
   Map<String, List<FavoriteItem>> get _data {
-    final dynamic raw = box.get('folders') ?? box.get('data');
-    if (raw == null) return <String, List<FavoriteItem>>{};
+    // Fast path: we’ve already loaded and normalized everything.
+    if (_cacheLoaded) return _cache;
 
-    if (raw is Map<String, List<FavoriteItem>>) {
+    final dynamic raw = box.get('folders') ?? box.get('data');
+
+    Map<String, List<FavoriteItem>> computed;
+
+    if (raw == null) {
+      computed = <String, List<FavoriteItem>>{};
+    } else if (raw is Map<String, List<FavoriteItem>>) {
+      // New-style stored map, normalize IDs + files.
       final fixed = <String, List<FavoriteItem>>{};
       raw.forEach((folder, list) {
         final out = <FavoriteItem>[];
@@ -269,10 +282,9 @@ class FavoritesService {
         }
         fixed[folder] = out;
       });
-      return fixed;
-    }
-
-    if (raw is Map) {
+      computed = fixed;
+    } else if (raw is Map) {
+      // Legacy map: Map<dynamic, dynamic> → normalize into Map<String, List<FavoriteItem>>
       final result = <String, List<FavoriteItem>>{};
       raw.forEach((key, value) {
         final folder = key?.toString() ?? 'Favourites';
@@ -361,15 +373,22 @@ class FavoritesService {
             }
           }
         }
+
         result[folder] = list;
       });
 
+      // Persist normalized structure back for future runs.
       box.put('folders', result);
       if (box.containsKey('data')) box.delete('data');
-      return result;
+
+      computed = result;
+    } else {
+      computed = <String, List<FavoriteItem>>{};
     }
 
-    return <String, List<FavoriteItem>>{};
+    _cache = computed;
+    _cacheLoaded = true;
+    return _cache;
   }
 
   Future<void> _save(Map<String, List<FavoriteItem>> data) async {
@@ -394,7 +413,13 @@ class FavoritesService {
               )
               .toList();
     });
+
     await box.put('folders', fixed);
+
+    // Keep in-memory cache up to date.
+    _cache = fixed;
+    _cacheLoaded = true;
+
     _notify();
   }
 
@@ -403,15 +428,23 @@ class FavoritesService {
     final hasLegacy = box.containsKey('data');
 
     if (!hasFolders && !hasLegacy) {
-      await box.put('folders', {'Favourites': <FavoriteItem>[]});
+      final initial = {'Favourites': <FavoriteItem>[]};
+      await box.put('folders', initial);
+      _cache = initial;
+      _cacheLoaded = true;
       return;
     }
 
     final normalized = _data; // triggers normalization + id sanitization
     if (normalized.isEmpty) {
-      await box.put('folders', {'Favourites': <FavoriteItem>[]});
+      final initial = {'Favourites': <FavoriteItem>[]};
+      await box.put('folders', initial);
+      _cache = initial;
+      _cacheLoaded = true;
     } else {
       await box.put('folders', normalized);
+      _cache = normalized;
+      _cacheLoaded = true;
     }
   }
 

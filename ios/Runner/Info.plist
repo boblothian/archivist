@@ -1,4 +1,4 @@
-<!-- ios/Runner/Info.plist (cleaned) -->
+<!-- ios/Runner/Info.plist (updated) -->
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -84,6 +84,10 @@
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Archivereader connects to Bluetooth audio devices to play archived audiobooks and recordings.</string>
 
+	<!-- 🔊 Microphone description required by plugin (even if unused) -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app does not use the microphone directly. A required audio plugin references it.</string>
+
 	<!-- Local Network permission (Cast/DLNA discovery) -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Archivereader needs local network access to discover and cast to devices on your network.</string>
@@ -100,9 +104,5 @@
 		<string>audio</string>
 	</array>
 
-	<!-- REMOVE if you don't access the user's Apple Music library.
-	     If kept, ensure you actually use MediaLibrary APIs. -->
-	<!-- <key>NSAppleMusicUsageDescription</key>
-	<string>Archivereader plays archived audio and shows controls on the lock screen.</string> -->
 </dict>
 </plist>

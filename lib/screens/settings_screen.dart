@@ -299,75 +299,83 @@ class _SettingsScreenState extends State<SettingsScreen> {
   ) {
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true, // <-- allows taller content + scrolling
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (sheetContext) {
+        final bottomInset = MediaQuery.of(sheetContext).viewInsets.bottom;
+
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 8),
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.withOpacity(0.4),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Theme colour',
-                    style: GoogleFonts.inter(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 16,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: bottomInset),
+            child: SingleChildScrollView(
+              // <-- makes content scrollable
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 8),
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(999),
                     ),
                   ),
-                ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Theme colour',
+                        style: GoogleFonts.inter(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Choose your accent colour',
+                        style: GoogleFonts.inter(fontSize: 13),
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  for (int i = 0; i < options.length; i++) ...[
+                    RadioListTile<int>(
+                      value: options[i].index,
+                      groupValue: controller.seedIndex,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        controller.setSeedIndex(value);
+                        setState(() {}); // refresh main settings tile
+                        Navigator.of(sheetContext).pop();
+                      },
+                      title: Text(
+                        options[i].name,
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Text(
+                        options[i].subtitle,
+                        style: GoogleFonts.inter(fontSize: 13),
+                      ),
+                      secondary: CircleAvatar(
+                        radius: 14,
+                        backgroundColor: options[i].color,
+                      ),
+                    ),
+                    if (i != options.length - 1) const Divider(height: 1),
+                  ],
+                  const SizedBox(height: 8),
+                ],
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Choose your accent colour',
-                    style: GoogleFonts.inter(fontSize: 13),
-                  ),
-                ),
-              ),
-              const Divider(height: 1),
-              for (int i = 0; i < options.length; i++) ...[
-                RadioListTile<int>(
-                  value: options[i].index,
-                  groupValue: controller.seedIndex,
-                  onChanged: (value) {
-                    if (value == null) return;
-                    controller.setSeedIndex(value);
-                    // Update the tile subtitle/swatches above when sheet closes.
-                    setState(() {});
-                    Navigator.of(sheetContext).pop();
-                  },
-                  title: Text(
-                    options[i].name,
-                    style: GoogleFonts.inter(fontWeight: FontWeight.w600),
-                  ),
-                  subtitle: Text(
-                    options[i].subtitle,
-                    style: GoogleFonts.inter(fontSize: 13),
-                  ),
-                  secondary: CircleAvatar(
-                    radius: 14,
-                    backgroundColor: options[i].color,
-                  ),
-                ),
-                if (i != options.length - 1) const Divider(height: 1),
-              ],
-              const SizedBox(height: 8),
-            ],
+            ),
           ),
         );
       },

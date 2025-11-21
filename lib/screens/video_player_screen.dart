@@ -1,4 +1,3 @@
-// lib/screens/video_player_screen.dart
 import 'dart:async';
 import 'dart:io';
 
@@ -25,6 +24,12 @@ class VideoPlayerScreen extends StatefulWidget {
   final Map<String, String>? queueTitles; // url -> title
   final int? startIndex; // index into `queue`
 
+  /// Optional: if this player was opened from a "continue" card and you want
+  /// the back button to go to a video album / item screen instead of just
+  /// popping, provide [albumScreenBuilder] and set [navigateToAlbumOnExit].
+  final WidgetBuilder? albumScreenBuilder;
+  final bool navigateToAlbumOnExit;
+
   VideoPlayerScreen({
     super.key,
     this.file,
@@ -35,6 +40,8 @@ class VideoPlayerScreen extends StatefulWidget {
     this.queue,
     this.queueTitles,
     this.startIndex,
+    this.albumScreenBuilder,
+    this.navigateToAlbumOnExit = false,
   }) : assert(
          file != null || url != null || ((queue ?? const []).isNotEmpty),
          'Provide a file, a url, or a non-empty queue',
@@ -634,9 +641,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (!mounted) return false;
 
     await _saveProgress();
-    Navigator.of(
-      context,
-    ).pop(<String, int>{'positionMs': _lastPosMs, 'durationMs': _lastDurMs});
+
+    // If we were opened from a "continue" card and we have an album
+    // screen to go to, replace this screen with that.
+    if (widget.navigateToAlbumOnExit && widget.albumScreenBuilder != null) {
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: widget.albumScreenBuilder!));
+    } else {
+      Navigator.of(
+        context,
+      ).pop(<String, int>{'positionMs': _lastPosMs, 'durationMs': _lastDurMs});
+    }
 
     return false;
   }

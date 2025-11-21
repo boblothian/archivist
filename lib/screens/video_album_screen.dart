@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 
 import '../media/media_player_ops.dart';
 import '../services/recent_progress_service.dart';
+import '../services/thumb_override_service.dart';
 import '../utils/archive_helpers.dart';
 
 class VideoAlbumScreen extends StatefulWidget {
@@ -209,12 +210,18 @@ class _VideoAlbumScreenState extends State<VideoAlbumScreen> {
     final url =
         'https://archive.org/download/${widget.identifier}/${Uri.encodeComponent(name)}';
 
-    final thumb = widget.thumbUrl ?? archiveThumbUrl(widget.identifier);
+    final baseThumb =
+        widget.thumbUrl?.isNotEmpty == true
+            ? widget.thumbUrl!
+            : archiveThumbUrl(widget.identifier);
+
+    // 🔽 Apply custom override
+    final resolvedThumb = await _resolveThumb(widget.identifier, baseThumb);
 
     await RecentProgressService.instance.touch(
       id: widget.identifier,
       title: widget.title,
-      thumb: thumb,
+      thumb: resolvedThumb,
       kind: 'video',
       fileUrl: url,
       fileName: name,
@@ -227,9 +234,15 @@ class _VideoAlbumScreenState extends State<VideoAlbumScreen> {
       url: url,
       identifier: widget.identifier,
       title: widget.title,
-      thumb: thumb,
+      thumb: resolvedThumb,
       fileName: name,
     );
+  }
+
+  Future<String> _resolveThumb(String id, String currentThumb) async {
+    final m = <String, String>{'identifier': id, 'thumb': currentThumb};
+    await ThumbOverrideService.instance.applyToItemMaps([m]);
+    return (m['thumb']?.trim().isNotEmpty == true) ? m['thumb']! : currentThumb;
   }
 
   @override
@@ -306,7 +319,7 @@ class _VideoAlbumScreenState extends State<VideoAlbumScreen> {
                             ),
                             OutlinedButton.icon(
                               icon: const Icon(Icons.sort_by_alpha),
-                              label: const Text('Alphabetise'),
+                              label: const Text('Sort'),
                               onPressed:
                                   _videos.isEmpty ? null : _alphabetiseVideos,
                             ),

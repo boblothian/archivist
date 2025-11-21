@@ -525,10 +525,7 @@ class _ContinueStripCard extends StatelessWidget {
 
     // For reading (pdf/text/etc.), always use the collection/item cover,
     // not the generated page thumb.
-    final initialThumb =
-        kind == _SectionKind.reading
-            ? fallbackThumb
-            : (entry['thumb'] as String?) ?? fallbackThumb;
+    final initialThumb = (entry['thumb'] as String?) ?? fallbackThumb;
 
     // Compute progress & label (same as before)
     double percent = 0.0;
@@ -855,10 +852,7 @@ class _ContinueSectionColumn extends StatelessWidget {
     }
 
     final fallback = archiveThumbUrl(id);
-    final initialThumb =
-        kind == _SectionKind.reading
-            ? fallback
-            : (e['thumb'] as String?) ?? fallback;
+    final initialThumb = (e['thumb'] as String?) ?? fallback;
 
     return FutureBuilder<String>(
       future: _resolveThumb(id, initialThumb),
@@ -949,23 +943,39 @@ class _ContinueSectionColumn extends StatelessWidget {
                       }
 
                       return ListTile(
-                        leading: ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: CachedNetworkImage(
-                            imageUrl: thumb,
-                            width: 56,
-                            height: 56,
-                            fit: BoxFit.cover,
-                            // Downsample for this small tile avatar.
-                            memCacheWidth: 190,
-                            memCacheHeight: 190,
-                            placeholder:
-                                (_, __) => Container(
-                                  width: 56,
-                                  height: 56,
-                                  color: Colors.grey[300],
-                                ),
-                          ),
+                        leading: FutureBuilder<String>(
+                          future: _resolveThumb(id, thumb),
+                          initialData: thumb,
+                          builder: (context, snap) {
+                            final thumbToUse = snap.data ?? thumb;
+                            return ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: CachedNetworkImage(
+                                imageUrl: thumbToUse,
+                                width: 56,
+                                height: 56,
+                                fit: BoxFit.cover,
+                                memCacheWidth: 190,
+                                memCacheHeight: 190,
+                                placeholder:
+                                    (_, __) => Container(
+                                      width: 56,
+                                      height: 56,
+                                      color: Colors.grey[300],
+                                    ),
+                                errorWidget:
+                                    (_, __, ___) => Container(
+                                      width: 56,
+                                      height: 56,
+                                      color: Colors.grey[400],
+                                      alignment: Alignment.center,
+                                      child: const Icon(
+                                        Icons.image_not_supported,
+                                      ),
+                                    ),
+                              ),
+                            );
+                          },
                         ),
                         title: Text(
                           kind == _SectionKind.reading && fn != null

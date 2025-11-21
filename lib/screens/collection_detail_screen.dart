@@ -426,16 +426,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
     final titleCtrl = TextEditingController(text: title);
     bool isSearching = false;
-    bool enrichEnabled = false;
-
-    void safePop<T extends Object?>(T? result) {
-      if (!mounted || _isDisposed) return;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || _isDisposed) return;
-        final nav = Navigator.of(context, rootNavigator: true);
-        if (nav.canPop()) nav.pop<T>(result);
-      });
-    }
 
     final result = await showDialog<DialogResult>(
       context: context,
@@ -446,33 +436,11 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
           builder: (dialogCtx, setDialogState) {
             bool dialogClosing = false;
 
-            Future<void> enrich() async {
+            void safePop<T extends Object?>([T? result]) {
               if (dialogClosing) return;
-              setDialogState(() => enrichEnabled = true);
-              try {
-                final updated = Map<String, String>.from(item);
-                await ThumbnailService().enrichItemWithTmdb(updated);
-                final idx = _items.indexWhere((i) => i['identifier'] == id);
-                if (idx != -1 && mounted && !_isDisposed) {
-                  setState(() => _items[idx] = updated);
-                }
-                messenger?.showSnackBar(
-                  const SnackBar(
-                    content: Text('Metadata enriched!'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              } catch (_) {
-                messenger?.showSnackBar(
-                  const SnackBar(
-                    content: Text('Failed to enrich metadata'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              } finally {
-                if (!dialogClosing && dialogCtx.mounted) {
-                  setDialogState(() => enrichEnabled = false);
-                }
+              dialogClosing = true;
+              if (dialogCtx.mounted) {
+                Navigator.of(dialogCtx, rootNavigator: true).pop<T>(result);
               }
             }
 
@@ -519,7 +487,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                   ),
                 );
 
-                dialogClosing = true;
                 safePop<DialogResult>(DialogResult.generateThumb);
               } catch (e) {
                 messenger?.showSnackBar(
@@ -573,6 +540,8 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                     backgroundColor: Colors.green,
                   ),
                 );
+
+                safePop<DialogResult>(DialogResult.generateThumb);
               } catch (e) {
                 messenger?.showSnackBar(
                   SnackBar(
@@ -589,8 +558,6 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
 
             // Discogs album ordering (audio) -------------------------------
             Future<void> orderAlbumTracks() async {
-              if (dialogClosing) return;
-
               setDialogState(() => isSearching = true);
               try {
                 await DiscogsService.instance.saveAlbumOrderForItem(
@@ -619,7 +586,7 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                   ),
                 );
               } finally {
-                if (!dialogClosing && dialogCtx.mounted) {
+                if (dialogCtx.mounted) {
                   setDialogState(() => isSearching = false);
                 }
               }
@@ -637,18 +604,8 @@ class _CollectionDetailScreenState extends State<CollectionDetailScreen> {
                       title: const Text('Add to Favourites'),
                       subtitle: Text('Add "$title" to a folder'),
                       onTap: () {
-                        dialogClosing = true;
                         safePop<DialogResult>(DialogResult.addToFolder);
                       },
-                    ),
-                    const Divider(height: 16),
-                    SwitchListTile(
-                      value: enrichEnabled,
-                      onChanged: (_) => enrich(),
-                      title: const Text('Enrich Metadata'),
-                      subtitle: const Text(
-                        'Pull title, year, description, and poster from TMDb',
-                      ),
                     ),
                     const Divider(height: 16),
 

@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../archive_api.dart';
 import '../media/media_player_ops.dart';
+import '../services/thumbnail_service.dart';
 import '../utils/archive_helpers.dart';
 import '../widgets/audio_chooser.dart';
 import '../widgets/video_chooser.dart';
@@ -712,7 +713,7 @@ class _AudioFileChooser extends StatelessWidget {
   }
 }
 
-// ──────────────────────── REST OF FILE (UNCHANGED) ────────────────────────
+// ──────────────────────── REST OF FILE ────────────────────────
 
 class _DeleteChip extends StatelessWidget {
   final VoidCallback onDelete;
@@ -913,7 +914,7 @@ class _FolderSelector extends StatelessWidget {
   }
 }
 
-// ── Metadata Sheet (unchanged UI) ────────────────────────────
+// ── Metadata Sheet with TMDb enrichment ────────────────────────────
 class _FavoriteMetadataSheet extends StatefulWidget {
   final FavoriteItem item;
   const _FavoriteMetadataSheet({required this.item});
@@ -925,6 +926,9 @@ class _FavoriteMetadataSheet extends StatefulWidget {
 class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
   late Future<Map<String, dynamic>> _future;
 
+  Map<String, String>? _enrichedOverrides;
+  bool _enriching = false;
+
   @override
   void initState() {
     super.initState();
@@ -935,6 +939,52 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
     setState(() {
       _future = ArchiveApi.getMetadata(_sanitizeArchiveId(widget.item.id));
     });
+  }
+
+  Future<void> _enrichWithTmdb({
+    required String cleanId,
+    required Map<String, dynamic> meta,
+  }) async {
+    if (!mounted || _enriching) return;
+
+    setState(() => _enriching = true);
+
+    try {
+      // Build the same kind of map you use in CollectionDetailScreen
+      final base = <String, String>{
+        'identifier': cleanId,
+        'title': _flat(meta['title']),
+        'description': _flat(meta['description']),
+        'creator': _flat(meta['creator']),
+        'subject': _flat(meta['subject']),
+        'year': _flat(meta['year']),
+        'mediatype': _flat(meta['mediatype']),
+        'thumb':
+            (widget.item.thumb?.trim().isNotEmpty == true)
+                ? widget.item.thumb!.trim()
+                : archiveThumbUrl(cleanId),
+      };
+
+      // 🔮 Ask TMDb to enrich this map
+      await ThumbnailService().enrichItemWithTmdb(base);
+
+      // Store enriched values in state so the UI can use them
+      setState(() {
+        _enrichedOverrides = base;
+      });
+
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('Metadata enriched via TMDb')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(SnackBar(content: Text('Failed to enrich metadata: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => _enriching = false);
+      }
+    }
   }
 
   @override
@@ -985,36 +1035,37 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
               final meta = Map<String, dynamic>.from(
                 (raw['metadata'] as Map?) ?? const <String, dynamic>{},
               );
+              final overrides = _enrichedOverrides;
 
-              final title =
-                  _flat(meta['title']).trim().isNotEmpty
-                      ? _flat(meta['title']).trim()
-                      : widget.item.title;
-              final description = _flat(meta['description']).trim();
-              final creator = _flat(meta['creator']).trim();
-              final year = _flat(meta['year']).trim();
-              final mediatype =
-                  (widget.item.mediatype?.trim().isNotEmpty == true)
-                      ? widget.item.mediatype!.trim()
-                      : _flat(meta['mediatype']).trim();
-              final language = _flat(meta['language']).trim();
-              final runtime =
+              // Base values from Archive.org
+              final baseTitle = _flat(meta['title']).trim();
+              final baseDescription = _flat(meta['description']).trim();
+              final baseCreator = _flat(meta['creator']).trim();
+              final baseYear = _flat(meta['year']).trim();
+              final baseMediatype = _flat(meta['mediatype']).trim();
+              final baseLanguage = _flat(meta['language']).trim();
+              final baseRuntime =
                   _flat(meta['runtime']).trim().isNotEmpty
                       ? _flat(meta['runtime']).trim()
                       : _flat(meta['length']).trim();
-              final downloads = _flat(meta['downloads']).trim();
+              final baseDownloads = _flat(meta['downloads']).trim();
               String added = _flat(meta['publicdate']).trim();
               if (added.isEmpty) added = _flat(meta['date']).trim();
               if (added.isEmpty) added = _flat(meta['addeddate']).trim();
 
+              final cleanId = _sanitizeArchiveId(widget.item.id);
+
+              // Collections / formats / subjects & cached files
               final subjects = _asList(meta['subject'])
                 ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
               final formatSet = <String>{
                 ...widget.item.formats
                     .map((e) => e.trim())
                     .where((e) => e.isNotEmpty),
                 ..._asList(meta['format']),
               };
+
               final cachedFormats =
                   widget.item.files
                       ?.map((f) => (f['fmt'] ?? f['format'] ?? '').toString())
@@ -1022,25 +1073,69 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                       .where((v) => v.isNotEmpty)
                       .toList() ??
                   const <String>[];
+
               formatSet.addAll(cachedFormats);
+
               final formats =
                   formatSet.toList()..sort(
                     (a, b) => a.toLowerCase().compareTo(b.toLowerCase()),
                   );
+
               final collections = _asList(meta['collection'])
                 ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
               final cachedFilesCount = widget.item.files?.length ?? 0;
-              final cleanId = _sanitizeArchiveId(widget.item.id);
-              final thumb =
+
+              // Prefer enriched overrides if present
+              final title =
+                  (overrides?['title']?.trim().isNotEmpty == true)
+                      ? overrides!['title']!.trim()
+                      : baseTitle.isNotEmpty
+                      ? baseTitle
+                      : widget.item.title;
+
+              final description =
+                  (overrides?['description']?.trim().isNotEmpty == true)
+                      ? overrides!['description']!.trim()
+                      : baseDescription;
+
+              final creator =
+                  (overrides?['creator']?.trim().isNotEmpty == true)
+                      ? overrides!['creator']!.trim()
+                      : baseCreator;
+
+              final year =
+                  (overrides?['year']?.trim().isNotEmpty == true)
+                      ? overrides!['year']!.trim()
+                      : baseYear;
+
+              final mediatype =
+                  (widget.item.mediatype?.trim().isNotEmpty == true)
+                      ? widget.item.mediatype!.trim()
+                      : (overrides?['mediatype']?.trim().isNotEmpty == true)
+                      ? overrides!['mediatype']!.trim()
+                      : baseMediatype;
+
+              final language = baseLanguage;
+              final runtime = baseRuntime;
+              final downloads = baseDownloads;
+
+              final cleanThumb =
                   (widget.item.thumb?.trim().isNotEmpty == true)
                       ? widget.item.thumb!.trim()
                       : archiveThumbUrl(cleanId);
+
+              final thumb =
+                  (overrides?['thumb']?.trim().isNotEmpty == true)
+                      ? overrides!['thumb']!.trim()
+                      : cleanThumb;
+
               final url =
                   (widget.item.url?.trim().isNotEmpty == true)
                       ? widget.item.url!.trim()
                       : 'https://archive.org/details/$cleanId';
 
+              // Info chips
               final infoChips = <Widget>[];
               if (mediatype.isNotEmpty) {
                 infoChips.add(_buildInfoChip(theme, mediatype));
@@ -1063,7 +1158,33 @@ class _FavoriteMetadataSheetState extends State<_FavoriteMetadataSheet> {
                 infoChips.add(_buildInfoChip(theme, label));
               }
 
+              // Main rows (with Enhance button at the top)
               final infoRows = <Widget>[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    icon:
+                        _enriching
+                            ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                            : const Icon(Icons.auto_awesome),
+                    label: Text(
+                      _enrichedOverrides == null
+                          ? 'Enhance metadata'
+                          : 'Re-run enhancement',
+                    ),
+                    onPressed:
+                        _enriching
+                            ? null
+                            : () =>
+                                _enrichWithTmdb(cleanId: cleanId, meta: meta),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
                 if (creator.isNotEmpty)
                   _buildInfoRow(theme, 'Creator', creator),
                 if (added.isNotEmpty) _buildInfoRow(theme, 'Published', added),
